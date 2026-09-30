@@ -1,0 +1,305 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><meta content="web_dashboard" name="shell-type"><link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet"><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={"darkMode":"class","theme":{"extend":{"colors":{"tertiary":"#4b2f00","surface-variant":"#e0e3e6","surface":"#f7f9fc","primary":"#00375e","secondary":"#1b6d24","surface-tint":"#35618d","on-error-container":"#93000a","surface-bright":"#f7f9fc","secondary-fixed-dim":"#88d982","inverse-primary":"#a0cafc","on-tertiary-container":"#fcab28","on-secondary-fixed":"#002204","on-tertiary-fixed-variant":"#643f00","on-tertiary-fixed":"#2a1800","surface-container":"#eceef1","on-tertiary":"#ffffff","secondary-container":"#a0f399","on-primary-fixed":"#001d35","on-secondary-container":"#217128","on-error":"#ffffff","on-surface-variant":"#42474f","primary-container":"#1f4e79","tertiary-fixed":"#ffddb5","on-secondary-fixed-variant":"#005312","outline-variant":"#c2c7d0","on-surface":"#191c1e","inverse-surface":"#2d3133","outline":"#72777f","primary-fixed":"#d1e4ff","on-background":"#191c1e","surface-container-low":"#f2f4f7","error":"#ba1a1a","surface-container-high":"#e6e8eb","surface-dim":"#d8dadd","on-primary":"#ffffff","on-primary-container":"#95bff1","secondary-fixed":"#a3f69c","primary-fixed-dim":"#a0cafc","surface-container-highest":"#e0e3e6","on-primary-fixed-variant":"#184974","surface-container-lowest":"#ffffff","inverse-on-surface":"#eff1f4","tertiary-container":"#6a4300","tertiary-fixed-dim":"#ffb957","on-secondary":"#ffffff","background":"#f7f9fc","error-container":"#ffdad6"},"borderRadius":{"DEFAULT":"0.125rem","lg":"0.25rem","xl":"0.5rem","full":"0.75rem"},"spacing":{"space-lg":"16px","gutter":"12px","space-md":"12px","space-xs":"4px","space-sm":"8px","space-xl":"24px","margin":"16px"},"fontFamily":{"label-lg":["Public Sans"],"body-md":["Public Sans"],"headline-md":["Public Sans"],"headline-lg":["Public Sans"],"label-md":["Public Sans"],"body-lg":["Public Sans"],"currency-display":["Public Sans"],"headline-sm":["Public Sans"],"label-sm":["Public Sans"]},"fontSize":{"label-lg":["16px",{"lineHeight":"20px","fontWeight":"700"}],"body-md":["16px",{"lineHeight":"24px","fontWeight":"500"}],"headline-md":["20px",{"lineHeight":"28px","fontWeight":"700"}],"headline-lg":["24px",{"lineHeight":"32px","fontWeight":"700"}],"label-md":["14px",{"lineHeight":"18px","fontWeight":"600"}],"body-lg":["16px",{"lineHeight":"24px","fontWeight":"400"}],"currency-display":["22px",{"lineHeight":"28px","fontWeight":"700"}],"headline-sm":["18px",{"lineHeight":"24px","fontWeight":"600"}],"label-sm":["12px",{"lineHeight":"16px","letterSpacing":"0.5px","fontWeight":"700"}]}}}}</script></head><body class="bg-surface font-body-md text-on-surface"><aside class="fixed left-0 top-0 h-full w-[260px] bg-primary text-on-primary z-50 flex flex-col justify-between select-none border-r border-primary-container"><div class="flex flex-col"><div class="p-space-lg border-b border-primary-container bg-[#163756]"><div class="flex items-center gap-space-sm mb-space-xs"><span class="material-symbols-outlined text-[#88d982] text-[20px]">hardware</span><span class="font-label-lg text-label-lg tracking-wide text-on-primary uppercase">Ferretería Central</span></div><div class="font-label-sm text-label-sm text-on-primary-container">IPV Control de Ventas e Inventario v2.4 (Cuba)</div><div class="mt-space-md pt-space-sm border-t border-primary-container/60 flex items-center justify-between"><span class="font-label-sm text-label-sm text-on-primary-container uppercase tracking-wider">Operador</span><span class="font-label-md text-label-md text-on-primary">Encargado de Turno</span></div></div><div class="px-space-md py-space-sm"><span class="font-label-sm text-label-sm text-on-primary-container uppercase tracking-wider px-space-sm">Módulos Operativos</span></div><nav class="flex flex-col gap-1 px-space-sm" data-active-classes="bg-primary-container text-on-primary font-bold shadow-inner"><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="ipv-del-dia" href="#"><span class="material-symbols-outlined text-[20px]">point_of_sale</span><span class="">IPV del día</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="alertas-de-stock" href="#"><span class="material-symbols-outlined text-[20px]">warning</span><span class="">Alertas de stock</span></a><a aria-current="page" class="flex items-center gap-space-md px-space-md py-space-sm rounded transition-colors bg-primary-container text-on-primary font-bold shadow-inner" data-path="cierre-de-caja" href="#"><span class="material-symbols-outlined text-[20px]">payments</span><span class="">Cierre de caja</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="reportes" href="#"><span class="material-symbols-outlined text-[20px]">bar_chart</span><span class="">Reportes</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="productos" href="#"><span class="material-symbols-outlined text-[20px]">inventory_2</span><span class="">Productos</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="respaldo-y-exportacion" href="#"><span class="material-symbols-outlined text-[20px]">sync_saved_locally</span><span class="">Respaldo y exportación</span></a></nav></div><div class="p-space-md border-t border-primary-container/70 bg-[#163756]"><div class="flex items-center justify-between text-on-primary-container font-label-sm text-label-sm mb-space-xs"><span class="">Terminal Activa</span><span class="">Nodo #01</span></div><div class="flex items-center gap-space-xs text-[#88d982] font-label-sm text-label-sm"><span class="material-symbols-outlined text-[16px]">check_circle</span><span class="">Base local SQLite OK</span></div></div></aside><div class="pl-[260px]"><header class="fixed top-0 left-[260px] right-0 h-14 bg-surface-container-lowest border-b border-surface-variant z-40 flex items-center justify-between px-space-xl"><div class="flex items-center gap-space-sm text-on-surface-variant font-label-md text-label-md"><span class="material-symbols-outlined text-[18px]">storefront</span><span class="">Ferretería Central</span><span class="text-outline">/</span><span class="text-on-surface font-headline-sm text-headline-sm">Control Operativo</span></div><div class="flex items-center gap-space-lg"><div class="flex items-center gap-space-xs bg-surface-container px-space-md py-space-xs rounded text-on-surface font-label-md text-label-md"><span class="text-outline font-label-sm text-label-sm uppercase">Moneda:</span><span class="font-headline-sm text-headline-sm text-primary">CUP</span></div><div class="flex items-center gap-space-xs bg-secondary-container/30 border border-secondary text-secondary font-label-sm text-label-sm px-space-md py-space-xs rounded-full"><span class="inline-block w-2 h-2 rounded-full bg-secondary"></span><span class="">Guardado localmente</span></div><div class="text-on-surface-variant font-label-md text-label-md border-l border-surface-variant pl-space-lg flex items-center gap-space-xs"><span class="material-symbols-outlined text-[18px]">calendar_today</span><span class="">Lunes, 24 de Octubre de 2024</span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></header><main class="relative pt-14 w-full min-h-screen bg-background p-space-xl"><div class="flex flex-col w-full">
+<div class="flex flex-col gap-space-lg w-full max-w-[1366px] mx-auto pb-space-xl">
+<!-- ENCABEZADO DE PANTALLA OPERATIVA -->
+<header class="bg-surface-container-lowest p-space-lg rounded shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-space-md">
+<div class="flex items-start gap-space-md">
+<div class="w-12 h-12 rounded bg-primary text-on-primary flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-[28px]">payments</span>
+</div>
+<div>
+<h1 class="font-headline-lg text-headline-lg text-on-surface tracking-tight">Cierre de Caja y Arqueo de Efectivo</h1>
+<p class="font-body-md text-body-md text-on-surface-variant flex items-center gap-space-xs flex-wrap mt-0.5">
+<span class="">Fecha: <strong class="text-on-surface">24/10/2024</strong></span>
+<span class="text-outline">|</span>
+<span class="">Turno: <strong class="text-on-surface">Completo</strong></span>
+<span class="text-outline">|</span>
+<span class="">Responsable: <strong class="text-on-surface">Encargado de Ferretería (Nodo #01)</strong></span>
+</p>
+</div>
+</div>
+<div class="flex items-center gap-space-md shrink-0">
+<div class="flex items-center gap-space-sm bg-tertiary-fixed/40 px-space-md py-space-sm rounded">
+<span class="inline-block w-3 h-3 rounded-full bg-on-tertiary-container animate-pulse"></span>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm uppercase tracking-wider text-on-tertiary-fixed-variant">Estado de arqueo</span>
+<span class="font-label-md text-label-md text-on-surface font-bold">En proceso de conteo</span>
+</div>
+</div>
+
+</div>
+</header>
+<!-- GRID PRINCIPAL DE 2 COLUMNAS RIGIDAS -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-space-lg items-start">
+<!-- COLUMNA IZQUIERDA: ARQUEO DE BILLETES (7 COLS) -->
+<section class="lg:col-span-7 flex flex-col gap-space-md bg-surface-container-lowest p-space-lg rounded shadow-sm">
+<div class="flex items-center justify-between pb-space-xs">
+<div class="flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-primary text-[24px]">point_of_sale</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">Desglose de Billetes en Efectivo (CUP)</h2>
+</div>
+
+</div>
+<!-- TABLA DE CONTEO FISICO -->
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse" id="cashTable">
+<thead>
+<tr class="bg-surface-container h-[42px] text-on-surface font-label-md text-label-md uppercase tracking-wider">
+<th class="px-space-md">Denominación</th>
+<th class="px-space-md text-right">Valor Unitario</th>
+<th class="px-space-md text-center w-36">Cantidad Física</th>
+<th class="px-space-md text-right w-44">Subtotal (CUP)</th>
+</tr>
+</thead>
+<tbody class="font-body-md text-body-md">
+<!-- BILLETE 2000 -->
+<tr class="h-[48px] bg-surface-container-lowest hover:bg-surface-container-low transition-colors">
+<td class="px-space-md font-bold text-on-surface flex items-center gap-space-xs">
+<span class="w-3 h-3 rounded-full bg-primary-container inline-block"></span>
+                  2,000 CUP
+                </td>
+<td class="px-space-md text-right text-on-surface-variant font-semibold">2,000.00</td>
+<td class="px-space-md text-center py-1">
+<input class="qty-input w-28 h-[38px] text-center font-headline-sm text-headline-sm font-bold text-primary bg-surface-container-low rounded focus:bg-surface-container-lowest focus:outline-none transition-all cursor-text shadow-sm" data-unit="2000" min="0" type="number" value="12">
+</td>
+<td class="px-space-md text-right font-headline-sm text-headline-sm text-on-surface font-bold subtotal-display" data-subtotal="24000">
+                  24,000.00
+                </td>
+</tr>
+<!-- BILLETE 1000 -->
+<tr class="h-[48px] bg-surface-container-low hover:bg-surface-container transition-colors">
+<td class="px-space-md font-bold text-on-surface flex items-center gap-space-xs">
+<span class="w-3 h-3 rounded-full bg-primary-container inline-block"></span>
+                  1,000 CUP
+                </td>
+<td class="px-space-md text-right text-on-surface-variant font-semibold">1,000.00</td>
+<td class="px-space-md text-center py-1">
+<input class="qty-input w-28 h-[38px] text-center font-headline-sm text-headline-sm font-bold text-primary bg-surface-container-lowest rounded focus:bg-surface-container-low focus:outline-none transition-all cursor-text shadow-sm" data-unit="1000" min="0" type="number" value="15">
+</td>
+<td class="px-space-md text-right font-headline-sm text-headline-sm text-on-surface font-bold subtotal-display" data-subtotal="15000">
+                  15,000.00
+                </td>
+</tr>
+<!-- BILLETE 500 -->
+<tr class="h-[48px] bg-surface-container-lowest hover:bg-surface-container-low transition-colors">
+<td class="px-space-md font-bold text-on-surface flex items-center gap-space-xs">
+<span class="w-3 h-3 rounded-full bg-primary-container inline-block"></span>
+                  500 CUP
+                </td>
+<td class="px-space-md text-right text-on-surface-variant font-semibold">500.00</td>
+<td class="px-space-md text-center py-1">
+<input class="qty-input w-28 h-[38px] text-center font-headline-sm text-headline-sm font-bold text-primary bg-surface-container-low rounded focus:bg-surface-container-lowest focus:outline-none transition-all cursor-text shadow-sm" data-unit="500" min="0" type="number" value="10">
+</td>
+<td class="px-space-md text-right font-headline-sm text-headline-sm text-on-surface font-bold subtotal-display" data-subtotal="5000">
+                  5,000.00
+                </td>
+</tr>
+<!-- BILLETE 200 -->
+<tr class="h-[48px] bg-surface-container-low hover:bg-surface-container transition-colors">
+<td class="px-space-md font-bold text-on-surface flex items-center gap-space-xs">
+<span class="w-3 h-3 rounded-full bg-primary-container inline-block"></span>
+                  200 CUP
+                </td>
+<td class="px-space-md text-right text-on-surface-variant font-semibold">200.00</td>
+<td class="px-space-md text-center py-1">
+<input class="qty-input w-28 h-[38px] text-center font-headline-sm text-headline-sm font-bold text-primary bg-surface-container-lowest rounded focus:bg-surface-container-low focus:outline-none transition-all cursor-text shadow-sm" data-unit="200" min="0" type="number" value="11">
+</td>
+<td class="px-space-md text-right font-headline-sm text-headline-sm text-on-surface font-bold subtotal-display" data-subtotal="2200">
+                  2,200.00
+                </td>
+</tr>
+<!-- BILLETE 100 -->
+<tr class="h-[48px] bg-surface-container-lowest hover:bg-surface-container-low transition-colors">
+<td class="px-space-md font-bold text-on-surface flex items-center gap-space-xs">
+<span class="w-3 h-3 rounded-full bg-primary-container inline-block"></span>
+                  100 CUP
+                </td>
+<td class="px-space-md text-right text-on-surface-variant font-semibold">100.00</td>
+<td class="px-space-md text-center py-1">
+<input class="qty-input w-28 h-[38px] text-center font-headline-sm text-headline-sm font-bold text-primary bg-surface-container-low rounded focus:bg-surface-container-lowest focus:outline-none transition-all cursor-text shadow-sm" data-unit="100" min="0" type="number" value="18">
+</td>
+<td class="px-space-md text-right font-headline-sm text-headline-sm text-on-surface font-bold subtotal-display" data-subtotal="1800">
+                  1,800.00
+                </td>
+</tr>
+<!-- BILLETE 50 -->
+<tr class="h-[48px] bg-surface-container-low hover:bg-surface-container transition-colors">
+<td class="px-space-md font-bold text-on-surface flex items-center gap-space-xs">
+<span class="w-3 h-3 rounded-full bg-primary-container inline-block"></span>
+                  50 CUP
+                </td>
+<td class="px-space-md text-right text-on-surface-variant font-semibold">50.00</td>
+<td class="px-space-md text-center py-1">
+<input class="qty-input w-28 h-[38px] text-center font-headline-sm text-headline-sm font-bold text-primary bg-surface-container-lowest rounded focus:bg-surface-container-low focus:outline-none transition-all cursor-text shadow-sm" data-unit="50" min="0" type="number" value="9">
+</td>
+<td class="px-space-md text-right font-headline-sm text-headline-sm text-on-surface font-bold subtotal-display" data-subtotal="450">
+                  450.00
+                </td>
+</tr>
+<!-- BILLETES MENORES Y MONEDAS -->
+<tr class="h-[52px] bg-surface-container-lowest hover:bg-surface-container-low transition-colors">
+<td class="px-space-md font-bold text-on-surface flex items-center gap-space-xs pt-3">
+<span class="w-3 h-3 rounded-full bg-outline inline-block"></span>
+                  Billetes menores (20, 10, 5) y Monedas
+                </td>
+<td class="px-space-md text-right text-on-surface-variant font-semibold">Global</td>
+<td class="px-space-md text-center py-1">
+<span class="font-label-sm text-label-sm uppercase text-outline font-bold">Importe directo</span>
+</td>
+<td class="px-space-md text-right py-1">
+<div class="flex items-center justify-end gap-1">
+<span class="font-label-sm text-label-sm text-outline">CUP</span>
+<input class="w-32 h-[38px] text-right px-space-sm font-headline-sm text-headline-sm font-bold text-primary bg-surface-container-low rounded focus:bg-surface-container-lowest focus:outline-none transition-all cursor-text shadow-sm" id="minorCashInput" min="0" step="0.50" type="number" value="200.00">
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- TOTAL EFECTIVO CONTADO BANNER -->
+<div class="bg-primary-fixed/30 p-space-md rounded flex items-center justify-between mt-space-sm">
+<div class="flex items-center gap-space-sm text-on-primary-fixed">
+<span class="material-symbols-outlined text-[32px] text-primary">account_balance_wallet</span>
+<div>
+<span class="font-label-sm text-label-sm uppercase tracking-wider text-on-primary-fixed-variant block">Subtotal Físico en Gaveta</span>
+<span class="font-headline-sm text-headline-sm text-primary font-bold">Total de Efectivo Contado</span>
+</div>
+</div>
+<div class="text-right">
+<span class="font-headline-lg text-headline-lg text-primary font-bold" id="totalCashDisplay">48,650.00 CUP</span>
+<span class="font-label-sm text-label-sm text-on-primary-fixed-variant block">75 denominaciones verificadas</span>
+</div>
+</div>
+
+</section>
+<!-- COLUMNA DERECHA: LIQUIDACION Y CONCILIACION CON IPV (5 COLS) -->
+<section class="lg:col-span-5 flex flex-col gap-space-md">
+<!-- TARJETA DE RESUMEN Y CONCILIACION -->
+<div class="bg-surface-container-lowest p-space-lg rounded shadow-sm flex flex-col gap-space-md"><div class="flex items-center justify-between pb-space-xs border-b border-surface-variant"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-primary text-[24px]">balance</span><h2 class="font-headline-md text-headline-md text-on-surface">Conciliación</h2></div><span class="font-label-sm text-label-sm uppercase text-secondary font-bold bg-secondary-container/30 px-space-sm py-0.5 rounded">Al Día</span></div><div class="flex flex-col gap-space-sm"><div class="flex items-center justify-between py-space-sm px-space-md rounded bg-surface-container-low"><span class="font-body-md text-body-md text-on-surface-variant">Efectivo en Gaveta</span><span class="font-headline-sm text-headline-sm font-bold text-on-surface" id="summaryCash">48,650.00 CUP</span></div><div class="flex items-center justify-between py-space-sm px-space-md rounded bg-surface-container-low"><div class="flex flex-col"><span class="font-body-md text-body-md text-on-surface">Transferencias digitales</span><span class="font-label-sm text-label-sm text-on-surface-variant">EnZona / Transfermóvil</span></div><div class="flex items-center gap-1"><span class="font-label-sm text-label-sm text-outline">CUP</span><input class="w-32 h-[38px] text-right px-space-sm font-headline-sm text-headline-sm font-bold text-primary bg-surface-container-lowest rounded border border-surface-variant focus:outline-none transition-all" id="transfersInput" min="0" step="0.01" type="number" value="0.00"></div></div><div class="flex items-center justify-between py-space-sm px-space-md rounded bg-surface-container-low"><span class="font-label-md text-label-md text-on-surface font-semibold">Total Caja (Efectivo + Transf.)</span><span class="font-headline-sm text-headline-sm font-bold text-primary" id="totalCounted">48,650.00 CUP</span></div><div class="flex items-center justify-between py-space-sm px-space-md rounded bg-surface-container-low"><span class="font-body-md text-body-md text-on-surface-variant">Total según IPV</span><span class="font-headline-sm text-headline-sm font-semibold text-on-surface" id="ipvTarget">48,650.00 CUP</span></div></div><div class="bg-[#E8F5E9] p-space-md rounded transition-colors flex items-center justify-between" id="diffCard"><div class="flex items-center gap-space-sm"><div class="w-10 h-10 rounded-full bg-[#A5D6A7] flex items-center justify-center text-[#1B5E20]" id="diffIconContainer"><span class="material-symbols-outlined text-[24px]">check_circle</span></div><div><span class="font-label-sm text-label-sm uppercase tracking-wider text-[#1B5E20] font-bold block">Estado</span><span class="font-label-lg text-label-lg font-bold text-[#1B5E20]" id="diffStatusText">Cuadrada / Sin diferencia</span></div></div><div class="text-right"><span class="font-label-sm text-label-sm uppercase text-[#1B5E20] block font-bold">Diferencia</span><span class="font-headline-lg text-headline-lg font-bold text-[#1B5E20]" id="diffAmountText">0.00 CUP</span></div><p class="hidden" id="diffNote"></p></div><div class="flex flex-col gap-space-xs"><label class="font-label-md text-label-md text-on-surface-variant font-medium" for="observations">Observaciones (opcional):</label><textarea class="w-full p-space-sm font-body-md text-body-md text-on-surface bg-surface-container-low rounded border border-surface-variant focus:bg-surface-container-lowest focus:outline-none resize-none transition-all placeholder:text-outline" id="observations" placeholder="Notas breves del turno..." rows="2"></textarea></div><div class="flex flex-col gap-space-sm pt-space-xs"><button class="w-full h-[48px] bg-secondary hover:bg-[#1B5E20] text-on-secondary font-headline-sm text-headline-sm font-bold rounded shadow-sm flex items-center justify-center gap-space-sm transition-all cursor-pointer" id="btnCloseDay" type="button"><span class="material-symbols-outlined text-[22px]">check</span><span class="">Cerrar Día (F10)</span></button><button class="w-full h-[40px] bg-surface-container-low hover:bg-surface-container text-on-surface font-label-md text-label-md rounded border border-surface-variant flex items-center justify-center gap-space-sm transition-colors cursor-pointer" id="btnSaveDraft" type="button"><span class="material-symbols-outlined text-[18px]">save</span><span class="">Guardar borrador</span></button><a class="w-full text-center py-space-xs font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center gap-space-xs" href="#"><span class="material-symbols-outlined text-[16px]">arrow_back</span><span class="">Volver a IPV</span></a></div></div>
+<!-- INDICADOR DE AUDITORIA COMPACTO -->
+
+</section>
+</div>
+</div>
+<!-- SCRIPT PARA CÁLCULOS EN TIEMPO REAL Y CONTROL OPERATIVO -->
+<script>
+    (function() {
+      const IPV_TOTAL = 48650.00;
+      const qtyInputs = document.querySelectorAll('.qty-input');
+      const minorCashInput = document.getElementById('minorCashInput');
+      const transfersInput = document.getElementById('transfersInput');
+      const totalCashDisplay = document.getElementById('totalCashDisplay');
+      const summaryCash = document.getElementById('summaryCash');
+      const totalCounted = document.getElementById('totalCounted');
+      const diffCard = document.getElementById('diffCard');
+      const diffStatusText = document.getElementById('diffStatusText');
+      const diffAmountText = document.getElementById('diffAmountText');
+      const diffIconContainer = document.getElementById('diffIconContainer');
+      const diffNote = document.getElementById('diffNote');
+
+      function formatCUP(val) {
+        return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' CUP';
+      }
+
+      function recalculate() {
+        let cashSubtotal = 0;
+
+        qtyInputs.forEach(input => {
+          const unit = parseFloat(input.getAttribute('data-unit')) || 0;
+          const qty = parseInt(input.value) || 0;
+          const sub = unit * qty;
+          cashSubtotal += sub;
+
+          const row = input.closest('tr');
+          if (row) {
+            const display = row.querySelector('.subtotal-display');
+            if (display) {
+              display.textContent = sub.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              display.setAttribute('data-subtotal', sub);
+            }
+          }
+        });
+
+        const minorCash = parseFloat(minorCashInput.value) || 0;
+        cashSubtotal += minorCash;
+
+        const transfers = parseFloat(transfersInput.value) || 0;
+        const countedTotal = cashSubtotal + transfers;
+        const difference = countedTotal - IPV_TOTAL;
+
+        // Actualizar displays principales
+        totalCashDisplay.textContent = formatCUP(cashSubtotal);
+        summaryCash.textContent = formatCUP(cashSubtotal);
+        totalCounted.textContent = formatCUP(countedTotal);
+
+        // Estado visual del Descuadre
+        if (Math.abs(difference) < 0.01) {
+          // Exacto
+          diffCard.className = 'bg-[#E8F5E9] p-space-md rounded transition-colors flex flex-col gap-space-xs';
+          diffIconContainer.className = 'w-10 h-10 rounded-full bg-[#A5D6A7] flex items-center justify-center text-[#1B5E20]';
+          diffIconContainer.innerHTML = '<span class="material-symbols-outlined text-[24px]">verified</span>';
+          diffStatusText.className = 'font-label-lg text-label-lg font-bold text-[#1B5E20]';
+          diffStatusText.textContent = 'CAJA EXACTA / SIN DESCUADRE';
+          diffAmountText.className = 'font-headline-lg text-headline-lg font-bold text-[#1B5E20]';
+          diffAmountText.textContent = '0.00 CUP';
+          diffNote.textContent = 'El arqueo físico coincide al 100% con las ventas asentadas en el IPV.';
+        } else if (difference < 0) {
+          // Faltante
+          diffCard.className = 'bg-[#FFEBEE] p-space-md rounded transition-colors flex flex-col gap-space-xs';
+          diffIconContainer.className = 'w-10 h-10 rounded-full bg-[#FFCDD2] flex items-center justify-center text-[#B71C1C]';
+          diffIconContainer.innerHTML = '<span class="material-symbols-outlined text-[24px]">error</span>';
+          diffStatusText.className = 'font-label-lg text-label-lg font-bold text-[#B71C1C]';
+          diffStatusText.textContent = 'FALTANTE EN GAVETA DETECTADO';
+          diffAmountText.className = 'font-headline-lg text-headline-lg font-bold text-[#B71C1C]';
+          diffAmountText.textContent = formatCUP(difference);
+          diffNote.textContent = 'Se registra un faltante. Verifique billetes menores o entregas pendientes antes de imprimir el acta.';
+        } else {
+          // Sobrante
+          diffCard.className = 'bg-[#FFF9C4] p-space-md rounded transition-colors flex flex-col gap-space-xs';
+          diffIconContainer.className = 'w-10 h-10 rounded-full bg-[#FFF59D] flex items-center justify-center text-[#F57F17]';
+          diffIconContainer.innerHTML = '<span class="material-symbols-outlined text-[24px]">warning</span>';
+          diffStatusText.className = 'font-label-lg text-label-lg font-bold text-[#F57F17]';
+          diffStatusText.textContent = 'SOBRANTE EN GAVETA DETECTADO';
+          diffAmountText.className = 'font-headline-lg text-headline-lg font-bold text-[#F57F17]';
+          diffAmountText.textContent = '+' + formatCUP(difference);
+          diffNote.textContent = 'Hay más efectivo del registrado en IPV. Revise ventas no facturadas o fondo de cambio inicial.';
+        }
+      }
+
+      qtyInputs.forEach(input => input.addEventListener('input', recalculate));
+      minorCashInput.addEventListener('input', recalculate);
+      transfersInput.addEventListener('input', recalculate);
+
+      // Atajo de teclado F10
+      window.addEventListener('keydown', function(e) {
+        if (e.key === 'F10') {
+          e.preventDefault();
+          document.getElementById('btnCloseDay').click();
+        }
+      });
+
+      // Botón Cerrar Día
+      document.getElementById('btnCloseDay').addEventListener('click', function() {
+        const btn = this;
+        btn.innerHTML = '<span class="material-symbols-outlined text-[24px] animate-spin">refresh</span><span>Imprimiendo Acta de Arqueo #ARQ-20241024-01...</span>';
+        btn.classList.add('opacity-80', 'pointer-events-none');
+        setTimeout(function() {
+          btn.innerHTML = '<span class="material-symbols-outlined text-[24px]">check</span><span>¡Día Cerrado y Asentado en SQLite!</span>';
+          btn.className = 'w-full h-[52px] bg-secondary hover:bg-secondary text-on-secondary font-headline-sm text-headline-sm font-bold rounded shadow flex items-center justify-center gap-space-sm';
+        }, 1200);
+      });
+
+      // Botón Guardar Borrador
+      document.getElementById('btnSaveDraft').addEventListener('click', function() {
+        const originalText = this.innerHTML;
+        this.innerHTML = '<span class="material-symbols-outlined text-[20px] text-secondary">check_circle</span><span>Borrador guardado localmente</span>';
+        setTimeout(() => {
+          this.innerHTML = originalText;
+        }, 2000);
+      });
+
+    })();
+  </script>
+</div></main></div>
+
+</body></html>

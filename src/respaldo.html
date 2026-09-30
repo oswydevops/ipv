@@ -1,0 +1,156 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><meta content="web_dashboard" name="shell-type"><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}</style><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'">
+<link rel="stylesheet" href="fuentes.css"><link rel="stylesheet" href="styles.css">
+</head><body class="bg-surface font-body-md text-on-surface"><aside class="fixed left-0 top-0 h-full w-[260px] bg-primary text-on-primary z-50 flex flex-col justify-between select-none border-r border-primary-container"><div class="flex flex-col"><div class="p-space-lg border-b border-primary-container bg-[#163756]"><div class="flex items-center gap-space-sm mb-space-xs"><span class="material-symbols-outlined text-[#88d982] text-[20px]">hardware</span><span class="font-label-lg text-label-lg tracking-wide text-on-primary uppercase">Ferretería Central</span></div><div class="font-label-sm text-label-sm text-on-primary-container">IPV Control de Ventas e Inventario v2.4 (Cuba)</div><div class="mt-space-md pt-space-sm border-t border-primary-container/60 flex items-center justify-between"><span class="font-label-sm text-label-sm text-on-primary-container uppercase tracking-wider">Operador</span><span class="font-label-md text-label-md text-on-primary">Encargado de Turno</span></div></div><div class="px-space-md py-space-sm"><span class="font-label-sm text-label-sm text-on-primary-container uppercase tracking-wider px-space-sm">Módulos Operativos</span></div><nav class="flex flex-col gap-1 px-space-sm" data-active-classes="bg-primary-container text-on-primary font-bold shadow-inner"><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="ipv-del-dia" href="index.html"><span class="material-symbols-outlined text-[20px]">point_of_sale</span><span class="">IPV del día</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="alertas-de-stock" href="alertas.html"><span class="material-symbols-outlined text-[20px]">warning</span><span class="">Alertas de stock</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="cierre-de-caja" href="cierre.html"><span class="material-symbols-outlined text-[20px]">payments</span><span class="">Cierre de caja</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="reportes" href="reportes.html"><span class="material-symbols-outlined text-[20px]">bar_chart</span><span class="">Reportes</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="productos" href="productos.html"><span class="material-symbols-outlined text-[20px]">inventory_2</span><span class="">Productos</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-primary-container hover:bg-primary-container/70 hover:text-on-primary font-label-md text-label-md transition-colors" data-path="respaldo-y-exportacion" href="respaldo.html"><span class="material-symbols-outlined text-[20px]">sync_saved_locally</span><span class="">Respaldo y exportación</span></a></nav></div><div class="p-space-md border-t border-primary-container/70 bg-[#163756]"><div class="flex items-center justify-between text-on-primary-container font-label-sm text-label-sm mb-space-xs"><span class="">Terminal Activa</span><span class="">Nodo #01</span></div><div class="flex items-center gap-space-xs text-[#88d982] font-label-sm text-label-sm"><span class="material-symbols-outlined text-[16px]">check_circle</span><span class="">Base local SQLite OK</span></div></div></aside><div class="pl-[260px]"><header class="fixed top-0 left-[260px] right-0 h-14 bg-surface-container-lowest border-b border-surface-variant z-40 flex items-center justify-between px-space-xl"><div class="flex items-center gap-space-sm text-on-surface-variant font-label-md text-label-md"><span class="material-symbols-outlined text-[18px]">storefront</span><span class="">Ferretería Central</span><span class="text-outline">/</span><span class="text-on-surface font-headline-sm text-headline-sm">Control Operativo</span></div><div class="flex items-center gap-space-lg"><div class="flex items-center gap-space-xs bg-surface-container px-space-md py-space-xs rounded text-on-surface font-label-md text-label-md"><span class="text-outline font-label-sm text-label-sm uppercase">Moneda:</span><span class="font-headline-sm text-headline-sm text-primary">CUP</span></div><div class="flex items-center gap-space-xs bg-secondary-container/30 border border-secondary text-secondary font-label-sm text-label-sm px-space-md py-space-xs rounded-full"><span class="inline-block w-2 h-2 rounded-full bg-secondary"></span><span class="">Guardado localmente</span></div><div class="text-on-surface-variant font-label-md text-label-md border-l border-surface-variant pl-space-lg flex items-center gap-space-xs"><span class="material-symbols-outlined text-[18px]">calendar_today</span><span class=""><span data-fecha-larga>Lunes, 24 de Octubre de 2024</span></span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></header><main class="relative pt-14 w-full min-h-screen bg-background p-space-xl"><div class="flex flex-col w-full gap-space-lg select-none">
+<!-- Encabezado de Sección -->
+<div class="flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<div>
+<h1 class="font-headline-lg text-headline-lg text-primary tracking-tight">Seguridad de Datos, Respaldo y Exportación</h1>
+<p class="font-body-md text-body-md text-on-surface-variant">Copias de seguridad del sistema y generación de planillas para memorias USB o archivo local</p>
+</div>
+<!-- Chip Informativo de Almacenamiento Local Offline -->
+<div class="flex items-center gap-space-sm bg-surface-container-high px-space-md py-space-xs rounded-lg">
+<span class="material-symbols-outlined text-primary text-[20px]">save</span>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase leading-none">Unidad Local Activa</span>
+<span class="font-label-md text-label-md text-primary font-bold">D:\RESPALDOS_IPV (42.8 GB libres)</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Indicador de Estado de Respaldo Prominente -->
+<div class="bg-secondary-container/20 rounded-xl p-space-lg shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-space-md" id="status-card"><div class="flex items-center gap-space-md"><div class="w-10 h-10 rounded-lg bg-secondary/15 flex items-center justify-center shrink-0 text-secondary"><span class="material-symbols-outlined text-[24px]">verified_user</span></div><div class="flex flex-col md:flex-row md:items-center gap-1 md:gap-space-sm"><span class="font-headline-sm text-headline-sm text-secondary font-bold">Estado: Protegido</span><span class="hidden md:inline text-outline">•</span><span class="font-body-md text-body-md text-on-surface-variant">Último respaldo: Hoy 14:15 hrs</span></div></div><div class="flex items-center gap-space-sm shrink-0"><button class="h-9 px-space-md bg-surface-container-lowest text-on-surface font-label-md text-label-md rounded shadow-sm hover:bg-surface-container flex items-center gap-space-xs transition-colors cursor-pointer" onclick="verificarIntegridad()"><span class="material-symbols-outlined text-[18px]">verified</span><span class="">Verificar Integridad</span></button></div></div>
+<!-- Cuadrícula 2x2 de Tarjetas de Acción Rápida -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-lg"><!-- Tarjeta 1: Exportar día a Excel --><div class="bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col justify-between gap-space-md border border-surface-variant"><div class="flex items-start gap-space-md"><div class="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center shrink-0 text-secondary"><span class="material-symbols-outlined text-[28px]">description</span></div><div class="flex flex-col gap-1"><h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold">Exportar día a Excel</h2><p class="font-body-md text-body-md text-on-surface-variant">Genera el archivo IPV con el balance y ventas de la jornada de hoy.</p></div></div><div class="pt-space-xs"><button class="w-full h-11 bg-surface-container text-on-surface rounded-lg font-label-md text-label-md hover:bg-surface-container-high transition-colors flex items-center justify-center gap-space-sm cursor-pointer" id="btn-export-day" onclick="exportarDia()"><span class="material-symbols-outlined text-[20px]">download</span><span class="">Descargar planilla de hoy (.xlsx)</span></button></div></div><!-- Tarjeta 2: Exportar mes a Excel --><div class="bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col justify-between gap-space-md border border-surface-variant"><div class="flex items-start gap-space-md"><div class="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center shrink-0 text-primary"><span class="material-symbols-outlined text-[28px]">calendar_month</span></div><div class="flex flex-col gap-1"><h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold">Exportar mes a Excel</h2><p class="font-body-md text-body-md text-on-surface-variant">Consolidado mensual con el resumen acumulado y estadísticas de venta.</p></div></div><div class="pt-space-xs"><button class="w-full h-11 bg-surface-container text-on-surface rounded-lg font-label-md text-label-md hover:bg-surface-container-high transition-colors flex items-center justify-center gap-space-sm cursor-pointer" id="btn-export-month" onclick="exportarMes()"><span class="material-symbols-outlined text-[20px]">calendar_month</span><span class="">Exportar mes completo (Octubre)</span></button></div></div><!-- Tarjeta 3: Crear respaldo --><div class="bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col justify-between gap-space-md border border-surface-variant"><div class="flex items-start gap-space-md"><div class="w-12 h-12 rounded-lg bg-secondary/10 flex items-center justify-center shrink-0 text-secondary"><span class="material-symbols-outlined text-[28px]">save</span></div><div class="flex flex-col gap-1"><h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold">Crear respaldo</h2><p class="font-body-md text-body-md text-on-surface-variant">Guarda una copia de seguridad segura de los datos y productos actuales.</p></div></div><div class="pt-space-xs"><button class="w-full h-11 bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:bg-primary-container transition-colors shadow-sm flex items-center justify-center gap-space-sm cursor-pointer" id="btn-create-backup" onclick="crearRespaldo()"><span class="material-symbols-outlined text-[20px]">play_arrow</span><span class="">Crear nuevo respaldo ahora (F11)</span></button></div></div><!-- Tarjeta 4: Restaurar respaldo --><div class="bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col justify-between gap-space-md border border-surface-variant"><div class="flex items-start gap-space-md"><div class="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center shrink-0 text-on-surface-variant"><span class="material-symbols-outlined text-[28px]">settings_backup_restore</span></div><div class="flex flex-col gap-1"><h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold">Restaurar respaldo</h2><p class="font-body-md text-body-md text-on-surface-variant">Recupera los datos del sistema a partir de un archivo previo guardado.</p></div></div><div class="pt-space-xs"><button class="w-full h-11 bg-surface-container text-on-surface rounded-lg font-label-md text-label-md hover:bg-surface-container-high transition-colors flex items-center justify-center gap-space-sm cursor-pointer" id="btn-restore" onclick="abrirRestaurarModal()"><span class="material-symbols-outlined text-[20px]">folder_open</span><span class="">Examinar archivo de respaldo...</span></button></div></div></div>
+<!-- Historial de los Últimos 3 Respaldos -->
+<div class="bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col gap-space-md">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-primary text-[22px]">history</span>
+<h3 class="font-headline-sm text-headline-sm text-on-surface font-bold">Historial de los últimos 3 respaldos</h3>
+</div>
+<div class="flex items-center gap-space-xs text-on-surface-variant font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[16px]">info</span>
+<span class="">Respaldos automáticos configurados al cierre diario</span>
+</div>
+</div>
+<!-- Contenedor de la Tabla -->
+<div class="overflow-x-auto rounded-lg">
+<table class="w-full text-left font-body-md text-body-md"><thead><tr class="bg-surface-container h-10 text-on-surface font-label-md text-label-md"><th class="px-space-md font-semibold">Fecha y Hora</th><th class="px-space-md font-semibold">Archivo</th><th class="px-space-md font-semibold text-right">Estado</th></tr></thead><tbody class="divide-y-0" id="table-history-body"><tr class="h-11 bg-surface-container-lowest hover:bg-surface-container-low transition-colors"><td class="px-space-md text-on-surface font-medium whitespace-nowrap"><span class="flex items-center gap-space-xs"><span class="material-symbols-outlined text-secondary text-[18px]">event_available</span> 24/10/2024 - 14:15 hrs</span></td><td class="px-space-md text-on-surface font-mono text-[14px]">backup_ferreteria_20241024.dat</td><td class="px-space-md text-right"><span class="inline-flex items-center gap-1 text-secondary font-label-md text-label-md font-medium"><span class="material-symbols-outlined text-[16px]">check_circle</span> Correcto</span></td></tr><tr class="h-11 bg-surface-container-low hover:bg-surface-container transition-colors"><td class="px-space-md text-on-surface font-medium whitespace-nowrap"><span class="flex items-center gap-space-xs"><span class="material-symbols-outlined text-secondary text-[18px]">event_available</span> 23/10/2024 - 19:40 hrs</span></td><td class="px-space-md text-on-surface font-mono text-[14px]">backup_ferreteria_20241023.dat</td><td class="px-space-md text-right"><span class="inline-flex items-center gap-1 text-secondary font-label-md text-label-md font-medium"><span class="material-symbols-outlined text-[16px]">check_circle</span> Correcto</span></td></tr><tr class="h-11 bg-surface-container-lowest hover:bg-surface-container-low transition-colors"><td class="px-space-md text-on-surface font-medium whitespace-nowrap"><span class="flex items-center gap-space-xs"><span class="material-symbols-outlined text-secondary text-[18px]">event_available</span> 22/10/2024 - 20:05 hrs</span></td><td class="px-space-md text-on-surface font-mono text-[14px]">backup_ferreteria_20241022.dat</td><td class="px-space-md text-right"><span class="inline-flex items-center gap-1 text-secondary font-label-md text-label-md font-medium"><span class="material-symbols-outlined text-[16px]">check_circle</span> Correcto</span></td></tr></tbody></table>
+</div>
+</div>
+<!-- Modal de Diálogo Técnico / Restauración -->
+<div class="hidden fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-space-md" id="modal-restaurar">
+<div class="bg-surface-container-lowest rounded-xl max-w-lg w-full p-space-xl shadow-xl flex flex-col gap-space-lg">
+<div class="flex items-start gap-space-md">
+<div class="w-12 h-12 rounded-lg bg-error-container/40 text-error flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-[32px]">warning</span>
+</div>
+<div class="flex flex-col gap-space-xs">
+<h3 class="font-headline-md text-headline-md text-on-surface">Advertencia de Restauración</h3>
+<p class="font-body-md text-body-md text-on-surface-variant">
+            Esta acción sobrescribirá todos los registros de inventario y transacciones actuales de la terminal con el archivo seleccionado.
+          </p>
+</div>
+</div>
+<div class="bg-surface-container p-space-md rounded-lg flex flex-col gap-space-xs">
+<label class="font-label-sm text-label-sm text-on-surface-variant uppercase font-bold">Ruta del archivo local o memoria USB:</label>
+<div class="flex items-center gap-space-sm">
+<input class="bg-surface-container-lowest text-on-surface font-mono text-body-md px-space-sm py-2 rounded w-full outline-none select-all" readonly="" type="text" value="E:\COPIAS_SEGURIDAD\backup_ferreteria_20241024.dat">
+<button class="h-10 px-space-md bg-surface-container-highest text-on-surface font-label-md text-label-md rounded shrink-0 hover:bg-outline-variant">Examinar</button>
+</div>
+</div>
+<div class="flex items-center justify-end gap-space-md pt-space-xs">
+<button class="h-11 px-space-lg bg-surface-container-high text-on-surface font-label-md text-label-md rounded-lg hover:bg-surface-container-highest cursor-pointer" onclick="cerrarRestaurarModal()">
+          Cancelar
+        </button>
+<button class="h-11 px-space-lg bg-error text-on-error font-label-md text-label-md rounded-lg hover:opacity-90 shadow cursor-pointer flex items-center gap-space-xs" onclick="confirmarRestauracion()">
+<span class="material-symbols-outlined text-[20px]">settings_backup_restore</span>
+<span class="">Proceder con la Restauración</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Toast de Notificación Temporal -->
+<div class="fixed bottom-6 right-6 hidden bg-primary text-on-primary px-space-lg py-space-md rounded-xl shadow-xl z-50 flex items-center gap-space-md" id="toast-notify">
+<span class="material-symbols-outlined text-[#88d982] text-[24px]" id="toast-icon">check_circle</span>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md font-bold" id="toast-title">Operación Exitosa</span>
+<span class="font-body-md text-body-md text-on-primary-container" id="toast-message">Archivo generado y verificado.</span>
+</div>
+</div>
+</div>
+<script>
+  function mostrarNotificacion(titulo, mensaje, icono = 'check_circle') {
+    const toast = document.getElementById('toast-notify');
+    const toastTitle = document.getElementById('toast-title');
+    const toastMsg = document.getElementById('toast-message');
+    const toastIcon = document.getElementById('toast-icon');
+
+    toastTitle.textContent = titulo;
+    toastMsg.textContent = mensaje;
+    toastIcon.textContent = icono;
+
+    toast.classList.remove('hidden');
+    setTimeout(() => {
+      toast.classList.add('hidden');
+    }, 4000);
+  }
+
+  function exportarDia() {
+    const btn = document.getElementById('btn-export-day');
+    const prevText = btn.innerHTML;
+    btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[22px]">progress_activity</span><span>Generando IPV_2024-10-24.xlsx...</span>`;
+    setTimeout(() => {
+      btn.innerHTML = prevText;
+      mostrarNotificacion('Exportación completada', 'Planilla diaria guardada en D:\\RESPALDOS_IPV\\IPV_2024-10-24.xlsx');
+    }, 1200);
+  }
+
+  function exportarMes() {
+    const btn = document.getElementById('btn-export-month');
+    const prevText = btn.innerHTML;
+    btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[22px]">progress_activity</span><span>Consolidando Octubre 2024...</span>`;
+    setTimeout(() => {
+      btn.innerHTML = prevText;
+      mostrarNotificacion('Consolidado mensual listo', 'Archivo MENSUAL_OCTUBRE_2024.xlsx exportado correctamente.');
+    }, 1500);
+  }
+
+  function crearRespaldo() {
+    const btn = document.getElementById('btn-create-backup');
+    const prevText = btn.innerHTML;
+    btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[22px]">progress_activity</span><span>Respaldando base de datos SQLite...</span>`;
+    setTimeout(() => {
+      btn.innerHTML = prevText;
+      mostrarNotificacion('Respaldo finalizado con éxito', 'Nuevo archivo backup_ferreteria_20241024_1740.dat creado.');
+    }, 1800);
+  }
+
+  function verificarIntegridad() {
+    mostrarNotificacion('Integridad Confirmada', 'Base SQLite local OK. Los índices y sumas de verificación coinciden al 100%.', 'task_alt');
+  }
+
+  function abrirRestaurarModal() {
+    document.getElementById('modal-restaurar').classList.remove('hidden');
+  }
+
+  function cerrarRestaurarModal() {
+    document.getElementById('modal-restaurar').classList.add('hidden');
+  }
+
+  function confirmarRestauracion() {
+    cerrarRestaurarModal();
+    mostrarNotificacion('Restauración iniciada', 'Recuperando datos desde archivo seleccionado... El sistema se reiniciará.', 'sync');
+  }
+
+  // Atajo de teclado F11 para crear nuevo respaldo instantáneo
+  window.addEventListener('keydown', function(e) {
+    if (e.key === 'F11') {
+      e.preventDefault();
+      crearRespaldo();
+    }
+  });
+</script></main></div>
+
+<script src="common.js"></script></body></html>
