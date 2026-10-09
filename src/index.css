@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-headline: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --color-surface: #e8eaf0;
+  --color-on-surface: #2e3040;
+  --color-on-surface-variant: #585a68;
+  --color-primary: #6366f1;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #818cf8;
+  --color-primary-fixed: #e0e2ff;
+  --color-on-primary-fixed: #1e1b4b;
+  --color-tertiary: #7c3aed;
+  --color-tertiary-container: #a78bfa;
+  --color-tertiary-fixed: #ede9fe;
+  --color-on-tertiary-fixed: #2e1065;
+  --color-error: #dc2626;
+  --color-error-container: #fee2e2;
+  --color-on-error-container: #991b1b;
+  --color-surface-container: #e2e4ea;
+  --color-surface-container-low: #e5e7ed;
+  --color-surface-container-high: #dcdee4;
+  --color-surface-container-highest: #d6d8de;
+  --color-surface-bright: #edeef4;
+  --color-inverse-surface: #2e3040;
+  --color-outline: #8a8c9a;
+  --color-outline-variant: #d0d2dc;
+}
+
+.neo-raised {
+  box-shadow: 6px 6px 14px rgba(0, 0, 0, 0.06), -6px -6px 14px rgba(255, 255, 255, 0.75);
+}
+
+.neo-inset {
+  box-shadow: inset 3px 3px 6px rgba(0, 0, 0, 0.06), inset -3px -3px 6px rgba(255, 255, 255, 0.65);
+}
+
+.neo-raised-sm {
+  box-shadow: 3px 3px 8px rgba(0, 0, 0, 0.05), -3px -3px 8px rgba(255, 255, 255, 0.7);
+}
+
+.neo-inset-sm {
+  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.05), inset -2px -2px 4px rgba(255, 255, 255, 0.6);
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background-color: #e8eaf0;
+  color: #2e3040;
+  overscroll-behavior: none;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
