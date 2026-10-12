@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -12,20 +12,10 @@ import { CashCloseView } from './views/CashCloseView';
 import { ReportsView } from './views/ReportsView';
 import { ProductsView } from './views/ProductsView';
 import { BackupView } from './views/BackupView';
+import { SalesHistoryView } from './views/SalesHistoryView';
 
 const MainContent: React.FC = () => {
-  const { currentView, openSaleModal } = useApp();
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F1') {
-        e.preventDefault();
-        openSaleModal();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [openSaleModal]);
+  const { currentView } = useApp();
 
   return (
     <div className="bg-surface font-body text-on-surface antialiased min-h-screen">
@@ -35,6 +25,7 @@ const MainContent: React.FC = () => {
         <main className="relative pt-20 bg-surface min-h-screen p-8">
           {currentView === 'dashboard' && <DashboardView />}
           {currentView === 'ipv-del-dia' && <IPVView />}
+          {currentView === 'historial-ventas' && <SalesHistoryView />}
           {currentView === 'alertas-de-stock' && <StockAlertsView />}
           {currentView === 'cierre-de-caja' && <CashCloseView />}
           {currentView === 'reportes' && <ReportsView />}

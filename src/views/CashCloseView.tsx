@@ -1,8 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
+import { DayClose } from '../data/api';
+import { APP_NAME } from '../config';
 
 export const CashCloseView: React.FC = () => {
   const {
+    todayDate,
+    isCurrentDayClosed,
+    currentIpvDay,
     denominations,
     updateDenominationCount,
     menoresAmount,
@@ -15,19 +20,66 @@ export const CashCloseView: React.FC = () => {
     ipvTotalVendido,
     totalVentasEfectivo,
     totalVentasTransferencia,
-    openSaleModal,
-    showToast,
     recalculateCash,
+    closeDay,
+    reopenDay,
+    listCloses,
+    showToast,
   } = useApp();
 
-  const [responsibleName, setResponsibleName] = useState('M. Gómez');
-  const [closeDate] = useState('24 de Octubre de 2024');
-  const [closeTime] = useState('18:30 hrs');
+  const [responsibleName, setResponsibleName] = useState('Vendedor');
+  const [closeTime, setCloseTime] = useState('');
   const [notes, setNotes] = useState('');
   const [showActaModal, setShowActaModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showReopenConfirm, setShowReopenConfirm] = useState(false);
+  const [historyList, setHistoryList] = useState<DayClose[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Format currency in es-CU / standard style
+  // Set real current time and update every minute
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCloseTime(
+        now.toLocaleTimeString('es-CU', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }) + ' hrs'
+      );
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Proponer transferencias desde ipv.getDay(hoy).sales.transferencia si aún no se ha modificado
+  useEffect(() => {
+    if (currentIpvDay?.sales?.transferencia !== undefined) {
+      setTransferenciasAmount(currentIpvDay.sales.transferencia);
+    }
+  }, [currentIpvDay, setTransferenciasAmount]);
+
+  // Cargar historial real desde api.cash.listCloses
+  const loadHistory = useCallback(async () => {
+    setIsLoadingHistory(true);
+    try {
+      const closes = await listCloses(50);
+      setHistoryList(closes);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [listCloses]);
+
+  useEffect(() => {
+    if (showHistoryModal) {
+      loadHistory();
+    }
+  }, [showHistoryModal, loadHistory]);
+
+  // Format currency in es-CU standard style
   const formatCUP = (val: number) => {
     return Number(val).toLocaleString('es-CU', {
       minimumFractionDigits: 2,
@@ -42,24 +94,35 @@ export const CashCloseView: React.FC = () => {
   const cashDifference = totalCashFisico - totalVentasEfectivo;
   const transferDifference = transferenciasAmount - totalVentasTransferencia;
 
-  // Keyboard shortcut F12 to complete close
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F12') {
-        e.preventDefault();
-        setShowActaModal(true);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
-  const handleSaveDraft = () => {
-    showToast('Cierre Parcial Guardado', 'Se ha salvado el borrador del cierre en la base SQLite.');
+  // Manejar el cierre real del día
+  const handlePerformClose = async () => {
+    if (isCurrentDayClosed) {
+      showToast('Aviso', 'El día ya está cerrado.', 'info');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const success = await closeDay(todayDate, notes.trim() || undefined);
+      if (success) {
+        setShowActaModal(false);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleCompleteClose = () => {
-    setShowActaModal(true);
+  // Manejar la reapertura con confirmación
+  const handlePerformReopen = async () => {
+    setIsSubmitting(true);
+    try {
+      const success = await reopenDay(todayDate);
+      if (success) {
+        setShowReopenConfirm(false);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -67,9 +130,22 @@ export const CashCloseView: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="font-headline font-bold text-2xl lg:text-3xl text-on-surface tracking-tight">
-            Cierre de Caja
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="font-headline font-bold text-2xl lg:text-3xl text-on-surface tracking-tight">
+              Cierre de Caja
+            </h1>
+            {isCurrentDayClosed ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-600"></span>
+                DÍA CERRADO
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+                JORNADA ABIERTA
+              </span>
+            )}
+          </div>
           <p className="text-xs sm:text-sm text-on-surface-variant font-medium">
             Conciliación de efectivo y transferencias bancarias (EnZona / Transfermóvil).
           </p>
@@ -78,29 +154,61 @@ export const CashCloseView: React.FC = () => {
         {/* Quick Actions Top Bar */}
         <div className="flex items-center gap-3">
           <div className="h-11 px-4 rounded-xl bg-surface neo-inset flex items-center gap-2.5 text-xs text-on-surface-variant font-medium">
-            <span className="material-symbols-outlined text-primary text-[18px]">search_off</span>
+            <span className="material-symbols-outlined text-primary text-[18px]">calendar_today</span>
             <span>
-              Corte: <strong>18:30 hrs</strong>
+              Fecha: <strong className="text-on-surface font-mono">{todayDate}</strong>
             </span>
+            <span className="text-outline text-xs">•</span>
+            <span className="font-mono text-on-surface">{closeTime}</span>
           </div>
+
           <button
             onClick={recalculateCash}
-            className="h-11 px-4 rounded-xl bg-surface neo-raised hover:text-primary active:neo-inset flex items-center gap-2 text-xs font-semibold text-on-surface transition-all"
+            className="h-11 px-4 rounded-xl bg-surface neo-raised hover:text-primary active:neo-inset flex items-center gap-2 text-xs font-semibold text-on-surface transition-all cursor-pointer"
             type="button"
           >
             <span className="material-symbols-outlined text-[18px]">sync</span>
             <span>Recalcular</span>
           </button>
+
           <button
             onClick={() => setShowHistoryModal(true)}
-            className="h-11 w-11 rounded-xl bg-surface neo-raised hover:text-primary active:neo-inset flex items-center justify-center text-on-surface-variant transition-all"
-            title="Historial de arqueos previos"
+            className="h-11 px-3.5 rounded-xl bg-surface neo-raised hover:text-primary active:neo-inset flex items-center gap-2 text-xs font-semibold text-on-surface-variant transition-all cursor-pointer"
+            title="Historial de arqueos previos de SQLite"
             type="button"
           >
             <span className="material-symbols-outlined text-[20px]">history</span>
+            <span className="hidden sm:inline">Historial</span>
           </button>
         </div>
       </div>
+
+      {/* Banner de estado cerrado */}
+      {isCurrentDayClosed && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-[22px]">lock</span>
+            </div>
+            <div>
+              <h3 className="font-headline font-bold text-sm text-amber-950">
+                La jornada del día {todayDate} está cerrada
+              </h3>
+              <p className="text-xs text-amber-900/80">
+                Las operaciones de cobro y anulación de ventas están bloqueadas en el sistema.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowReopenConfirm(true)}
+            className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer self-start sm:self-auto shrink-0"
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[16px]">lock_open</span>
+            <span>Reabrir Día</span>
+          </button>
+        </div>
+      )}
 
       {/* Primary Asymmetric Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-7">
@@ -161,7 +269,8 @@ export const CashCloseView: React.FC = () => {
                       <div className="flex items-center gap-1 bg-surface neo-inset rounded-lg px-2 py-1">
                         <button
                           onClick={() => updateDenominationCount(denom.id, denom.count - 1)}
-                          className="w-5 h-5 rounded flex items-center justify-center text-on-surface-variant hover:text-primary transition-colors text-sm font-bold"
+                          disabled={isCurrentDayClosed}
+                          className="w-5 h-5 rounded flex items-center justify-center text-on-surface-variant hover:text-primary transition-colors text-sm font-bold disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                           type="button"
                         >
                           -
@@ -169,15 +278,17 @@ export const CashCloseView: React.FC = () => {
                         <input
                           type="number"
                           min="0"
+                          disabled={isCurrentDayClosed}
                           value={denom.count}
                           onChange={(e) =>
                             updateDenominationCount(denom.id, parseInt(e.target.value) || 0)
                           }
-                          className="w-12 bg-transparent text-center font-mono text-xs font-semibold text-on-surface focus:outline-none"
+                          className="w-12 bg-transparent text-center font-mono text-xs font-semibold text-on-surface focus:outline-none disabled:opacity-60"
                         />
                         <button
                           onClick={() => updateDenominationCount(denom.id, denom.count + 1)}
-                          className="w-5 h-5 rounded flex items-center justify-center text-on-surface-variant hover:text-primary transition-colors text-sm font-bold"
+                          disabled={isCurrentDayClosed}
+                          className="w-5 h-5 rounded flex items-center justify-center text-on-surface-variant hover:text-primary transition-colors text-sm font-bold disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                           type="button"
                         >
                           +
@@ -215,9 +326,10 @@ export const CashCloseView: React.FC = () => {
                       type="number"
                       step="0.5"
                       min="0"
+                      disabled={isCurrentDayClosed}
                       value={menoresAmount}
                       onChange={(e) => setMenoresAmount(parseFloat(e.target.value) || 0)}
-                      className="w-16 bg-transparent text-center font-mono text-xs font-semibold text-on-surface focus:outline-none"
+                      className="w-16 bg-transparent text-center font-mono text-xs font-semibold text-on-surface focus:outline-none disabled:opacity-60"
                     />
                   </div>
                 </div>
@@ -364,9 +476,9 @@ export const CashCloseView: React.FC = () => {
                       Monto Total de Transferencias
                     </span>
                     <span className="text-[10px] text-on-surface-variant font-medium">
-                      EnZona / Transfermóvil (Ventas: ${formatCUP(totalVentasTransferencia)})
+                      EnZona / Transfermóvil (Propuesto del IPV: ${formatCUP(totalVentasTransferencia)})
                     </span>
-                    {transferDifference !== 0 && (
+                    {transferDifference !== 0 && !isCurrentDayClosed && (
                       <button
                         onClick={() => setTransferenciasAmount(totalVentasTransferencia)}
                         className="text-[10px] text-primary underline text-left font-semibold mt-0.5 cursor-pointer"
@@ -383,9 +495,10 @@ export const CashCloseView: React.FC = () => {
                     type="number"
                     step="0.01"
                     min="0"
+                    disabled={isCurrentDayClosed}
                     value={transferenciasAmount}
                     onChange={(e) => setTransferenciasAmount(parseFloat(e.target.value) || 0)}
-                    className="w-24 bg-transparent text-right font-mono text-xs font-bold text-primary focus:outline-none"
+                    className="w-24 bg-transparent text-right font-mono text-xs font-bold text-primary focus:outline-none disabled:opacity-60"
                     placeholder="0.00"
                   />
                   <span className="text-[10px] font-bold text-primary font-mono ml-0.5">CUP</span>
@@ -419,7 +532,7 @@ export const CashCloseView: React.FC = () => {
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t border-primary/15 text-xs font-semibold">
                   <span className="text-on-surface-variant text-[11px]">
-                    Cuadre Global vs Facturado (IPV ${formatCUP(ipvTotalVendido)}):
+                    Diferencia Real vs Facturado (IPV ${formatCUP(ipvTotalVendido)}):
                   </span>
                   <span
                     className={`font-mono text-xs font-bold ${
@@ -450,7 +563,7 @@ export const CashCloseView: React.FC = () => {
                 </div>
                 <span className="text-xs font-bold text-on-surface">Datos de Custodia y Turno</span>
               </div>
-              <span className="text-[10px] text-on-surface-variant font-mono">{closeDate}</span>
+              <span className="text-[10px] text-on-surface-variant font-mono">{todayDate}</span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-xs pt-1">
@@ -463,18 +576,18 @@ export const CashCloseView: React.FC = () => {
                   value={responsibleName}
                   onChange={(e) => setResponsibleName(e.target.value)}
                   className="font-bold text-on-surface mt-0.5 bg-transparent focus:outline-none text-xs w-full"
-                  placeholder="Nombre del responsable"
+                  placeholder="Nombre del vendedor"
                 />
-                <span className="text-[10px] text-on-surface-variant mt-0.5">Encargado de Turno</span>
+                <span className="text-[10px] text-on-surface-variant mt-0.5">Vendedor</span>
               </div>
               <div className="p-2.5 rounded-xl bg-surface neo-inset flex flex-col justify-center">
                 <span className="text-[10px] text-on-surface-variant uppercase font-medium">
                   Fecha del Cierre
                 </span>
-                <span className="font-bold text-on-surface mt-0.5 truncate text-xs">
-                  {closeDate}
+                <span className="font-bold text-on-surface mt-0.5 truncate text-xs font-mono">
+                  {todayDate}
                 </span>
-                <span className="text-[10px] text-on-surface-variant">{closeTime}</span>
+                <span className="text-[10px] text-on-surface-variant font-mono">{closeTime}</span>
               </div>
             </div>
 
@@ -484,38 +597,50 @@ export const CashCloseView: React.FC = () => {
                 className="text-[10px] font-semibold text-on-surface-variant uppercase"
                 htmlFor="cash-notes"
               >
-                Observaciones del corte (opcional)
+                Observaciones del arqueo (opcional)
               </label>
               <input
                 id="cash-notes"
                 type="text"
+                disabled={isCurrentDayClosed}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Sin incidencias en el arqueo del día..."
-                className="w-full bg-surface neo-inset px-3 py-2 rounded-xl text-xs text-on-surface placeholder:text-on-surface-variant/60 focus:outline-none"
+                className="w-full bg-surface neo-inset px-3 py-2 rounded-xl text-xs text-on-surface placeholder:text-on-surface-variant/60 focus:outline-none disabled:opacity-60"
               />
             </div>
           </div>
 
           {/* Action Buttons */}
           <div className="flex flex-col gap-3">
-            <button
-              onClick={handleCompleteClose}
-              className="w-full py-4 px-6 rounded-2xl bg-primary text-white font-headline font-semibold text-sm shadow-[0_8px_20px_rgba(99,102,241,0.25)] hover:opacity-95 active:scale-[0.99] transition-all flex items-center justify-center gap-3 cursor-pointer"
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[20px]">verified</span>
-              <span>Completar Cierre de Caja e Imprimir Acta [F12]</span>
-            </button>
+            {isCurrentDayClosed ? (
+              <button
+                onClick={() => setShowReopenConfirm(true)}
+                className="w-full py-4 px-6 rounded-2xl bg-amber-600 text-white font-headline font-semibold text-sm shadow-md hover:bg-amber-700 active:scale-[0.99] transition-all flex items-center justify-center gap-3 cursor-pointer"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[20px]">lock_open</span>
+                <span>Reabrir Jornada del Día</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowActaModal(true)}
+                className="w-full py-4 px-6 rounded-2xl bg-primary text-white font-headline font-semibold text-sm shadow-[0_8px_20px_rgba(99,102,241,0.25)] hover:opacity-95 active:scale-[0.99] transition-all flex items-center justify-center gap-3 cursor-pointer"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[20px]">verified</span>
+                <span>Cerrar Día y Generar Acta</span>
+              </button>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <button
-                onClick={handleSaveDraft}
+                onClick={() => setShowHistoryModal(true)}
                 className="py-2.5 px-4 rounded-xl bg-surface neo-raised hover:text-primary active:neo-inset text-xs font-semibold text-on-surface transition-all flex items-center justify-center gap-2 cursor-pointer"
                 type="button"
               >
-                <span className="material-symbols-outlined text-[16px]">save</span>
-                <span>Guardar Parcial</span>
+                <span className="material-symbols-outlined text-[16px]">history</span>
+                <span>Historial Arqueos</span>
               </button>
               <button
                 onClick={() => setShowActaModal(true)}
@@ -523,15 +648,9 @@ export const CashCloseView: React.FC = () => {
                 type="button"
               >
                 <span className="material-symbols-outlined text-[16px]">print</span>
-                <span>Vista Previa</span>
+                <span>Vista Previa Acta</span>
               </button>
             </div>
-          </div>
-
-          {/* Security Notice */}
-          <div className="flex items-center gap-2 text-[10px] text-on-surface-variant px-1 justify-center">
-            <span className="material-symbols-outlined text-[14px]">shield</span>
-            <span>El cierre genera una firma criptográfica en el archivo local SQLite.</span>
           </div>
         </div>
       </div>
@@ -547,7 +666,7 @@ export const CashCloseView: React.FC = () => {
                   <h3 className="font-headline font-bold text-sm text-on-surface">
                     Acta Oficial de Cierre de Caja
                   </h3>
-                  <p className="text-[10px] text-on-surface-variant">{closeDate} • {closeTime}</p>
+                  <p className="text-[10px] text-on-surface-variant font-mono">{todayDate} • {closeTime}</p>
                 </div>
               </div>
               <button
@@ -562,18 +681,17 @@ export const CashCloseView: React.FC = () => {
             {/* Thermal Slip Simulation */}
             <div className="bg-white p-5 rounded-xl shadow-inner font-mono text-[11px] text-neutral-800 flex flex-col gap-2 border border-neutral-300">
               <div className="text-center pb-2 border-b border-dashed border-neutral-400">
-                <p className="font-bold text-sm">FERRETERÍA CENTRAL</p>
-                <p className="text-[10px]">CONTROL DE VENTAS</p>
-                <p className="text-[10px]">RUT / REGISTRO: 0102934-CU</p>
+                <p className="font-bold text-sm">{APP_NAME}</p>
+                <p className="text-[10px]">ACTA DE ARQUEO Y CIERRE DIARIO</p>
               </div>
 
               <div className="flex justify-between text-[10px] pt-1">
-                <span>FECHA: {closeDate}</span>
+                <span>FECHA: {todayDate}</span>
                 <span>HORA: {closeTime}</span>
               </div>
               <div className="flex justify-between text-[10px]">
                 <span>RESPONSABLE: {responsibleName.toUpperCase()}</span>
-                <span>TURNO: REGULAR</span>
+                <span>ESTADO: {isCurrentDayClosed ? 'CERRADO' : 'POR CERRAR'}</span>
               </div>
 
               <div className="my-1 border-t border-dashed border-neutral-400"></div>
@@ -628,18 +746,19 @@ export const CashCloseView: React.FC = () => {
                 <span>TOTAL RECAUDADO:</span>
                 <span>${formatCUP(totalGeneralContado)} CUP</span>
               </div>
-              <div className="flex justify-between text-[10px]">
-                <span>CUADRE FINAL vs IPV:</span>
-                <span className={diferenciaCaja === 0 ? 'font-bold' : 'font-bold text-red-700'}>
+              <div className="flex justify-between text-[11px] pt-1">
+                <span>DIFERENCIA REAL VS IPV:</span>
+                <span className={diferenciaCaja === 0 ? 'font-bold text-emerald-700' : 'font-bold text-red-700'}>
                   {diferenciaCaja === 0 ? '0.00 (Cuadrado)' : `${diferenciaCaja > 0 ? '+' : ''}${formatCUP(diferenciaCaja)} CUP`}
                 </span>
               </div>
 
-              <div className="my-1 border-t border-dashed border-neutral-400"></div>
-
-              <p className="text-[9px] text-center text-neutral-500 mt-1">
-                Firma Criptográfica SHA-256: 7f8a9b1c3d4e5f6a7b8c9d...
-              </p>
+              {notes && (
+                <>
+                  <div className="my-1 border-t border-dashed border-neutral-400"></div>
+                  <p className="text-[10px] text-neutral-600">OBSERVACIONES: {notes}</p>
+                </>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -650,67 +769,148 @@ export const CashCloseView: React.FC = () => {
               >
                 Cerrar
               </button>
+              {!isCurrentDayClosed && (
+                <button
+                  disabled={isSubmitting}
+                  onClick={handlePerformClose}
+                  className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-container transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[16px]">lock</span>
+                  <span>Confirmar y Cerrar Día</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal to Reopen Day */}
+      {showReopenConfirm && (
+        <div className="fixed inset-0 z-50 bg-inverse-surface/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-[24px]">lock_open</span>
+              </div>
+              <div>
+                <h3 className="font-headline font-bold text-base text-on-surface">
+                  ¿Reabrir Jornada del Día?
+                </h3>
+                <span className="text-xs text-on-surface-variant font-mono">
+                  Fecha: {todayDate}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-on-surface-variant leading-relaxed">
+              Al reabrir el día, el arqueo guardado se cancelará temporalmente y se habilitarán nuevamente
+              las ventas y anulaciones en el punto de venta. Deberá realizar un nuevo cierre de caja antes de finalizar el turno.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
-                onClick={() => {
-                  setShowActaModal(false);
-                  showToast(
-                    'Acta Generada y Registrada',
-                    'Cierre grabado correctamente en la base de datos local SQLite.'
-                  );
-                }}
-                className="px-5 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-container transition-all flex items-center gap-1.5 cursor-pointer"
+                onClick={() => setShowReopenConfirm(false)}
+                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface-variant hover:text-on-surface active:neo-inset cursor-pointer"
                 type="button"
               >
-                <span className="material-symbols-outlined text-[16px]">print</span>
-                <span>Imprimir Comprobante</span>
+                Cancelar
+              </button>
+              <button
+                disabled={isSubmitting}
+                onClick={handlePerformReopen}
+                className="px-5 py-2 rounded-xl bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700 active:neo-inset transition-all cursor-pointer disabled:opacity-50"
+                type="button"
+              >
+                Sí, Reabrir Día
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* History Modal */}
+      {/* History Modal - Real data from api.cash.listCloses */}
       {showHistoryModal && (
         <div className="fixed inset-0 z-50 bg-inverse-surface/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-4 shadow-2xl">
+          <div className="w-full max-w-xl rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-4 shadow-2xl">
             <div className="flex items-center justify-between pb-2 border-b border-outline-variant/30">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-[22px]">history</span>
-                <h3 className="font-bold text-sm text-on-surface">Histórico de Arqueos de Turno</h3>
+                <h3 className="font-bold text-sm text-on-surface">Histórico de Cierres de Caja (SQLite)</h3>
               </div>
               <button
                 onClick={() => setShowHistoryModal(false)}
-                className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface active:neo-inset"
+                className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface active:neo-inset cursor-pointer"
                 type="button"
               >
                 <span className="material-symbols-outlined text-[16px]">close</span>
               </button>
             </div>
-            <div className="flex flex-col gap-2.5 max-h-72 overflow-y-auto">
-              {[
-                { date: '23/10/2024 · 18:30 hrs', user: 'M. Gómez', total: '43,280.00 CUP', status: 'Recaudado OK' },
-                { date: '22/10/2024 · 18:30 hrs', user: 'R. Fernández', total: '51,400.00 CUP', status: 'Recaudado OK' },
-                { date: '21/10/2024 · 18:30 hrs', user: 'M. Gómez', total: '39,120.00 CUP', status: 'Recaudado OK' },
-              ].map((h, i) => (
-                <div key={i} className="p-3 rounded-xl bg-surface neo-inset flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-bold block text-on-surface">{h.date}</span>
-                    <span className="text-[10px] text-on-surface-variant">Responsable: {h.user}</span>
+
+            {isLoadingHistory ? (
+              <div className="p-8 text-center text-xs text-on-surface-variant">
+                Cargando histórico de arqueos...
+              </div>
+            ) : historyList.length === 0 ? (
+              <div className="p-8 text-center flex flex-col items-center gap-2 text-on-surface-variant">
+                <span className="material-symbols-outlined text-[32px] opacity-40">event_busy</span>
+                <span className="text-xs">No hay cierres de caja registrados todavía en la base SQLite.</span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2.5 max-h-80 overflow-y-auto pr-1">
+                {historyList.map((c) => (
+                  <div
+                    key={c.date}
+                    className="p-3.5 rounded-xl bg-surface neo-inset flex items-center justify-between text-xs"
+                  >
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold font-mono text-on-surface">{c.date}</span>
+                        <span className="text-[10px] text-on-surface-variant font-mono">
+                          {c.closedAt}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-on-surface-variant">
+                        Facturado IPV: <strong className="font-mono text-on-surface">${formatCUP(c.totalIpv)} CUP</strong>
+                      </span>
+                      {c.note && (
+                        <span className="text-[10px] text-on-surface-variant italic">
+                          Nota: {c.note}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className="font-mono font-bold text-on-surface">
+                        ${formatCUP(c.totalContado)} CUP
+                      </span>
+                      <span
+                        className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full ${
+                          c.diferencia === 0
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : c.diferencia > 0
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {c.diferencia === 0
+                          ? 'Cuadrado (0.00)'
+                          : c.diferencia > 0
+                          ? `+$${formatCUP(c.diferencia)} Sobrante`
+                          : `-$${formatCUP(Math.abs(c.diferencia))} Faltante`}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="font-mono font-bold block text-on-surface">{h.total}</span>
-                    <span className="text-[10px] text-emerald-600 font-semibold">{h.status}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
+
             <div className="pt-2 flex justify-end">
               <button
                 onClick={() => setShowHistoryModal(false)}
-                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-primary active:neo-inset"
+                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-primary active:neo-inset cursor-pointer"
                 type="button"
               >
-                Entendido
+                Cerrar
               </button>
             </div>
           </div>

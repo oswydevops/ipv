@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { Product } from '../types';
 
 export const StockAlertsView: React.FC = () => {
-  const { products, updateProductStock, showToast } = useApp();
+  const { products, updateProductStock, refreshAll, showToast } = useApp();
 
   const [activeTab, setActiveTab] = useState<'todos' | 'agotados' | 'stock-bajo' | 'disponibles'>('todos');
-  const [searchFilter, setSearchFilter] = useState('');
   const [familyFilter, setFamilyFilter] = useState('all');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -13,9 +13,9 @@ export const StockAlertsView: React.FC = () => {
 
   // Modal state for quick restock
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalProduct, setModalProduct] = useState('Interruptor doble empotrable 10A');
-  const [modalQty, setModalQty] = useState(25);
-  const [modalCost, setModalCost] = useState(480.0);
+  const [modalProductId, setModalProductId] = useState('');
+  const [modalQty, setModalQty] = useState(20);
+  const [modalCost, setModalCost] = useState(0);
   const [modalDest, setModalDest] = useState('Mostrador Principal / Repisa Inmediata');
 
   const zeroItems = products.filter((p) => p.stock === 0);
@@ -26,17 +26,6 @@ export const StockAlertsView: React.FC = () => {
     if (activeTab === 'agotados' && p.stock !== 0) return false;
     if (activeTab === 'stock-bajo' && (p.stock === 0 || p.stock > p.minStock)) return false;
     if (activeTab === 'disponibles' && p.stock <= p.minStock) return false;
-
-    if (searchFilter) {
-      const q = searchFilter.toLowerCase();
-      const match =
-        p.name.toLowerCase().includes(q) ||
-        p.code.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q) ||
-        (p.provider && p.provider.toLowerCase().includes(q)) ||
-        (p.location && p.location.toLowerCase().includes(q));
-      if (!match) return false;
-    }
 
     if (familyFilter !== 'all' && p.category.toLowerCase() !== familyFilter.toLowerCase()) {
       return false;
@@ -51,7 +40,7 @@ export const StockAlertsView: React.FC = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, searchFilter, familyFilter, severityFilter]);
+  }, [activeTab, familyFilter, severityFilter]);
 
   const totalPages = Math.max(1, Math.ceil(displayedList.length / pageSize));
   const validPage = Math.min(currentPage, totalPages);
@@ -59,40 +48,47 @@ export const StockAlertsView: React.FC = () => {
   const startIdx = displayedList.length === 0 ? 0 : (validPage - 1) * pageSize + 1;
   const endIdx = Math.min(validPage * pageSize, displayedList.length);
 
-  const handleOpenRestock = (productName: string, defaultQty = 20) => {
-    setModalProduct(productName);
-    setModalQty(defaultQty);
+  const handleOpenRestock = (targetProduct?: string | Product, defaultQty = 20) => {
+    let prodId = '';
+    let cost = 0;
+    if (typeof targetProduct === 'object' && targetProduct) {
+      prodId = targetProduct.id;
+      cost = targetProduct.price || 0;
+    } else if (typeof targetProduct === 'string' && targetProduct) {
+      const found = products.find((p) => p.id === targetProduct || p.name === targetProduct || p.code === targetProduct);
+      if (found) {
+        prodId = found.id;
+        cost = found.price || 0;
+      } else if (products.length > 0) {
+        prodId = products[0].id;
+        cost = products[0].price || 0;
+      }
+    } else if (products.length > 0) {
+      prodId = products[0].id;
+      cost = products[0].price || 0;
+    }
+
+    setModalProductId(prodId);
+    setModalQty(defaultQty > 0 ? defaultQty : 20);
+    setModalCost(cost);
     setIsModalOpen(true);
   };
 
-  const handleConfirmRestock = () => {
-    updateProductStock(modalProduct, modalQty);
-    setIsModalOpen(false);
-    showToast(
-      'Stock Actualizado',
-      `Se ingresaron +${modalQty} unidades de "${modalProduct}" a la base SQLite.`
-    );
-  };
+  const handleConfirmRestock = async () => {
+    if (!modalProductId) {
+      showToast('Error', 'Seleccione un producto para registrar la entrada.', 'error');
+      return;
+    }
+    const qty = Number(modalQty);
+    if (!qty || qty <= 0) {
+      showToast('Error', 'La cantidad a ingresar debe ser mayor que cero.', 'error');
+      return;
+    }
 
-  const handleExport = () => {
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      ['Codigo,Nombre,Stock,Minimo,Estado,Proveedor']
-        .concat(
-          products.map(
-            (p) =>
-              `"${p.code}","${p.name}",${p.stock},${p.minStock},"${p.status}","${p.provider || ''}"`
-          )
-        )
-        .join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', 'Alertas_Stock_Ferreteria_Central.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast('Exportación Completa', 'Archivo CSV descargado con éxito.');
+    const success = await updateProductStock(modalProductId, qty);
+    if (success) {
+      setIsModalOpen(false);
+    }
   };
 
   return (
@@ -120,11 +116,12 @@ export const StockAlertsView: React.FC = () => {
               Auditoría: <strong className="text-on-surface">En vivo (SQLite)</strong>
             </span>
             <button
-              onClick={() =>
-                showToast('Sincronización Concluida', 'Saldos cotejados con terminales físicas de caja.')
-              }
+              onClick={async () => {
+                await refreshAll();
+                showToast('Sincronización Concluida', 'Saldos actualizados con la base de datos SQLite.');
+              }}
               className="w-7 h-7 rounded-lg bg-surface neo-raised hover:text-primary transition-all flex items-center justify-center text-on-surface-variant active:neo-inset cursor-pointer"
-              title="Recalcular umbrales"
+              title="Recargar inventario y umbrales"
               type="button"
             >
               <span className="material-symbols-outlined text-[17px]">refresh</span>
@@ -301,50 +298,6 @@ export const StockAlertsView: React.FC = () => {
           </button>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleExport}
-            className="h-10 px-4 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface hover:text-primary transition-all flex items-center gap-2 active:neo-inset cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[18px]">file_download</span>
-            <span>Exportar lista [.csv]</span>
-          </button>
-          <button
-            onClick={() => handleOpenRestock('Interruptor doble empotrar blanco', 25)}
-            className="h-10 px-4 rounded-xl bg-surface neo-raised text-xs font-semibold text-primary hover:text-on-primary hover:bg-primary transition-all flex items-center gap-2 active:neo-inset cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[18px]">add_box</span>
-            <span>+ Registrar Entrada Rápida</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Filter and Quick Query Toolbar */}
-      <div className="rounded-2xl bg-surface neo-raised p-4 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
-        {/* Search input with clean inset effect */}
-        <div className="flex-1 h-11 px-4 rounded-xl bg-surface neo-inset flex items-center gap-3 text-on-surface-variant">
-          <span className="material-symbols-outlined text-[20px] text-primary shrink-0">search</span>
-          <input
-            type="text"
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            placeholder="Buscar por código, descripción, proveedor o ubicación..."
-            className="bg-transparent text-xs text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none w-full font-medium"
-          />
-          {searchFilter && (
-            <button
-              onClick={() => setSearchFilter('')}
-              className="text-[10px] font-bold text-on-surface-variant hover:text-error px-2 py-0.5 rounded-md bg-surface neo-raised cursor-pointer transition-colors"
-              title="Borrar texto"
-              type="button"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
         {/* Dropdowns & Reset button */}
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5">
           {/* Category Dropdown */}
@@ -352,7 +305,7 @@ export const StockAlertsView: React.FC = () => {
             <select
               value={familyFilter}
               onChange={(e) => setFamilyFilter(e.target.value)}
-              className="appearance-none w-full h-11 pl-3.5 pr-9 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface focus:outline-none cursor-pointer"
+              className="appearance-none w-full h-10 pl-3.5 pr-9 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface focus:outline-none cursor-pointer"
             >
               <option value="all">Todas las categorías</option>
               <option value="plomería">Plomería y Agua</option>
@@ -371,7 +324,7 @@ export const StockAlertsView: React.FC = () => {
             <select
               value={severityFilter}
               onChange={(e) => setSeverityFilter(e.target.value)}
-              className="appearance-none w-full h-11 pl-3.5 pr-9 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface focus:outline-none cursor-pointer"
+              className="appearance-none w-full h-10 pl-3.5 pr-9 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface focus:outline-none cursor-pointer"
             >
               <option value="all">Todas las alertas</option>
               <option value="critico">Solo Agotados (Cero)</option>
@@ -384,20 +337,20 @@ export const StockAlertsView: React.FC = () => {
           </div>
 
           {/* Reset Filters button */}
-          <button
-            onClick={() => {
-              setSearchFilter('');
-              setFamilyFilter('all');
-              setSeverityFilter('all');
-              setActiveTab('todos');
-            }}
-            className="h-11 px-3.5 rounded-xl bg-surface neo-raised flex items-center justify-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary active:neo-inset transition-all cursor-pointer"
-            title="Restablecer filtros"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[18px]">filter_alt_off</span>
-            <span className="hidden sm:inline">Limpiar</span>
-          </button>
+          {(familyFilter !== 'all' || severityFilter !== 'all') && (
+            <button
+              onClick={() => {
+                setFamilyFilter('all');
+                setSeverityFilter('all');
+              }}
+              className="h-10 px-3.5 rounded-xl bg-surface neo-raised flex items-center justify-center gap-1.5 text-xs font-semibold text-on-surface-variant hover:text-primary active:neo-inset transition-all cursor-pointer"
+              title="Restablecer filtros"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[18px]">filter_alt_off</span>
+              <span className="hidden sm:inline">Limpiar</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -433,7 +386,6 @@ export const StockAlertsView: React.FC = () => {
                 <th className="py-3.5 px-6 min-w-[170px]">Saldo / Nivel Óptimo</th>
                 <th className="py-3.5 px-4 text-center">Stock Mín.</th>
                 <th className="py-3.5 px-4 text-right">Déficit / Balance</th>
-                <th className="py-3.5 px-6">Proveedor / Ubicación</th>
                 <th className="py-3.5 px-4">Últ. Salida</th>
                 <th className="py-3.5 px-6 text-right">Acción</th>
               </tr>
@@ -527,23 +479,12 @@ export const StockAlertsView: React.FC = () => {
                         </span>
                       )}
                     </td>
-                    <td className="py-4 px-6 align-middle">
-                      <div className="flex flex-col">
-                        <span className="font-medium text-on-surface">
-                          {item.provider || 'Proveedor Local'}
-                        </span>
-                        <span className="text-[10px] text-on-surface-variant font-mono flex items-center gap-1 mt-0.5">
-                          <span className="material-symbols-outlined text-[13px]">location_on</span>
-                          {item.location || 'Almacén Central'}
-                        </span>
-                      </div>
-                    </td>
                     <td className="py-4 px-4 align-middle font-mono text-[11px] text-on-surface-variant">
                       {item.lastExit || 'Ayer'}
                     </td>
                     <td className="py-4 px-6 align-middle text-right">
                       <button
-                        onClick={() => handleOpenRestock(item.name, Math.max(10, deficit > 0 ? deficit : 20))}
+                        onClick={() => handleOpenRestock(item, Math.max(10, deficit > 0 ? deficit : 20))}
                         className="px-3 py-1.5 rounded-xl bg-surface neo-raised text-primary hover:text-on-primary hover:bg-primary transition-all font-semibold text-[11px] inline-flex items-center gap-1.5 active:neo-inset cursor-pointer"
                         type="button"
                       >
@@ -643,12 +584,28 @@ export const StockAlertsView: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-on-surface">Producto o Referencia</label>
                 <div className="h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center text-xs text-on-surface">
-                  <input
-                    type="text"
-                    value={modalProduct}
-                    onChange={(e) => setModalProduct(e.target.value)}
-                    className="bg-transparent w-full focus:outline-none font-medium"
-                  />
+                  <select
+                    value={modalProductId}
+                    onChange={(e) => {
+                      const selectedId = e.target.value;
+                      setModalProductId(selectedId);
+                      const prod = products.find((p) => p.id === selectedId);
+                      if (prod) {
+                        setModalCost(prod.price || 0);
+                      }
+                    }}
+                    className="bg-transparent w-full focus:outline-none font-medium text-on-surface"
+                  >
+                    {products.length === 0 ? (
+                      <option value="">No hay productos disponibles</option>
+                    ) : (
+                      products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.code} - {p.name} (Stock actual: {p.stock} {p.um})
+                        </option>
+                      ))
+                    )}
+                  </select>
                 </div>
               </div>
 

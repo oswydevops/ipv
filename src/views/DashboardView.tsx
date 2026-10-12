@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   AreaChart,
   Area,
@@ -10,47 +10,15 @@ import {
   BarChart,
   Bar,
   Cell,
-  Legend,
 } from 'recharts';
 import { useApp } from '../context/AppContext';
-import { TOP_PRODUCTS } from '../data/initialData';
 
-// Data for Hourly Trend (Today)
 interface TrendDataPoint {
   label: string;
   ventas: number;
   transacciones: number;
   meta?: number;
 }
-
-const HOURLY_DATA: TrendDataPoint[] = [
-  { label: '08:00', ventas: 4200, transacciones: 2, meta: 3500 },
-  { label: '10:00', ventas: 8900, transacciones: 3, meta: 7000 },
-  { label: '12:00', ventas: 14500, transacciones: 5, meta: 11000 },
-  { label: '14:00', ventas: 9800, transacciones: 4, meta: 9000 },
-  { label: '16:00', ventas: 7450, transacciones: 3, meta: 8000 },
-  { label: '18:00', ventas: 3800, transacciones: 2, meta: 3000 },
-];
-
-// Data for 7-Day Trend
-const WEEKLY_TREND: TrendDataPoint[] = [
-  { label: 'Lun 18', ventas: 41200, transacciones: 18 },
-  { label: 'Mar 19', ventas: 68400, transacciones: 29 },
-  { label: 'Mié 20', ventas: 44500, transacciones: 21 },
-  { label: 'Jue 21', ventas: 46800, transacciones: 22 },
-  { label: 'Vie 22', ventas: 52100, transacciones: 25 },
-  { label: 'Sáb 23', ventas: 43280, transacciones: 19 },
-  { label: 'Hoy 24', ventas: 48650, transacciones: 24 },
-];
-
-// Category Revenue Distribution
-const CATEGORY_DISTRIBUTION = [
-  { category: 'Plomería', total: 24700, porcentaje: 50.8, color: '#6366f1' },
-  { category: 'Electricidad', total: 11200, porcentaje: 23.0, color: '#7c3aed' },
-  { category: 'Tornillería', total: 6450, porcentaje: 13.3, color: '#3b82f6' },
-  { category: 'Herramientas', total: 4200, porcentaje: 8.6, color: '#10b981' },
-  { category: 'Pinturas', total: 2100, porcentaje: 4.3, color: '#f59e0b' },
-];
 
 interface CustomTooltipProps {
   active?: boolean;
@@ -94,13 +62,18 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label })
   return null;
 };
 
+const CATEGORY_COLORS = ['#6366f1', '#7c3aed', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#14b8a6'];
+
 export const DashboardView: React.FC = () => {
   const {
     ipvTotalVendido,
     ipvTotalUnidades,
     totalGeneralContado,
     products,
+    ipvRows,
+    sales,
     setCurrentView,
+    refreshAll,
     showToast,
   } = useApp();
 
@@ -116,7 +89,138 @@ export const DashboardView: React.FC = () => {
     });
   };
 
-  const chartData = trendView === 'hourly' ? HOURLY_DATA : WEEKLY_TREND;
+  // Cálculo de líderes de venta reales a partir de ipvRows
+  const topProducts = useMemo(() => {
+    const soldItems = ipvRows.filter((r) => r.vendido > 0);
+    if (soldItems.length > 0) {
+      const sorted = [...soldItems].sort((a, b) => b.importe - a.importe);
+      return sorted.slice(0, 3).map((item, idx) => {
+        const pct = ipvTotalVendido > 0 ? (item.importe / ipvTotalVendido) * 100 : 0;
+        return {
+          rank: idx + 1,
+          name: item.name,
+          category: item.category || 'General',
+          code: item.code,
+          soldUnits: item.vendido,
+          unitPrice: item.price,
+          totalIncome: item.importe,
+          percentage: pct.toFixed(1),
+        };
+      });
+    }
+    // Si aún no hay ventas hoy, mostrar los 3 productos principales del catálogo
+    return products.slice(0, 3).map((p, idx) => ({
+      rank: idx + 1,
+      name: p.name,
+      category: p.category || 'General',
+      code: p.code,
+      soldUnits: 0,
+      unitPrice: p.price,
+      totalIncome: 0,
+      percentage: '0.0',
+    }));
+  }, [ipvRows, products, ipvTotalVendido]);
+
+  // Distribución por categorías calculada a partir de los datos reales
+  const categoryDistribution = useMemo(() => {
+    const catMap = new Map<string, number>();
+
+    // Si hay ventas, sumar los importes vendidos por categoría
+    if (ipvTotalVendido > 0) {
+      for (const row of ipvRows) {
+        if (row.vendido > 0) {
+          const cat = row.category || 'General';
+          catMap.set(cat, (catMap.get(cat) || 0) + row.importe);
+        }
+      }
+    } else {
+      // Si no hay ventas todavía, distribuir por volumen de catálogo
+      for (const p of products) {
+        const cat = p.category || 'General';
+        catMap.set(cat, (catMap.get(cat) || 0) + p.stock * p.price);
+      }
+    }
+
+    const totalSum = Array.from(catMap.values()).reduce((a, b) => a + b, 0) || 1;
+    const entries = Array.from(catMap.entries()).sort((a, b) => b[1] - a[1]);
+
+    if (entries.length === 0) {
+      return [
+        { category: 'General', total: 0, porcentaje: 100, color: '#6366f1' },
+      ];
+    }
+
+    return entries.slice(0, 5).map(([category, total], idx) => ({
+      category,
+      total,
+      porcentaje: Number(((total / totalSum) * 100).toFixed(1)),
+      color: CATEGORY_COLORS[idx % CATEGORY_COLORS.length],
+    }));
+  }, [ipvRows, products, ipvTotalVendido]);
+
+  // Curva horaria calculada a partir de los tickets reales de hoy
+  const hourlyData = useMemo<TrendDataPoint[]>(() => {
+    const timeSlots = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00'];
+    const slotMap = new Map<string, { ventas: number; transacciones: number }>();
+    timeSlots.forEach((slot) => slotMap.set(slot, { ventas: 0, transacciones: 0 }));
+
+    sales.forEach((s) => {
+      const hour = parseInt(s.timestamp?.split(':')[0] || '10', 10);
+      let targetSlot = '18:00';
+      if (hour < 9) targetSlot = '08:00';
+      else if (hour < 11) targetSlot = '10:00';
+      else if (hour < 13) targetSlot = '12:00';
+      else if (hour < 15) targetSlot = '14:00';
+      else if (hour < 17) targetSlot = '16:00';
+
+      const cur = slotMap.get(targetSlot) || { ventas: 0, transacciones: 0 };
+      cur.ventas += s.total;
+      cur.transacciones += 1;
+      slotMap.set(targetSlot, cur);
+    });
+
+    return timeSlots.map((slot) => {
+      const data = slotMap.get(slot)!;
+      return {
+        label: slot,
+        ventas: data.ventas,
+        transacciones: data.transacciones,
+        meta: 5000,
+      };
+    });
+  }, [sales]);
+
+  const weeklyTrend: TrendDataPoint[] = useMemo(() => {
+    const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    const now = new Date();
+    const points: TrendDataPoint[] = [];
+
+    for (let i = 6; i >= 1; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dayLabel = `${dayNames[d.getDay()]} ${d.getDate()}`;
+      points.push({
+        label: dayLabel,
+        ventas: 0,
+        transacciones: 0,
+      });
+    }
+
+    points.push({
+      label: 'Hoy',
+      ventas: ipvTotalVendido,
+      transacciones: sales.length,
+    });
+
+    return points;
+  }, [ipvTotalVendido, sales.length]);
+
+  const chartData = trendView === 'hourly' ? hourlyData : weeklyTrend;
+
+  const handleSync = async () => {
+    await refreshAll();
+    showToast('Datos Sincronizados', 'Saldos, ventas y métricas actualizados desde SQLite.', 'success');
+  };
 
   return (
     <div className="flex flex-col w-full gap-7 pb-16 select-none">
@@ -134,8 +238,8 @@ export const DashboardView: React.FC = () => {
         {/* Action Buttons */}
         <div className="flex items-center gap-3">
           <button
-            onClick={() => showToast('Datos Actualizados', 'Saldos y curvas sincronizados con SQLite.')}
-            className="h-10 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-on-surface hover:text-primary transition-all active:neo-inset"
+            onClick={handleSync}
+            className="h-10 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-on-surface hover:text-primary transition-all active:neo-inset cursor-pointer"
             type="button"
           >
             <span className="material-symbols-outlined text-[18px]">sync</span>
@@ -143,7 +247,7 @@ export const DashboardView: React.FC = () => {
           </button>
           <button
             onClick={() => setCurrentView('ipv-del-dia')}
-            className="h-10 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-primary hover:text-tertiary transition-all active:neo-inset"
+            className="h-10 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-primary hover:text-tertiary transition-all active:neo-inset cursor-pointer"
             type="button"
           >
             <span className="material-symbols-outlined text-[18px]">point_of_sale</span>
@@ -182,9 +286,11 @@ export const DashboardView: React.FC = () => {
           <div className="flex items-center gap-2 mt-4 pt-3 border-t-0">
             <span className="flex items-center text-xs font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full">
               <span className="material-symbols-outlined text-[14px]">trending_up</span>
-              +12.4%
+              En caja activa
             </span>
-            <span className="text-[11px] text-on-surface-variant font-medium">vs ayer (43,280 CUP)</span>
+            <span className="text-[11px] text-on-surface-variant font-medium">
+              Vendido IPV: ${formatCUP(ipvTotalVendido)} CUP
+            </span>
           </div>
         </div>
 
@@ -207,8 +313,13 @@ export const DashboardView: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 text-xs text-on-surface-variant">
-            <span>Ticket prom.: <strong>{formatCUP(ipvTotalVendido / (ipvTotalUnidades || 1))} CUP</strong></span>
-            <span className="w-2 h-2 rounded-full bg-primary/70"></span>
+            <span>
+              Ticket prom.:{' '}
+              <strong>
+                {formatCUP(sales.length > 0 ? ipvTotalVendido / sales.length : 0)} CUP
+              </strong>
+            </span>
+            <span className="text-primary font-medium font-mono">{sales.length} tickets</span>
           </div>
         </div>
 
@@ -234,12 +345,14 @@ export const DashboardView: React.FC = () => {
           <div className="flex items-center justify-between mt-4 pt-3 text-xs">
             <button
               onClick={() => setCurrentView('alertas-de-stock')}
-              className="text-primary font-semibold hover:underline flex items-center gap-1"
+              className="text-primary font-semibold hover:underline flex items-center gap-1 cursor-pointer"
             >
               <span>Resolver en reposición</span>
               <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
             </button>
-            <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
+            {zeroStockCount > 0 && (
+              <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
+            )}
           </div>
         </div>
       </div>
@@ -265,7 +378,7 @@ export const DashboardView: React.FC = () => {
             <div className="p-1 rounded-xl bg-surface neo-inset flex items-center gap-1 self-start sm:self-auto">
               <button
                 onClick={() => setTrendView('hourly')}
-                className={`px-3 py-1.5 rounded-lg text-xs transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
                   trendView === 'hourly'
                     ? 'font-semibold text-primary bg-surface neo-raised shadow-sm'
                     : 'font-medium text-on-surface-variant hover:text-on-surface'
@@ -276,7 +389,7 @@ export const DashboardView: React.FC = () => {
               </button>
               <button
                 onClick={() => setTrendView('weekly')}
-                className={`px-3 py-1.5 rounded-lg text-xs transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
                   trendView === 'weekly'
                     ? 'font-semibold text-primary bg-surface neo-raised shadow-sm'
                     : 'font-medium text-on-surface-variant hover:text-on-surface'
@@ -296,10 +409,6 @@ export const DashboardView: React.FC = () => {
                   <linearGradient id="colorVentas" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
                     <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
-                  </linearGradient>
-                  <linearGradient id="colorMeta" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#7c3aed" stopOpacity={0.0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#d0d2dc" vertical={false} opacity={0.6} />
@@ -327,18 +436,6 @@ export const DashboardView: React.FC = () => {
                   dot={{ r: 4, fill: '#e8eaf0', stroke: '#6366f1', strokeWidth: 2 }}
                   activeDot={{ r: 7, fill: '#6366f1', stroke: '#ffffff', strokeWidth: 2 }}
                 />
-                {trendView === 'hourly' && (
-                  <Area
-                    type="monotone"
-                    dataKey="meta"
-                    name="meta"
-                    stroke="#7c3aed"
-                    strokeWidth={2}
-                    strokeDasharray="4 4"
-                    fill="url(#colorMeta)"
-                    fillOpacity={0.5}
-                  />
-                )}
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -349,15 +446,9 @@ export const DashboardView: React.FC = () => {
                 <span className="w-2.5 h-2.5 rounded-full bg-primary"></span>
                 Recaudación en CUP
               </span>
-              {trendView === 'hourly' && (
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-0.5 bg-tertiary"></span>
-                  Meta de turno
-                </span>
-              )}
             </div>
             <span className="font-medium text-on-surface font-mono">
-              Pico máximo registrado: <strong>68,400.00 CUP</strong>
+              Total jornada: <strong>${formatCUP(ipvTotalVendido)} CUP</strong>
             </span>
           </div>
         </div>
@@ -378,7 +469,7 @@ export const DashboardView: React.FC = () => {
           <div className="w-full h-52">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={CATEGORY_DISTRIBUTION}
+                data={categoryDistribution}
                 layout="vertical"
                 margin={{ top: 5, right: 10, left: 15, bottom: 5 }}
               >
@@ -389,7 +480,7 @@ export const DashboardView: React.FC = () => {
                   axisLine={false}
                   tickLine={false}
                   tick={{ fill: '#2e3040', fontSize: 11, fontWeight: 600 }}
-                  width={75}
+                  width={80}
                 />
                 <Tooltip
                   formatter={(value) => [`$${formatCUP(Number(value) || 0)} CUP`, 'Total']}
@@ -403,7 +494,7 @@ export const DashboardView: React.FC = () => {
                   }}
                 />
                 <Bar dataKey="total" radius={[0, 8, 8, 0]}>
-                  {CATEGORY_DISTRIBUTION.map((entry, index) => (
+                  {categoryDistribution.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Bar>
@@ -413,7 +504,7 @@ export const DashboardView: React.FC = () => {
 
           {/* Category detail list */}
           <div className="flex flex-col gap-2 pt-2 border-t border-outline-variant/20">
-            {CATEGORY_DISTRIBUTION.slice(0, 3).map((cat) => (
+            {categoryDistribution.slice(0, 3).map((cat) => (
               <div key={cat.category} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color }}></span>
@@ -450,7 +541,7 @@ export const DashboardView: React.FC = () => {
 
           <button
             onClick={() => setCurrentView('productos')}
-            className="h-9 px-3.5 rounded-xl bg-surface neo-raised text-xs font-semibold text-primary hover:text-on-surface active:neo-inset transition-all flex items-center gap-1.5 self-start sm:self-auto"
+            className="h-9 px-3.5 rounded-xl bg-surface neo-raised text-xs font-semibold text-primary hover:text-on-surface active:neo-inset transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
             type="button"
           >
             <span>Ver Catálogo Maestro</span>
@@ -459,48 +550,56 @@ export const DashboardView: React.FC = () => {
         </div>
 
         {/* Product Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {TOP_PRODUCTS.slice(0, 3).map((item) => (
-            <div
-              key={item.rank}
-              className="p-4 rounded-xl bg-surface neo-inset flex flex-col justify-between gap-3 group hover:border hover:border-primary/20 transition-all"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-primary font-bold text-xs font-mono">
-                    #{item.rank}
+        {topProducts.length === 0 ? (
+          <div className="p-8 rounded-xl bg-surface neo-inset flex flex-col items-center justify-center text-center gap-2">
+            <span className="material-symbols-outlined text-[36px] text-on-surface-variant">inventory_2</span>
+            <p className="text-sm font-semibold text-on-surface">No hay productos en el inventario aún</p>
+            <p className="text-xs text-on-surface-variant">Comience agregando sus productos en el Catálogo Maestro.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {topProducts.map((item) => (
+              <div
+                key={item.code}
+                className="p-4 rounded-xl bg-surface neo-inset flex flex-col justify-between gap-3 group hover:border hover:border-primary/20 transition-all"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-primary font-bold text-xs font-mono">
+                      #{item.rank}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-xs text-on-surface group-hover:text-primary transition-colors">
+                        {item.name}
+                      </h3>
+                      <span className="text-[10px] text-on-surface-variant font-mono">
+                        {item.category} • {item.code}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary-fixed text-on-primary-fixed">
+                    {item.percentage}% ventas
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-outline-variant/20 text-xs">
+                  <div>
+                    <span className="text-[10px] text-on-surface-variant block uppercase">Vendidos</span>
+                    <span className="font-mono font-bold text-on-surface">{item.soldUnits} u.</span>
                   </div>
                   <div>
-                    <h3 className="font-semibold text-xs text-on-surface group-hover:text-primary transition-colors">
-                      {item.name}
-                    </h3>
-                    <span className="text-[10px] text-on-surface-variant font-mono">
-                      {item.category} • {item.code}
-                    </span>
+                    <span className="text-[10px] text-on-surface-variant block uppercase">Unitario</span>
+                    <span className="font-mono font-bold text-on-surface">${item.unitPrice.toFixed(2)}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-on-surface-variant block uppercase">Recaudado</span>
+                    <span className="font-mono font-bold text-primary">${formatCUP(item.totalIncome)}</span>
                   </div>
                 </div>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary-fixed text-on-primary-fixed">
-                  {item.percentage}% tienda
-                </span>
               </div>
-
-              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-outline-variant/20 text-xs">
-                <div>
-                  <span className="text-[10px] text-on-surface-variant block uppercase">Vendidos</span>
-                  <span className="font-mono font-bold text-on-surface">{item.soldUnits} u.</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-on-surface-variant block uppercase">Unitario</span>
-                  <span className="font-mono font-bold text-on-surface">${item.unitPrice.toFixed(0)}</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-on-surface-variant block uppercase">Recaudado</span>
-                  <span className="font-mono font-bold text-primary">${formatCUP(item.totalIncome)}</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

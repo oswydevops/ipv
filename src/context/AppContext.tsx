@@ -1,12 +1,69 @@
-import React, { createContext, useContext, useState, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { ViewType, Product, IPVRow, Denomination, BackupRecord, SaleRecord, SaleItem } from '../types';
-import {
-  INITIAL_PRODUCTS,
-  INITIAL_IPV_ROWS,
-  INITIAL_DENOMINATIONS,
-  INITIAL_BACKUPS,
-  INITIAL_SALES,
-} from '../data/initialData';
+import { IpvDay, IpvDayRow, SaleInput, DayClose, ClockStatus } from '../data/api';
+
+export const INITIAL_DENOMINATIONS: Denomination[] = [
+  { id: 'd-1000', label: '$1,000 CUP', sublabel: 'Billetes mayores', badge: 'Alta', value: 1000, count: 0 },
+  { id: 'd-500', label: '$500 CUP', sublabel: 'Billetes corrientes', badge: 'Media', value: 500, count: 0 },
+  { id: 'd-200', label: '$200 CUP', sublabel: 'Billetes corrientes', badge: 'Media', value: 200, count: 0 },
+  { id: 'd-100', label: '$100 CUP', sublabel: 'Billetes menores', badge: 'Frecuente', value: 100, count: 0 },
+  { id: 'd-50', label: '$50 CUP', sublabel: 'Billetes de cambio', badge: 'Frecuente', value: 50, count: 0 },
+  { id: 'd-20', label: '$20 CUP', sublabel: 'Fraccionario', badge: 'Menor', value: 20, count: 0 },
+  { id: 'd-10', label: '$10 CUP', sublabel: 'Fraccionario', badge: 'Menor', value: 10, count: 0 },
+  { id: 'd-5', label: '$5 CUP', sublabel: 'Moneda / Billete', badge: 'Menor', value: 5, count: 0 },
+  { id: 'd-1', label: '$1 CUP', sublabel: 'Fraccionario base', badge: 'Menor', value: 1, count: 0 },
+];
+
+export const ERROR_MESSAGES_ES: Record<string, string> = {
+  INSUFFICIENT_STOCK: 'Stock insuficiente para completar la venta de uno o más artículos.',
+  PAYMENT_MISMATCH: 'El total de los métodos de pago no coincide con el importe de la venta.',
+  DAY_CLOSED: 'El día se encuentra cerrado. No se permiten más ventas ni modificaciones.',
+  ALREADY_VOIDED: 'La venta seleccionada ya ha sido anulada previamente.',
+  CODE_EXISTS: 'Ya existe un producto registrado con ese código.',
+  INVALID: 'Los datos introducidos no son válidos o están incompletos.',
+  NOT_FOUND: 'El registro solicitado no fue encontrado en la base de datos.',
+  BAD_DATE: 'Formato de fecha inválido. Se espera AAAA-MM-DD.',
+  BAD_BACKUP: 'El archivo de respaldo está dañado o no tiene un formato válido.',
+  INTERNAL: 'Error interno en la base de datos SQLite.',
+};
+
+export const getFriendlyErrorMessage = (err: any): string => {
+  const code = err?.code || (err?.message && ERROR_MESSAGES_ES[err.message] ? err.message : null);
+  if (code && ERROR_MESSAGES_ES[code]) {
+    return ERROR_MESSAGES_ES[code];
+  }
+  return err?.message || 'Ocurrió un error inesperado al procesar la solicitud.';
+};
+
+const getCategoryIcon = (category: string) => {
+  const cat = (category || '').toLowerCase();
+  if (cat.includes('plom') || cat.includes('agua') || cat.includes('fontan')) return 'plumbing';
+  if (cat.includes('electr') || cat.includes('ilum')) return 'bolt';
+  if (cat.includes('tornill') || cat.includes('fijac')) return 'build';
+  if (cat.includes('herram')) return 'handyman';
+  if (cat.includes('pint')) return 'format_paint';
+  return 'inventory_2';
+};
+
+const mapIpvDayRowToIPVRow = (r: IpvDayRow): IPVRow => ({
+  id: r.id,
+  num: r.num,
+  productId: r.productId,
+  code: r.code,
+  name: r.name,
+  category: r.category || 'General',
+  detail: r.detail || '',
+  um: r.um || 'Unidad',
+  saldoIni: r.saldoIni,
+  entrada: r.entrada,
+  vendido: r.vendido,
+  ajuste: r.ajuste,
+  saldoFinal: r.saldoFinal,
+  price: r.price,
+  importe: r.importe,
+  status: r.status,
+  icon: getCategoryIcon(r.category),
+});
 
 interface ToastData {
   title: string;
@@ -14,7 +71,7 @@ interface ToastData {
   type?: 'success' | 'info' | 'error';
 }
 
-interface RecordSaleInput {
+export interface RecordSaleInput {
   items: SaleItem[];
   paymentMethod: 'efectivo' | 'transferencia' | 'mixto';
   efectivoAmount: number;
@@ -31,17 +88,32 @@ interface AppContextType {
   setSearchQuery: (query: string) => void;
   isSearchModalOpen: boolean;
   setIsSearchModalOpen: (open: boolean) => void;
+
+  // Fecha y Día
+  todayDate: string; // AAAA-MM-DD
+  selectedIpvDate: string; // AAAA-MM-DD
+  setSelectedIpvDate: (date: string) => void;
+  isCurrentDayClosed: boolean;
+  isViewDateClosed: boolean;
+  isViewingPastDate: boolean;
+
+  // Productos
   products: Product[];
-  addProduct: (product: Omit<Product, 'id'>) => void;
-  editProduct: (id: string, updated: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
-  updateProductStock: (idOrCode: string, addedStock: number) => void;
+  addProduct: (product: Omit<Product, 'id'>) => Promise<boolean>;
+  editProduct: (id: string, updated: Partial<Product>) => Promise<boolean>;
+  deleteProduct: (id: string) => Promise<boolean>;
+  updateProductStock: (idOrCode: string, addedStock: number) => Promise<boolean>;
   selectedProductId: string | null;
   setSelectedProductId: (id: string | null) => void;
+
+  // IPV
   ipvRows: IPVRow[];
-  updateIpvVendido: (id: string, newVendido: number) => void;
   ipvTotalVendido: number;
   ipvTotalUnidades: number;
+  currentIpvDay: IpvDay | null;
+  refreshIpvDay: (date?: string) => Promise<void>;
+
+  // Caja y Arqueo
   denominations: Denomination[];
   updateDenominationCount: (id: string, count: number) => void;
   menoresAmount: number;
@@ -51,25 +123,36 @@ interface AppContextType {
   totalCashFisico: number;
   totalGeneralContado: number;
   diferenciaCaja: number;
+  recalculateCash: () => void;
+  closeDay: (date: string, note?: string) => Promise<boolean>;
+  reopenDay: (date: string) => Promise<boolean>;
+  listCloses: (limit?: number) => Promise<DayClose[]>;
+
+  // Respaldos
   backupRecords: BackupRecord[];
   addBackupRecord: (rec: Omit<BackupRecord, 'id'>) => void;
-  restoreBackup: (backupData: any) => boolean;
-  // Sales & Cash Reconciliation
+  restoreBackup: (backupData: any) => Promise<boolean>;
+
+  // Ventas
   sales: SaleRecord[];
   totalVentasEfectivo: number;
   totalVentasTransferencia: number;
-  recordSale: (saleInput: RecordSaleInput) => boolean;
-  cancelSale: (saleId: string) => void;
+  recordSale: (saleInput: RecordSaleInput) => Promise<boolean>;
+  cancelSale: (saleId: string) => Promise<boolean>;
   isSaleModalOpen: boolean;
   setIsSaleModalOpen: (open: boolean) => void;
   preselectedProductForSale: Product | null;
   setPreselectedProductForSale: (p: Product | null) => void;
   openSaleModal: (productOrRow?: Product | IPVRow | null) => void;
   closeSaleModal: () => void;
+
+  // UI Toast y recargas
   toast: ToastData | null;
   showToast: (title: string, desc: string, type?: 'success' | 'info' | 'error') => void;
   hideToast: () => void;
-  recalculateCash: () => void;
+  refreshAll: () => Promise<void>;
+  syncClock: (manual?: boolean) => Promise<{ changed: boolean; today: string; warning?: boolean; clockStatus?: ClockStatus }>;
+  isLoading: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -78,85 +161,281 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
-  const [products, setProducts] = useState<Product[]>(() => {
-    try {
-      const saved = localStorage.getItem('ferrestock_products');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return INITIAL_PRODUCTS;
+
+  // Fechas y estado de cierre
+  const [todayDate, setTodayDate] = useState<string>(() => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   });
+  const [selectedIpvDate, setSelectedIpvDate] = useState<string>(todayDate);
+  const [currentIpvDay, setCurrentIpvDay] = useState<IpvDay | null>(null);
+  const [isCurrentDayClosed, setIsCurrentDayClosed] = useState<boolean>(false);
+
+  // Productos y Ventas
+  const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
-  const [ipvRows, setIpvRows] = useState<IPVRow[]>(() => {
-    try {
-      const saved = localStorage.getItem('ferrestock_ipv_rows');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return INITIAL_IPV_ROWS;
-  });
+  const [sales, setSales] = useState<SaleRecord[]>([]);
+
+  // Caja y Denominaciones
   const [denominations, setDenominations] = useState<Denomination[]>(INITIAL_DENOMINATIONS);
-  const [menoresAmount, setMenoresAmount] = useState<number>(200.0);
-  const [transferenciasAmount, setTransferenciasAmount] = useState<number>(4300.0);
-  const [sales, setSales] = useState<SaleRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('ferrestock_sales');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return INITIAL_SALES;
-  });
+  const [menoresAmount, setMenoresAmount] = useState<number>(0);
+  const [transferenciasAmount, setTransferenciasAmount] = useState<number>(0);
+
+  // Respaldos y Modales
+  const [backupRecords, setBackupRecords] = useState<BackupRecord[]>([]);
   const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
   const [preselectedProductForSale, setPreselectedProductForSale] = useState<Product | null>(null);
-  const [backupRecords, setBackupRecords] = useState<BackupRecord[]>(INITIAL_BACKUPS);
   const [toast, setToast] = useState<ToastData | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Sync to localStorage for offline resilience
-  useEffect(() => {
-    try {
-      localStorage.setItem('ferrestock_products', JSON.stringify(products));
-    } catch {}
-  }, [products]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('ferrestock_ipv_rows', JSON.stringify(ipvRows));
-    } catch {}
-  }, [ipvRows]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('ferrestock_sales', JSON.stringify(sales));
-    } catch {}
-  }, [sales]);
-
-  const showToast = (title: string, desc: string, type: 'success' | 'info' | 'error' = 'success') => {
+  const showToast = useCallback((title: string, desc: string, type: 'success' | 'info' | 'error' = 'success') => {
     setToast({ title, desc, type });
     setTimeout(() => {
       setToast(null);
-    }, 3800);
-  };
+    }, 4500);
+  }, []);
 
-  const hideToast = () => {
+  const hideToast = useCallback(() => {
     setToast(null);
-  };
+  }, []);
 
-  // Calculations for IPV
-  const ipvTotalVendido = useMemo(() => {
-    return ipvRows.reduce((acc, row) => acc + row.importe, 0);
-  }, [ipvRows]);
+  // Cargar IPV del día seleccionado
+  const refreshIpvDay = useCallback(async (targetDate?: string) => {
+    const dateToFetch = targetDate || selectedIpvDate;
+    try {
+      if (window.api && window.api.ipv) {
+        const dayData = await window.api.ipv.getDay(dateToFetch);
+        setCurrentIpvDay(dayData);
+        if (dateToFetch === todayDate) {
+          setIsCurrentDayClosed(dayData.closed);
+          setTransferenciasAmount(dayData.sales?.transferencia || 0);
+        }
+      }
+    } catch (err: any) {
+      console.error('Error al cargar IPV del día:', err);
+      showToast('Error de IPV', getFriendlyErrorMessage(err), 'error');
+    }
+  }, [selectedIpvDate, todayDate, showToast]);
 
-  const ipvTotalUnidades = useMemo(() => {
-    return ipvRows.reduce((acc, row) => acc + row.vendido, 0);
-  }, [ipvRows]);
+  // Cargar todos los datos desde window.api
+  const refreshAll = useCallback(async () => {
+    if (!window.api) return;
+    setIsLoading(true);
+    try {
+      const today = await window.api.today();
+      setTodayDate(today);
+      if (!selectedIpvDate) {
+        setSelectedIpvDate(today);
+      }
 
-  // Calculations for Sales breakdown (Efectivo vs Transferencia)
+      const [loadedProducts, loadedDay, loadedSales] = await Promise.all([
+        window.api.products.list(),
+        window.api.ipv.getDay(selectedIpvDate || today),
+        window.api.sales.listRange
+          ? window.api.sales.listRange()
+          : window.api.sales.listByDate(selectedIpvDate || today),
+      ]);
+
+      setProducts(loadedProducts);
+      setCurrentIpvDay(loadedDay);
+      if ((selectedIpvDate || today) === today) {
+        setIsCurrentDayClosed(loadedDay.closed);
+        setTransferenciasAmount(loadedDay.sales?.transferencia || 0);
+      }
+
+      const formattedSales: SaleRecord[] = loadedSales.map((s) => ({
+        id: s.id,
+        ticketNumber: s.ticketNumber,
+        timestamp: s.timestamp,
+        date: s.date,
+        items: s.items.map((it) => ({
+          productId: it.productId,
+          code: it.code,
+          name: it.name,
+          um: it.um,
+          unitPrice: it.unitPrice,
+          quantity: it.quantity,
+          subtotal: it.subtotal,
+        })),
+        total: s.total,
+        paymentMethod: s.paymentMethod,
+        efectivoAmount: s.efectivoAmount,
+        transferenciaAmount: s.transferenciaAmount,
+        amountReceived: s.amountReceived,
+        change: s.change,
+        note: s.note,
+      }));
+      setSales(formattedSales);
+    } catch (err: any) {
+      console.error('Error al sincronizar con SQLite:', err);
+      showToast('Error de Base de Datos', getFriendlyErrorMessage(err), 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedIpvDate, showToast]);
+
+  // Inicialización de la app al montar
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  // Sincronizar reloj (Paso 1: actualiza fecha y recarga si difiere; Paso 2: estado y warning de reloj atrasado)
+  const syncClock = useCallback(
+    async (manual = false) => {
+      if (!window.api) return { changed: false, today: todayDate, warning: false };
+      try {
+        const serverToday = await window.api.today();
+        let changed = false;
+
+        if (serverToday !== todayDate) {
+          changed = true;
+          setTodayDate(serverToday);
+          setSelectedIpvDate(serverToday);
+
+          const [loadedProducts, loadedDay, loadedSales] = await Promise.all([
+            window.api.products.list(),
+            window.api.ipv.getDay(serverToday),
+            window.api.sales.listRange
+              ? window.api.sales.listRange()
+              : window.api.sales.listByDate(serverToday),
+          ]);
+
+          setProducts(loadedProducts);
+          setCurrentIpvDay(loadedDay);
+          setIsCurrentDayClosed(loadedDay.closed);
+          setTransferenciasAmount(loadedDay.sales?.transferencia || 0);
+
+          const formattedSales: SaleRecord[] = loadedSales.map((s) => ({
+            id: s.id,
+            ticketNumber: s.ticketNumber,
+            timestamp: s.timestamp,
+            date: s.date,
+            items: s.items.map((it) => ({
+              productId: it.productId,
+              code: it.code,
+              name: it.name,
+              um: it.um,
+              unitPrice: it.unitPrice,
+              quantity: it.quantity,
+              subtotal: it.subtotal,
+            })),
+            total: s.total,
+            paymentMethod: s.paymentMethod,
+            efectivoAmount: s.efectivoAmount,
+            transferenciaAmount: s.transferenciaAmount,
+            amountReceived: s.amountReceived,
+            change: s.change,
+            note: s.note,
+          }));
+          setSales(formattedSales);
+          showToast('Fecha actualizada', `Fecha actualizada: ${serverToday}`, 'info');
+        } else {
+          if (manual) {
+            showToast('Reloj sincronizado', 'Reloj ya sincronizado', 'info');
+          }
+        }
+
+        let clockStatus: ClockStatus | undefined;
+        let warning = false;
+        if (manual && window.api.clock) {
+          clockStatus = await window.api.clock.status();
+          warning = Boolean(clockStatus && clockStatus.warning);
+        }
+
+        return { changed, today: serverToday, warning, clockStatus };
+      } catch (err: any) {
+        console.error('Error al sincronizar reloj:', err);
+        if (manual) {
+          showToast('Error de reloj', 'No se pudo sincronizar el reloj', 'error');
+        }
+        return { changed: false, today: todayDate, warning: false };
+      }
+    },
+    [todayDate, showToast]
+  );
+
+  // Automático (sin pulsar): Repetir el paso 1 al recuperar el foco la ventana y cada 60 s, para detectar el cambio de día.
+  useEffect(() => {
+    const handleFocus = () => {
+      syncClock(false);
+    };
+    window.addEventListener('focus', handleFocus);
+    const interval = setInterval(() => {
+      syncClock(false);
+    }, 60000);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(interval);
+    };
+  }, [syncClock]);
+
+  // Cuando cambia la fecha del IPV seleccionada, recargar datos para esa fecha
+  useEffect(() => {
+    if (selectedIpvDate) {
+      refreshIpvDay(selectedIpvDate);
+      if (window.api && window.api.sales) {
+        const fetcher = window.api.sales.listRange
+          ? window.api.sales.listRange()
+          : window.api.sales.listByDate(selectedIpvDate);
+        fetcher.then((loadedSales) => {
+          setSales(
+            loadedSales.map((s) => ({
+              id: s.id,
+              ticketNumber: s.ticketNumber,
+              timestamp: s.timestamp,
+              date: s.date,
+              items: s.items.map((it) => ({
+                productId: it.productId,
+                code: it.code,
+                name: it.name,
+                um: it.um,
+                unitPrice: it.unitPrice,
+                quantity: it.quantity,
+                subtotal: it.subtotal,
+              })),
+              total: s.total,
+              paymentMethod: s.paymentMethod,
+              efectivoAmount: s.efectivoAmount,
+              transferenciaAmount: s.transferenciaAmount,
+              amountReceived: s.amountReceived,
+              change: s.change,
+              note: s.note,
+            }))
+          );
+        }).catch((e) => console.error(e));
+      }
+    }
+  }, [selectedIpvDate, refreshIpvDay]);
+
+  const isViewDateClosed = !!currentIpvDay?.closed;
+  const isViewingPastDate = selectedIpvDate !== todayDate;
+
+  // Filas del IPV mapeadas desde currentIpvDay
+  const ipvRows = useMemo(() => {
+    if (!currentIpvDay || !currentIpvDay.rows) return [];
+    return currentIpvDay.rows.map(mapIpvDayRowToIPVRow);
+  }, [currentIpvDay]);
+
+  const ipvTotalVendido = currentIpvDay?.totalVendido || 0;
+  const ipvTotalUnidades = currentIpvDay?.totalUnidades || 0;
+
+  // Desglose de Ventas para la jornada seleccionada
   const totalVentasEfectivo = useMemo(() => {
-    return sales.reduce((acc, s) => acc + (s.efectivoAmount || 0), 0);
-  }, [sales]);
+    const targetDate = selectedIpvDate || todayDate;
+    return sales
+      .filter((s) => s.date === targetDate && !(s as any).voided)
+      .reduce((acc, s) => acc + (s.efectivoAmount || 0), 0);
+  }, [sales, selectedIpvDate, todayDate]);
 
   const totalVentasTransferencia = useMemo(() => {
-    return sales.reduce((acc, s) => acc + (s.transferenciaAmount || 0), 0);
-  }, [sales]);
+    const targetDate = selectedIpvDate || todayDate;
+    return sales
+      .filter((s) => s.date === targetDate && !(s as any).voided)
+      .reduce((acc, s) => acc + (s.transferenciaAmount || 0), 0);
+  }, [sales, selectedIpvDate, todayDate]);
 
-  // Calculations for Cash
+  // Cálculos de Caja
   const totalCashFisico = useMemo(() => {
     const fromDenoms = denominations.reduce((acc, d) => acc + d.value * d.count, 0);
     return fromDenoms + (Number(menoresAmount) || 0);
@@ -170,26 +449,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return totalGeneralContado - ipvTotalVendido;
   }, [totalGeneralContado, ipvTotalVendido]);
 
-  const updateIpvVendido = (id: string, newVendido: number) => {
-    setIpvRows((prev) =>
-      prev.map((row) => {
-        if (row.id === id) {
-          const validVendido = Math.max(0, newVendido);
-          const finalSaldo = row.saldoIni + row.entrada - validVendido;
-          const status = finalSaldo <= 0 ? 'zero' : finalSaldo <= 5 ? 'low' : 'normal';
-          return {
-            ...row,
-            vendido: validVendido,
-            saldoFinal: finalSaldo,
-            importe: validVendido * row.price,
-            status,
-          };
-        }
-        return row;
-      })
-    );
-  };
-
   const updateDenominationCount = (id: string, count: number) => {
     setDenominations((prev) =>
       prev.map((d) => (d.id === id ? { ...d, count: Math.max(0, count) } : d))
@@ -197,121 +456,215 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const recalculateCash = () => {
-    showToast('Cálculo Actualizado', 'Todos los totales y denominaciones han sido sincronizados.');
+    showToast('Cálculo Actualizado', 'Todos los totales de caja han sido recalculados.');
   };
 
-  const addProduct = (productData: Omit<Product, 'id'>) => {
-    const newId = `prod-${Date.now()}`;
-    const now = new Date();
-    const formattedTimestamp =
-      productData.createdAt ||
-      now.toLocaleDateString('es-CU', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
-        ' • ' +
-        now.toLocaleTimeString('es-CU', { hour: '2-digit', minute: '2-digit' }) +
-        ' hrs';
-
-    let finalCode = productData.code?.trim();
-    if (!finalCode) {
-      let maxNum = 0;
-      products.forEach((p) => {
-        const match = p.code.match(/PROD-(\d+)/i);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (!isNaN(num) && num > maxNum) maxNum = num;
-        }
+  const closeDay = async (date: string, note?: string): Promise<boolean> => {
+    try {
+      if (!window.api) return false;
+      await window.api.cash.closeDay(date, {
+        denominations: denominations.map((d) => ({
+          id: d.id,
+          label: d.label,
+          value: d.value,
+          count: d.count,
+        })),
+        menoresAmount: Number(menoresAmount) || 0,
+        transferenciasAmount: Number(transferenciasAmount) || 0,
+        note,
       });
-      const nextNum = maxNum > 0 ? maxNum + 1 : products.length + 1;
-      finalCode = `PROD-${String(nextNum).padStart(3, '0')}`;
+      await refreshAll();
+      showToast('Día Cerrado', `El arqueo y cierre del día ${date} fue registrado con éxito en SQLite.`);
+      return true;
+    } catch (err: any) {
+      showToast('Error al cerrar el día', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
+  };
+
+  const reopenDay = async (date: string): Promise<boolean> => {
+    try {
+      if (!window.api) return false;
+      await window.api.cash.reopenDay(date);
+      await refreshAll();
+      showToast('Día Reabierto', `La jornada del ${date} fue reabierta. Ya se pueden registrar o anular ventas.`);
+      return true;
+    } catch (err: any) {
+      showToast('Error al reabrir el día', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
+  };
+
+  const listCloses = async (limit = 30): Promise<DayClose[]> => {
+    try {
+      if (!window.api) return [];
+      return await window.api.cash.listCloses(limit);
+    } catch (err: any) {
+      console.error('Error al listar cierres:', err);
+      return [];
+    }
+  };
+
+  // Operaciones de Producto mediante window.api
+  const addProduct = async (productData: Omit<Product, 'id'>): Promise<boolean> => {
+    try {
+      if (!window.api) return false;
+      await window.api.products.create({
+        name: productData.name,
+        code: productData.code,
+        category: productData.category,
+        detail: productData.detail,
+        um: productData.um,
+        price: productData.price,
+        stock: productData.stock,
+        minStock: productData.minStock,
+        provider: productData.provider,
+        location: productData.location,
+        rotation: productData.rotation,
+      });
+      await refreshAll();
+      showToast('Producto Creado', `"${productData.name}" agregado exitosamente al catálogo.`);
+      return true;
+    } catch (err: any) {
+      showToast('Error al crear producto', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
+  };
+
+  const editProduct = async (id: string, updated: Partial<Product>): Promise<boolean> => {
+    try {
+      if (!window.api) return false;
+      await window.api.products.update(id, {
+        name: updated.name,
+        code: updated.code,
+        category: updated.category,
+        detail: updated.detail,
+        um: updated.um,
+        price: updated.price,
+        stock: updated.stock,
+        minStock: updated.minStock,
+        provider: updated.provider,
+        location: updated.location,
+        rotation: updated.rotation,
+      });
+      await refreshAll();
+      showToast('Producto Actualizado', 'Los cambios se guardaron correctamente en la base de datos.');
+      return true;
+    } catch (err: any) {
+      showToast('Error al actualizar', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
+  };
+
+  const deleteProduct = async (id: string): Promise<boolean> => {
+    try {
+      if (!window.api) return false;
+      await window.api.products.archive(id);
+      if (selectedProductId === id) {
+        setSelectedProductId(null);
+      }
+      await refreshAll();
+      showToast('Producto Archivado', 'El producto fue archivado correctamente del catálogo.');
+      return true;
+    } catch (err: any) {
+      showToast('Error al archivar', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
+  };
+
+  const updateProductStock = async (idOrCode: string, addedStock: number): Promise<boolean> => {
+    try {
+      if (!window.api) return false;
+      const targetProd = products.find((p) => p.id === idOrCode || p.code === idOrCode);
+      if (!targetProd) {
+        showToast('Error', 'Producto no encontrado.', 'error');
+        return false;
+      }
+      await window.api.products.addStock(targetProd.id, addedStock, 'Entrada de mercancía');
+      await refreshAll();
+      showToast('Entrada Registrada', `+${addedStock} unidades añadidas a "${targetProd.name}".`);
+      return true;
+    } catch (err: any) {
+      showToast('Error al añadir stock', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
+  };
+
+  // Operaciones de Venta mediante window.api
+  const recordSale = async (saleInput: RecordSaleInput): Promise<boolean> => {
+    if (isCurrentDayClosed) {
+      showToast('Día Cerrado', 'No se pueden registrar ventas porque la jornada ya fue cerrada.', 'error');
+      return false;
+    }
+    if (!saleInput.items || saleInput.items.length === 0) {
+      showToast('Error en Venta', 'Debe seleccionar al menos un producto para registrar la venta.', 'error');
+      return false;
     }
 
-    const newProduct: Product = {
-      ...productData,
-      id: newId,
-      code: finalCode,
-      createdAt: formattedTimestamp,
-    };
-    setProducts((prev) => [newProduct, ...prev]);
-    setSelectedProductId(newId);
-    showToast('Producto Creado', `"${newProduct.name}" (${newProduct.code}) agregado exitosamente al catálogo.`);
-  };
+    try {
+      if (!window.api) return false;
+      const apiInput: SaleInput = {
+        items: saleInput.items.map((it) => ({
+          productId: it.productId,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+        })),
+        paymentMethod: saleInput.paymentMethod,
+        efectivoAmount: saleInput.paymentMethod === 'mixto' ? saleInput.efectivoAmount : undefined,
+        transferenciaAmount: saleInput.paymentMethod === 'mixto' ? saleInput.transferenciaAmount : undefined,
+        amountReceived: saleInput.amountReceived,
+        change: saleInput.change,
+        note: saleInput.note,
+      };
 
-  const editProduct = (id: string, updated: Partial<Product>) => {
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === id) {
-          const merged = { ...p, ...updated };
-          const newStatus =
-            merged.stock === 0 ? 'out' : merged.stock <= merged.minStock ? 'low' : 'ok';
-          return { ...merged, status: newStatus };
-        }
-        return p;
-      })
-    );
-    showToast('Producto Actualizado', 'Los cambios se guardaron correctamente en el catálogo.');
-  };
+      const recorded = await window.api.sales.record(apiInput);
+      await refreshAll();
 
-  const deleteProduct = (id: string) => {
-    const toDelete = products.find((p) => p.id === id);
-    setProducts((prev) => prev.filter((p) => p.id !== id));
-    if (selectedProductId === id) {
-      setSelectedProductId(null);
+      showToast(
+        'Venta Registrada con Éxito',
+        `Ticket ${recorded.ticketNumber}: $${recorded.total.toFixed(2)} CUP (${recorded.paymentMethod})`
+      );
+      return true;
+    } catch (err: any) {
+      showToast('Error al registrar venta', getFriendlyErrorMessage(err), 'error');
+      return false;
     }
-    showToast(
-      'Producto Eliminado',
-      `"${toDelete?.name || 'Producto'}" fue eliminado del catálogo maestro.`
-    );
   };
 
-  const updateProductStock = (idOrCode: string, addedStock: number) => {
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === idOrCode || p.code === idOrCode || p.name.toLowerCase().includes(idOrCode.toLowerCase())) {
-          const newStock = Math.max(0, p.stock + addedStock);
-          const newStatus = newStock === 0 ? 'out' : newStock <= p.minStock ? 'low' : 'ok';
-          return {
-            ...p,
-            stock: newStock,
-            status: newStatus,
-          };
-        }
-        return p;
-      })
-    );
+  const cancelSale = async (saleId: string): Promise<boolean> => {
+    if (isCurrentDayClosed) {
+      showToast('Día Cerrado', 'No se pueden anular ventas porque la jornada ya fue cerrada.', 'error');
+      return false;
+    }
+    try {
+      if (!window.api) return false;
+      const voided = await window.api.sales.void(saleId);
+      await refreshAll();
+      showToast(
+        'Venta Anulada',
+        `Se anuló el Ticket ${voided.ticketNumber}. El stock fue repuesto y el IPV actualizado.`
+      );
+      return true;
+    } catch (err: any) {
+      showToast('Error al anular venta', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
   };
 
-  const addBackupRecord = (rec: Omit<BackupRecord, 'id'>) => {
-    const newRec: BackupRecord = {
-      ...rec,
-      id: `bk-${Date.now()}`,
-    };
-    setBackupRecords((prev) => [newRec, ...prev]);
-  };
-
+  // Modales de venta
   const openSaleModal = (productOrRow?: Product | IPVRow | null) => {
+    if (isCurrentDayClosed) {
+      showToast('Jornada Cerrada', 'El día está cerrado. Para realizar ventas debe reabrir la jornada en Cierre de Caja.', 'error');
+      return;
+    }
     if (productOrRow) {
       let targetProduct: Product | undefined;
       if ('stock' in productOrRow) {
         targetProduct = productOrRow;
       } else {
-        targetProduct = products.find(
-          (p) => p.id === productOrRow.productId || p.code === productOrRow.code || p.name === productOrRow.name
-        );
-        if (!targetProduct) {
-          targetProduct = {
-            id: productOrRow.productId || `prod-${productOrRow.code}`,
-            code: productOrRow.code,
-            name: productOrRow.name,
-            detail: productOrRow.detail,
-            category: productOrRow.category,
-            um: productOrRow.um,
-            price: productOrRow.price,
-            stock: productOrRow.saldoFinal,
-            minStock: 5,
-            status: productOrRow.saldoFinal <= 0 ? 'out' : productOrRow.saldoFinal <= 5 ? 'low' : 'ok',
-          };
-        }
+        targetProduct = products.find((p) => p.id === productOrRow.productId || p.code === productOrRow.code);
       }
-      setPreselectedProductForSale(targetProduct);
+      setPreselectedProductForSale(targetProduct || null);
     } else {
       setPreselectedProductForSale(null);
     }
@@ -323,217 +676,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setPreselectedProductForSale(null);
   };
 
-  const recordSale = (saleInput: RecordSaleInput): boolean => {
-    if (!saleInput.items || saleInput.items.length === 0) {
-      showToast('Error en Venta', 'Debe seleccionar al menos un producto para registrar la venta.', 'error');
-      return false;
-    }
-
-    const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} hrs`;
-    const dateStr = now.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const saleId = `sale-${Date.now()}`;
-    const nextTicketNum = sales.length + 101;
-    const ticketNumber = `TKT-${String(nextTicketNum).padStart(5, '0')}`;
-
-    const total = saleInput.items.reduce((acc, it) => acc + it.subtotal, 0);
-
-    const newSaleRecord: SaleRecord = {
-      id: saleId,
-      ticketNumber,
-      timestamp: timeStr,
-      date: dateStr,
-      items: saleInput.items,
-      total,
-      paymentMethod: saleInput.paymentMethod,
-      efectivoAmount: saleInput.efectivoAmount,
-      transferenciaAmount: saleInput.transferenciaAmount,
-      amountReceived: saleInput.amountReceived,
-      change: saleInput.change,
-      note: saleInput.note,
+  const addBackupRecord = (rec: Omit<BackupRecord, 'id'>) => {
+    const newRec: BackupRecord = {
+      ...rec,
+      id: `bk-${Date.now()}`,
     };
-
-    // 1. Update sales list
-    setSales((prev) => [newSaleRecord, ...prev]);
-
-    // 2. Update stock in products catalog
-    setProducts((prev) =>
-      prev.map((p) => {
-        const itemSold = saleInput.items.find(
-          (it) => it.productId === p.id || it.code === p.code || it.name.toLowerCase() === p.name.toLowerCase()
-        );
-        if (itemSold) {
-          const newStock = Math.max(0, p.stock - itemSold.quantity);
-          const newStatus = newStock === 0 ? 'out' : newStock <= p.minStock ? 'low' : 'ok';
-          return {
-            ...p,
-            stock: newStock,
-            status: newStatus,
-            lastExit: `Hoy ${timeStr.replace(' hrs', '')}`,
-          };
-        }
-        return p;
-      })
-    );
-
-    // 3. Update IPV Rows (Vendido, SaldoFinal, Importe)
-    setIpvRows((prev) => {
-      const updated = [...prev];
-      saleInput.items.forEach((itemSold) => {
-        const idx = updated.findIndex(
-          (r) =>
-            r.productId === itemSold.productId ||
-            r.code === itemSold.code ||
-            r.name.toLowerCase() === itemSold.name.toLowerCase()
-        );
-        if (idx !== -1) {
-          const row = updated[idx];
-          const newVendido = row.vendido + itemSold.quantity;
-          const newFinal = Math.max(0, row.saldoIni + row.entrada - newVendido);
-          const newImporte = newVendido * row.price;
-          const newStatus = newFinal <= 0 ? 'zero' : newFinal <= 5 ? 'low' : 'normal';
-          updated[idx] = {
-            ...row,
-            vendido: newVendido,
-            saldoFinal: newFinal,
-            importe: newImporte,
-            status: newStatus,
-          };
-        } else {
-          // If not in IPV yet, create row
-          const newRow: IPVRow = {
-            id: `ipv-${Date.now()}-${itemSold.code}`,
-            num: String(updated.length + 1).padStart(2, '0'),
-            productId: itemSold.productId,
-            code: itemSold.code,
-            name: itemSold.name,
-            category: 'General',
-            detail: `Venta TPV • Cód: ${itemSold.code}`,
-            um: itemSold.um || 'Unidad',
-            saldoIni: itemSold.quantity,
-            entrada: 0,
-            vendido: itemSold.quantity,
-            saldoFinal: 0,
-            price: itemSold.unitPrice,
-            importe: itemSold.subtotal,
-            status: 'zero',
-            icon: 'point_of_sale',
-          };
-          updated.push(newRow);
-        }
-      });
-      return updated;
-    });
-
-    // 4. Update transferenciasAmount automatically if paid by transfer or mixed
-    if (saleInput.transferenciaAmount > 0) {
-      setTransferenciasAmount((prev) => prev + saleInput.transferenciaAmount);
-    }
-
-    const payLabel =
-      saleInput.paymentMethod === 'efectivo'
-        ? `Efectivo (${total.toFixed(2)} CUP)`
-        : saleInput.paymentMethod === 'transferencia'
-        ? `Transferencia (${total.toFixed(2)} CUP)`
-        : `Mixto (Ef: $${saleInput.efectivoAmount.toFixed(2)} / Tr: $${saleInput.transferenciaAmount.toFixed(2)})`;
-
-    showToast(
-      'Venta Cobrada con Éxito',
-      `${ticketNumber}: ${total.toLocaleString('es-CU', { minimumFractionDigits: 2 })} CUP • Pago en ${payLabel}`
-    );
-
-    return true;
+    setBackupRecords((prev) => [newRec, ...prev]);
   };
 
-  const cancelSale = (saleId: string) => {
-    const saleToCancel = sales.find((s) => s.id === saleId);
-    if (!saleToCancel) return;
-
-    setSales((prev) => prev.filter((s) => s.id !== saleId));
-
-    setProducts((prev) =>
-      prev.map((p) => {
-        const itemSold = saleToCancel.items.find(
-          (it) =>
-            it.productId === p.id ||
-            it.code === p.code ||
-            (it.productCode && it.productCode === p.code) ||
-            it.name.toLowerCase() === p.name.toLowerCase()
-        );
-        if (itemSold) {
-          const newStock = p.stock + itemSold.quantity;
-          const newStatus = newStock === 0 ? 'out' : newStock <= p.minStock ? 'low' : 'ok';
-          return {
-            ...p,
-            stock: newStock,
-            status: newStatus,
-          };
-        }
-        return p;
-      })
-    );
-
-    setIpvRows((prev) =>
-      prev.map((row) => {
-        const itemSold = saleToCancel.items.find(
-          (it) =>
-            it.productId === row.productId ||
-            it.code === row.code ||
-            it.name.toLowerCase() === row.name.toLowerCase()
-        );
-        if (itemSold) {
-          const newVendido = Math.max(0, row.vendido - itemSold.quantity);
-          const newFinal = Math.max(0, row.saldoIni + row.entrada - newVendido);
-          const newImporte = newVendido * row.price;
-          const newStatus = newFinal <= 0 ? 'zero' : newFinal <= 5 ? 'low' : 'normal';
-          return {
-            ...row,
-            vendido: newVendido,
-            saldoFinal: newFinal,
-            importe: newImporte,
-            status: newStatus,
-          };
-        }
-        return row;
-      })
-    );
-
-    if (saleToCancel.transferenciaAmount > 0) {
-      setTransferenciasAmount((prev) => Math.max(0, prev - saleToCancel.transferenciaAmount));
-    }
-
-    showToast(
-      'Venta Anulada',
-      `Se canceló ${saleToCancel.ticketNumber}. Se reincorporó el stock al inventario y al IPV.`
-    );
-  };
-
-  const restoreBackup = (data: any): boolean => {
+  const restoreBackup = async (_backupData: any): Promise<boolean> => {
     try {
-      if (data && typeof data === 'object') {
-        if (Array.isArray(data.products) && data.products.length > 0) {
-          setProducts(data.products);
-        }
-        if (Array.isArray(data.ipvRows) && data.ipvRows.length > 0) {
-          setIpvRows(data.ipvRows);
-        }
-        if (Array.isArray(data.denominations) && data.denominations.length > 0) {
-          setDenominations(data.denominations);
-        }
-        if (typeof data.menoresAmount === 'number') {
-          setMenoresAmount(data.menoresAmount);
-        }
-        if (typeof data.transferenciasAmount === 'number') {
-          setTransferenciasAmount(data.transferenciasAmount);
-        }
-        if (Array.isArray(data.sales) && data.sales.length > 0) {
-          setSales(data.sales);
-        }
-        showToast('Respaldo Restaurado', 'Los datos del inventario, IPV y caja han sido restablecidos.');
-        return true;
-      }
-      return false;
-    } catch {
+      if (!window.api) return false;
+      const res = await window.api.backup.restoreJson();
+      if (res.canceled) return false;
+      await refreshAll();
+      showToast('Respaldo Restaurado', 'Los datos fueron restablecidos con éxito desde el archivo.');
+      return true;
+    } catch (err: any) {
+      showToast('Error al restaurar', getFriendlyErrorMessage(err), 'error');
       return false;
     }
   };
@@ -547,6 +707,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSearchQuery,
         isSearchModalOpen,
         setIsSearchModalOpen,
+        todayDate,
+        selectedIpvDate,
+        setSelectedIpvDate,
+        isCurrentDayClosed,
+        isViewDateClosed,
+        isViewingPastDate,
         products,
         addProduct,
         editProduct,
@@ -555,9 +721,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         selectedProductId,
         setSelectedProductId,
         ipvRows,
-        updateIpvVendido,
         ipvTotalVendido,
         ipvTotalUnidades,
+        currentIpvDay,
+        refreshIpvDay,
         denominations,
         updateDenominationCount,
         menoresAmount,
@@ -570,7 +737,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         backupRecords,
         addBackupRecord,
         restoreBackup,
-        // Sales & Cash Reconciliation
         sales,
         totalVentasEfectivo,
         totalVentasTransferencia,
@@ -586,6 +752,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast,
         hideToast,
         recalculateCash,
+        closeDay,
+        reopenDay,
+        listCloses,
+        refreshAll,
+        syncClock,
+        isLoading,
       }}
     >
       {children}

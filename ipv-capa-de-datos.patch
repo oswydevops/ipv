@@ -1,0 +1,1132 @@
+diff --git a/electron/db.cjs b/electron/db.cjs
+new file mode 100644
+index 0000000..5ce0a60
+--- /dev/null
++++ b/electron/db.cjs
+@@ -0,0 +1,569 @@
++'use strict';
++/**
++ * Capa de datos del IPV (SQLite).
++ *
++ * Principio: la única fuente de verdad del inventario es `products.stock` más
++ * la tabla `stock_movements`. El IPV de cualquier día se CALCULA a partir de
++ * los movimientos; no se guarda como filas editables. Así el saldo inicial de
++ * hoy es automáticamente el saldo final de ayer y el histórico no cambia.
++ *
++ * Compatible con Node 16 (Electron 22) y better-sqlite3 8.x.
++ */
++const Database = require('better-sqlite3');
++const crypto = require('crypto');
++
++class DomainError extends Error {
++  constructor(code, message) {
++    super(message);
++    this.name = 'DomainError';
++    this.code = code;
++  }
++}
++
++const pad = (n) => String(n).padStart(2, '0');
++const localDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
++const localTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
++const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
++const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
++const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
++
++/* ------------------------------------------------------------------ */
++/* Migraciones: se aplican en orden; PRAGMA user_version guarda el nº. */
++/* Nunca edites una migración ya entregada: añade una nueva al final.  */
++/* ------------------------------------------------------------------ */
++const MIGRATIONS = [
++  (db) =>
++    db.exec(`
++    CREATE TABLE products (
++      id         TEXT PRIMARY KEY,
++      code       TEXT NOT NULL UNIQUE,
++      name       TEXT NOT NULL,
++      detail     TEXT NOT NULL DEFAULT '',
++      category   TEXT NOT NULL DEFAULT 'General',
++      um         TEXT NOT NULL DEFAULT 'Unidad',
++      price      REAL NOT NULL DEFAULT 0 CHECK (price >= 0),
++      stock      REAL NOT NULL DEFAULT 0 CHECK (stock >= 0),
++      min_stock  REAL NOT NULL DEFAULT 0 CHECK (min_stock >= 0),
++      provider   TEXT,
++      location   TEXT,
++      rotation   TEXT,
++      last_exit  TEXT,
++      created_at TEXT NOT NULL,            -- 'YYYY-MM-DD HH:MM'
++      archived   INTEGER NOT NULL DEFAULT 0
++    );
++
++    CREATE TABLE sales (
++      id              TEXT PRIMARY KEY,
++      ticket_number   INTEGER NOT NULL UNIQUE,
++      date            TEXT NOT NULL,       -- 'YYYY-MM-DD' (hora local)
++      time            TEXT NOT NULL,       -- 'HH:MM'
++      payment_method  TEXT NOT NULL CHECK (payment_method IN ('efectivo','transferencia','mixto')),
++      efectivo        REAL NOT NULL DEFAULT 0,
++      transferencia   REAL NOT NULL DEFAULT 0,
++      total           REAL NOT NULL,
++      amount_received REAL,
++      change_given    REAL,
++      note            TEXT,
++      voided_at       TEXT
++    );
++    CREATE INDEX idx_sales_date ON sales(date);
++
++    CREATE TABLE sale_items (
++      id         INTEGER PRIMARY KEY AUTOINCREMENT,
++      sale_id    TEXT NOT NULL REFERENCES sales(id),
++      product_id TEXT NOT NULL REFERENCES products(id),
++      code       TEXT NOT NULL,
++      name       TEXT NOT NULL,
++      um         TEXT NOT NULL,
++      unit_price REAL NOT NULL,
++      quantity   REAL NOT NULL CHECK (quantity > 0),
++      subtotal   REAL NOT NULL
++    );
++    CREATE INDEX idx_items_sale ON sale_items(sale_id);
++
++    -- qty con signo: + aumenta stock, - lo reduce
++    CREATE TABLE stock_movements (
++      id         INTEGER PRIMARY KEY AUTOINCREMENT,
++      product_id TEXT NOT NULL REFERENCES products(id),
++      date       TEXT NOT NULL,
++      ts         TEXT NOT NULL,
++      type       TEXT NOT NULL CHECK (type IN ('inicial','entrada','venta','anulacion','ajuste')),
++      qty        REAL NOT NULL,
++      sale_id    TEXT REFERENCES sales(id),
++      note       TEXT
++    );
++    CREATE INDEX idx_mov_date ON stock_movements(date, product_id);
++    CREATE INDEX idx_mov_product ON stock_movements(product_id);
++
++    CREATE TABLE day_closes (
++      date           TEXT PRIMARY KEY,
++      closed_at      TEXT NOT NULL,
++      denominations  TEXT NOT NULL,        -- JSON [{id,label,value,count}]
++      menores        REAL NOT NULL,
++      transferencias REAL NOT NULL,
++      total_contado  REAL NOT NULL,
++      total_ipv      REAL NOT NULL,
++      diferencia     REAL NOT NULL,
++      note           TEXT
++    );
++
++    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
++    INSERT INTO meta (key, value) VALUES ('ticket_seq', '100');
++  `),
++];
++
++function migrate(db) {
++  const current = db.pragma('user_version', { simple: true });
++  for (let i = current; i < MIGRATIONS.length; i++) {
++    db.transaction(() => {
++      MIGRATIONS[i](db);
++      db.pragma(`user_version = ${i + 1}`);
++    })();
++  }
++}
++
++/* ------------------------------------------------------------------ */
++/* Mapeos fila -> objeto de la UI                                      */
++/* ------------------------------------------------------------------ */
++const productStatus = (stock, minStock) => (stock <= 0 ? 'out' : stock <= minStock ? 'low' : 'ok');
++
++const mapProduct = (r) => ({
++  id: r.id,
++  code: r.code,
++  name: r.name,
++  detail: r.detail,
++  category: r.category,
++  um: r.um,
++  price: r.price,
++  stock: r.stock,
++  minStock: r.min_stock,
++  status: productStatus(r.stock, r.min_stock),
++  provider: r.provider || undefined,
++  location: r.location || undefined,
++  rotation: r.rotation || undefined,
++  lastExit: r.last_exit || undefined,
++  createdAt: r.created_at,
++});
++
++const ticketLabel = (n) => `TKT-${String(n).padStart(5, '0')}`;
++
++/* ------------------------------------------------------------------ */
++/* Repositorio                                                         */
++/* ------------------------------------------------------------------ */
++function createRepo(db, { clock = () => new Date() } = {}) {
++  const today = () => localDate(clock());
++  const nowStamp = () => {
++    const d = clock();
++    return `${localDate(d)} ${localTime(d)}`;
++  };
++  const assertDate = (d) => {
++    if (!DATE_RE.test(String(d))) throw new DomainError('BAD_DATE', 'Fecha inválida (use AAAA-MM-DD).');
++    return d;
++  };
++  const isClosed = (date) => !!db.prepare('SELECT 1 FROM day_closes WHERE date = ?').get(date);
++
++  const q = {
++    productById: db.prepare('SELECT * FROM products WHERE id = ?'),
++    insertMovement: db.prepare(
++      'INSERT INTO stock_movements (product_id, date, ts, type, qty, sale_id, note) VALUES (?,?,?,?,?,?,?)'
++    ),
++    setStock: db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?'),
++  };
++
++  function move(productId, type, qty, { saleId = null, note = null } = {}) {
++    q.insertMovement.run(productId, today(), nowStamp(), type, qty, saleId, note);
++    q.setStock.run(qty, productId);
++  }
++
++  /* ---------------- Productos ---------------- */
++  function nextCode() {
++    let max = 0;
++    for (const { code } of db.prepare('SELECT code FROM products').all()) {
++      const m = /^PROD-(\d+)$/i.exec(code);
++      if (m) max = Math.max(max, parseInt(m[1], 10));
++    }
++    return `PROD-${String(max + 1).padStart(3, '0')}`;
++  }
++
++  function listProducts() {
++    return db.prepare('SELECT * FROM products WHERE archived = 0 ORDER BY name COLLATE NOCASE').all().map(mapProduct);
++  }
++
++  const createProduct = db.transaction((input) => {
++    const name = String(input.name || '').trim();
++    if (!name) throw new DomainError('INVALID', 'El producto necesita un nombre.');
++    const price = input.price === undefined ? 0 : Number(input.price);
++    const stock = input.stock === undefined ? 0 : Number(input.stock);
++    const minStock = input.minStock === undefined ? 0 : Number(input.minStock);
++    if (!isNum(price) || price < 0) throw new DomainError('INVALID', 'Precio inválido.');
++    if (!isNum(stock) || stock < 0) throw new DomainError('INVALID', 'Stock inicial inválido.');
++    if (!isNum(minStock) || minStock < 0) throw new DomainError('INVALID', 'Stock mínimo inválido.');
++
++    const code = String(input.code || '').trim() || nextCode();
++    if (db.prepare('SELECT 1 FROM products WHERE code = ? COLLATE NOCASE').get(code)) {
++      throw new DomainError('CODE_EXISTS', `Ya existe un producto con el código ${code}.`);
++    }
++    const id = `prod-${crypto.randomUUID()}`;
++    db.prepare(
++      `INSERT INTO products (id, code, name, detail, category, um, price, stock, min_stock, provider, location, rotation, created_at)
++       VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?)`
++    ).run(
++      id, code, name,
++      String(input.detail || ''),
++      String(input.category || 'General'),
++      String(input.um || 'Unidad'),
++      round2(price), minStock,
++      input.provider || null, input.location || null, input.rotation || null,
++      nowStamp()
++    );
++    if (stock > 0) move(id, 'inicial', stock, { note: 'Stock inicial' });
++    return mapProduct(q.productById.get(id));
++  });
++
++  const updateProduct = db.transaction((id, patch) => {
++    const cur = q.productById.get(id);
++    if (!cur || cur.archived) throw new DomainError('NOT_FOUND', 'Producto no encontrado.');
++
++    const next = {
++      code: patch.code !== undefined ? String(patch.code).trim() : cur.code,
++      name: patch.name !== undefined ? String(patch.name).trim() : cur.name,
++      detail: patch.detail !== undefined ? String(patch.detail) : cur.detail,
++      category: patch.category !== undefined ? String(patch.category) : cur.category,
++      um: patch.um !== undefined ? String(patch.um) : cur.um,
++      price: patch.price !== undefined ? Number(patch.price) : cur.price,
++      min_stock: patch.minStock !== undefined ? Number(patch.minStock) : cur.min_stock,
++      provider: patch.provider !== undefined ? patch.provider || null : cur.provider,
++      location: patch.location !== undefined ? patch.location || null : cur.location,
++      rotation: patch.rotation !== undefined ? patch.rotation || null : cur.rotation,
++    };
++    if (!next.name || !next.code) throw new DomainError('INVALID', 'Nombre y código son obligatorios.');
++    if (!isNum(next.price) || next.price < 0) throw new DomainError('INVALID', 'Precio inválido.');
++    if (!isNum(next.min_stock) || next.min_stock < 0) throw new DomainError('INVALID', 'Stock mínimo inválido.');
++    if (
++      next.code.toLowerCase() !== cur.code.toLowerCase() &&
++      db.prepare('SELECT 1 FROM products WHERE code = ? COLLATE NOCASE AND id <> ?').get(next.code, id)
++    ) {
++      throw new DomainError('CODE_EXISTS', `Ya existe un producto con el código ${next.code}.`);
++    }
++    db.prepare(
++      `UPDATE products SET code=@code, name=@name, detail=@detail, category=@category, um=@um, price=@price,
++         min_stock=@min_stock, provider=@provider, location=@location, rotation=@rotation WHERE id=@id`
++    ).run({ ...next, price: round2(next.price), id });
++
++    // El stock solo cambia con un movimiento auditable.
++    if (patch.stock !== undefined) {
++      const target = Number(patch.stock);
++      if (!isNum(target) || target < 0) throw new DomainError('INVALID', 'Stock inválido.');
++      const delta = round2(target - cur.stock);
++      if (delta !== 0) move(id, 'ajuste', delta, { note: 'Ajuste manual desde catálogo' });
++    }
++    return mapProduct(q.productById.get(id));
++  });
++
++  // Nunca se borra: el historial de ventas y movimientos referencia al producto.
++  function archiveProduct(id) {
++    const r = db.prepare('UPDATE products SET archived = 1 WHERE id = ? AND archived = 0').run(id);
++    if (!r.changes) throw new DomainError('NOT_FOUND', 'Producto no encontrado.');
++    return { id };
++  }
++
++  const addStock = db.transaction((productId, qty, note) => {
++    const p = q.productById.get(productId);
++    if (!p || p.archived) throw new DomainError('NOT_FOUND', 'Producto no encontrado.');
++    if (!isNum(qty) || qty <= 0) throw new DomainError('INVALID', 'La entrada debe ser una cantidad positiva.');
++    move(productId, 'entrada', qty, { note: note || null });
++    return mapProduct(q.productById.get(productId));
++  });
++
++  /* ---------------- Ventas ---------------- */
++  function loadSale(id) {
++    const s = db.prepare('SELECT * FROM sales WHERE id = ?').get(id);
++    if (!s) return null;
++    const items = db.prepare('SELECT * FROM sale_items WHERE sale_id = ? ORDER BY id').all(id);
++    return {
++      id: s.id,
++      ticketNumber: ticketLabel(s.ticket_number),
++      date: s.date,
++      timestamp: s.time,
++      items: items.map((it) => ({
++        productId: it.product_id, code: it.code, name: it.name, um: it.um,
++        unitPrice: it.unit_price, quantity: it.quantity, subtotal: it.subtotal,
++      })),
++      total: s.total,
++      paymentMethod: s.payment_method,
++      efectivoAmount: s.efectivo,
++      transferenciaAmount: s.transferencia,
++      amountReceived: s.amount_received === null ? undefined : s.amount_received,
++      change: s.change_given === null ? undefined : s.change_given,
++      note: s.note || undefined,
++      voided: s.voided_at !== null,
++    };
++  }
++
++  const recordSale = db.transaction((input) => {
++    const date = today();
++    if (isClosed(date)) throw new DomainError('DAY_CLOSED', 'El día ya está cerrado. Reábrelo para registrar ventas.');
++    if (!input || !Array.isArray(input.items) || input.items.length === 0) {
++      throw new DomainError('INVALID', 'Debe seleccionar al menos un producto.');
++    }
++
++    // Agrupar por producto y validar existencias antes de tocar nada.
++    const wanted = new Map();
++    for (const it of input.items) {
++      const qty = Number(it.quantity);
++      if (!isNum(qty) || qty <= 0) throw new DomainError('INVALID', 'Cantidad inválida en una línea de venta.');
++      const w = wanted.get(it.productId) || { qty: 0, unitPrice: it.unitPrice };
++      w.qty += qty;
++      wanted.set(it.productId, w);
++    }
++    const lines = [];
++    for (const [productId, w] of wanted) {
++      const p = q.productById.get(productId);
++      if (!p || p.archived) throw new DomainError('NOT_FOUND', 'Un producto de la venta ya no existe.');
++      if (w.qty > p.stock) {
++        throw new DomainError('INSUFFICIENT_STOCK', `Stock insuficiente de "${p.name}": hay ${p.stock} ${p.um} y se piden ${w.qty}.`);
++      }
++      const unit = isNum(Number(w.unitPrice)) && w.unitPrice !== undefined && w.unitPrice !== null ? Number(w.unitPrice) : p.price;
++      if (unit < 0) throw new DomainError('INVALID', 'Precio unitario inválido.');
++      lines.push({ p, qty: w.qty, unit: round2(unit), subtotal: round2(w.qty * unit) });
++    }
++    const total = round2(lines.reduce((a, l) => a + l.subtotal, 0));
++
++    // Normalizar el desglose de pago según el método.
++    const method = input.paymentMethod;
++    let efectivo, transferencia;
++    if (method === 'efectivo') { efectivo = total; transferencia = 0; }
++    else if (method === 'transferencia') { efectivo = 0; transferencia = total; }
++    else if (method === 'mixto') {
++      efectivo = round2(Number(input.efectivoAmount));
++      transferencia = round2(Number(input.transferenciaAmount));
++      if (!isNum(efectivo) || !isNum(transferencia) || efectivo < 0 || transferencia < 0 || Math.abs(efectivo + transferencia - total) > 0.01) {
++        throw new DomainError('PAYMENT_MISMATCH', 'En pago mixto, efectivo + transferencia debe ser igual al total.');
++      }
++    } else throw new DomainError('INVALID', 'Método de pago inválido.');
++
++    const seq = Number(db.prepare("SELECT value FROM meta WHERE key = 'ticket_seq'").get().value) + 1;
++    db.prepare("UPDATE meta SET value = ? WHERE key = 'ticket_seq'").run(String(seq));
++
++    const d = clock();
++    const saleId = `sale-${crypto.randomUUID()}`;
++    db.prepare(
++      `INSERT INTO sales (id, ticket_number, date, time, payment_method, efectivo, transferencia, total, amount_received, change_given, note)
++       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
++    ).run(
++      saleId, seq, date, localTime(d), method, efectivo, transferencia, total,
++      input.amountReceived === undefined ? null : Number(input.amountReceived),
++      input.change === undefined ? null : Number(input.change),
++      input.note || null
++    );
++    const insItem = db.prepare(
++      'INSERT INTO sale_items (sale_id, product_id, code, name, um, unit_price, quantity, subtotal) VALUES (?,?,?,?,?,?,?,?)'
++    );
++    for (const l of lines) {
++      insItem.run(saleId, l.p.id, l.p.code, l.p.name, l.p.um, l.unit, l.qty, l.subtotal);
++      move(l.p.id, 'venta', -l.qty, { saleId });
++      db.prepare('UPDATE products SET last_exit = ? WHERE id = ?').run(`Hoy ${localTime(d)}`, l.p.id);
++    }
++    return loadSale(saleId);
++  });
++
++  const voidSale = db.transaction((saleId) => {
++    const s = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
++    if (!s) throw new DomainError('NOT_FOUND', 'Venta no encontrada.');
++    if (s.voided_at) throw new DomainError('ALREADY_VOIDED', 'Esa venta ya estaba anulada.');
++    if (isClosed(s.date)) throw new DomainError('DAY_CLOSED', 'No se puede anular una venta de un día ya cerrado.');
++    db.prepare('UPDATE sales SET voided_at = ? WHERE id = ?').run(nowStamp(), saleId);
++    for (const it of db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(saleId)) {
++      move(it.product_id, 'anulacion', it.quantity, { saleId, note: `Anulación ${ticketLabel(s.ticket_number)}` });
++    }
++    return loadSale(saleId);
++  });
++
++  function listSales(date) {
++    assertDate(date);
++    const ids = db.prepare('SELECT id FROM sales WHERE date = ? ORDER BY ticket_number DESC').all(date);
++    return ids.map((r) => loadSale(r.id));
++  }
++
++  /* ---------------- IPV (derivado) ---------------- */
++  function salesTotals(date) {
++    const r = db
++      .prepare(
++        `SELECT COUNT(*) AS n, COALESCE(SUM(total),0) AS total, COALESCE(SUM(efectivo),0) AS efectivo,
++                COALESCE(SUM(transferencia),0) AS transferencia
++           FROM sales WHERE date = ? AND voided_at IS NULL`
++      )
++      .get(date);
++    return { count: r.n, total: round2(r.total), efectivo: round2(r.efectivo), transferencia: round2(r.transferencia) };
++  }
++
++  function getIpvDay(date) {
++    assertDate(date);
++    const rows = db
++      .prepare(
++        `SELECT p.id, p.code, p.name, p.detail, p.category, p.um, p.price, p.stock, p.min_stock,
++                COALESCE(SUM(CASE WHEN m.date >  @d THEN m.qty END), 0) AS delta_after,
++                COALESCE(SUM(CASE WHEN m.date  = @d AND m.type IN ('entrada','inicial')   THEN  m.qty END), 0) AS entrada,
++                COALESCE(SUM(CASE WHEN m.date  = @d AND m.type IN ('venta','anulacion')   THEN -m.qty END), 0) AS vendido,
++                COALESCE(SUM(CASE WHEN m.date  = @d AND m.type = 'ajuste'                 THEN  m.qty END), 0) AS ajuste
++           FROM products p
++           LEFT JOIN stock_movements m ON m.product_id = p.id
++          WHERE substr(p.created_at, 1, 10) <= @d AND (p.archived = 0 OR m.id IS NOT NULL)
++          GROUP BY p.id
++          ORDER BY p.name COLLATE NOCASE`
++      )
++      .all({ d: date });
++
++    const importes = new Map(
++      db
++        .prepare(
++          `SELECT si.product_id AS pid, SUM(si.subtotal) AS importe
++             FROM sale_items si JOIN sales s ON s.id = si.sale_id
++            WHERE s.date = ? AND s.voided_at IS NULL GROUP BY si.product_id`
++        )
++        .all(date)
++        .map((r) => [r.pid, r.importe])
++    );
++
++    let totalVendido = 0;
++    let totalUnidades = 0;
++    const out = rows.map((r, i) => {
++      const saldoFinal = round2(r.stock - r.delta_after);
++      const saldoIni = round2(saldoFinal - r.entrada + r.vendido - r.ajuste);
++      const importe = round2(importes.get(r.id) || 0);
++      totalVendido += importe;
++      totalUnidades += r.vendido;
++      const lowAt = r.min_stock > 0 ? r.min_stock : 5;
++      return {
++        id: `${date}:${r.id}`,
++        num: String(i + 1).padStart(2, '0'),
++        productId: r.id,
++        code: r.code,
++        name: r.name,
++        category: r.category,
++        detail: r.detail,
++        um: r.um,
++        saldoIni,
++        entrada: round2(r.entrada),
++        vendido: round2(r.vendido),
++        ajuste: round2(r.ajuste),
++        saldoFinal,
++        price: r.price,
++        importe,
++        status: saldoFinal <= 0 ? 'zero' : saldoFinal <= lowAt ? 'low' : 'normal',
++      };
++    });
++    return { date, closed: isClosed(date), rows: out, totalVendido: round2(totalVendido), totalUnidades: round2(totalUnidades), sales: salesTotals(date) };
++  }
++
++  /* ---------------- Cierre de caja ---------------- */
++  function mapClose(r) {
++    return {
++      date: r.date,
++      closedAt: r.closed_at,
++      denominations: JSON.parse(r.denominations),
++      menoresAmount: r.menores,
++      transferenciasAmount: r.transferencias,
++      totalContado: r.total_contado,
++      totalIpv: r.total_ipv,
++      diferencia: r.diferencia,
++      note: r.note || undefined,
++    };
++  }
++
++  function getClose(date) {
++    assertDate(date);
++    const r = db.prepare('SELECT * FROM day_closes WHERE date = ?').get(date);
++    return r ? mapClose(r) : null;
++  }
++
++  function listCloses(limit) {
++    const n = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 365);
++    return db.prepare('SELECT * FROM day_closes ORDER BY date DESC LIMIT ?').all(n).map(mapClose);
++  }
++
++  const closeDay = db.transaction((date, input) => {
++    assertDate(date);
++    if (date > today()) throw new DomainError('BAD_DATE', 'No se puede cerrar un día futuro.');
++    if (isClosed(date)) throw new DomainError('DAY_CLOSED', 'Ese día ya fue cerrado.');
++    const dens = Array.isArray(input && input.denominations) ? input.denominations : [];
++    let cash = 0;
++    for (const d of dens) {
++      const v = Number(d.value), c = Number(d.count);
++      if (!isNum(v) || !isNum(c) || v < 0 || c < 0) throw new DomainError('INVALID', 'Denominación inválida.');
++      cash += v * c;
++    }
++    const menores = Number(input.menoresAmount || 0);
++    const transf = Number(input.transferenciasAmount || 0);
++    if (!isNum(menores) || !isNum(transf) || menores < 0 || transf < 0) throw new DomainError('INVALID', 'Importe inválido.');
++    const totalContado = round2(cash + menores + transf);
++    const totalIpv = salesTotals(date).total;
++    db.prepare(
++      `INSERT INTO day_closes (date, closed_at, denominations, menores, transferencias, total_contado, total_ipv, diferencia, note)
++       VALUES (?,?,?,?,?,?,?,?,?)`
++    ).run(
++      date, nowStamp(),
++      JSON.stringify(dens.map((d) => ({ id: d.id, label: d.label, value: Number(d.value), count: Number(d.count) }))),
++      round2(menores), round2(transf), totalContado, totalIpv, round2(totalContado - totalIpv), input.note || null
++    );
++    return getClose(date);
++  });
++
++  function reopenDay(date) {
++    assertDate(date);
++    const r = db.prepare('DELETE FROM day_closes WHERE date = ?').run(date);
++    if (!r.changes) throw new DomainError('NOT_FOUND', 'Ese día no estaba cerrado.');
++    return { date };
++  }
++
++  /* ---------------- Respaldo ---------------- */
++  const TABLES = ['products', 'sales', 'sale_items', 'stock_movements', 'day_closes', 'meta'];
++  // orden de inserción respetando claves foráneas; el borrado va al revés
++  const BACKUP_FORMAT = 1;
++
++  function exportAll() {
++    const tables = {};
++    for (const t of TABLES) tables[t] = db.prepare(`SELECT * FROM ${t}`).all();
++    return { format: BACKUP_FORMAT, schema: db.pragma('user_version', { simple: true }), exportedAt: nowStamp(), tables };
++  }
++
++  const restoreAll = db.transaction((data) => {
++    if (!data || data.format !== BACKUP_FORMAT || !data.tables) throw new DomainError('BAD_BACKUP', 'Archivo de respaldo no reconocido.');
++    if (data.schema !== db.pragma('user_version', { simple: true })) {
++      throw new DomainError('BAD_BACKUP', 'El respaldo es de otra versión de la base de datos.');
++    }
++    for (const t of TABLES) if (!Array.isArray(data.tables[t])) throw new DomainError('BAD_BACKUP', `Falta la tabla ${t} en el respaldo.`);
++    for (const t of [...TABLES].reverse()) db.prepare(`DELETE FROM ${t}`).run();
++    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('sale_items','stock_movements')").run();
++    for (const t of TABLES) {
++      const rows = data.tables[t];
++      if (!rows.length) continue;
++      const cols = Object.keys(rows[0]);
++      for (const c of cols) if (!/^[a-z_]+$/.test(c)) throw new DomainError('BAD_BACKUP', 'Columna inválida en el respaldo.');
++      const ins = db.prepare(`INSERT INTO ${t} (${cols.join(',')}) VALUES (${cols.map((c) => '@' + c).join(',')})`);
++      for (const r of rows) ins.run(r);
++    }
++    return { restored: Object.fromEntries(TABLES.map((t) => [t, data.tables[t].length])) };
++  });
++
++  return {
++    today,
++    listProducts, createProduct, updateProduct, archiveProduct, addStock,
++    recordSale, voidSale, listSales,
++    getIpvDay,
++    getClose, listCloses, closeDay, reopenDay,
++    exportAll, restoreAll,
++    backupTo: (file) => db.backup(file),
++  };
++}
++
++function openDatabase(file, options) {
++  const db = new Database(file);
++  db.pragma('journal_mode = WAL');
++  db.pragma('foreign_keys = ON');
++  db.pragma('synchronous = NORMAL');
++  migrate(db);
++  return { db, repo: createRepo(db, options), close: () => db.close() };
++}
++
++module.exports = { openDatabase, DomainError, localDate };
+diff --git a/electron/db.test.cjs b/electron/db.test.cjs
+new file mode 100644
+index 0000000..0ae9451
+--- /dev/null
++++ b/electron/db.test.cjs
+@@ -0,0 +1,157 @@
++'use strict';
++// Ejecutar con:  node electron/db.test.cjs
++const assert = require('assert');
++const fs = require('fs');
++const os = require('os');
++const path = require('path');
++const { openDatabase } = require('./db.cjs');
++
++const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ipv-'));
++let now = new Date(2026, 9, 9, 9, 0); // 2026-10-09 09:00 local
++const store = openDatabase(path.join(tmp, 'test.sqlite'), { clock: () => now });
++const repo = store.repo;
++const D1 = '2026-10-09';
++const D2 = '2026-10-10';
++const nextDay = () => { now = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 9, 0); };
++
++let passed = 0;
++const test = (name, fn) => { fn(); passed++; console.log('  ok  ' + name); };
++const throwsCode = (fn, code) => {
++  try { fn(); } catch (e) { assert.strictEqual(e.code, code, `esperaba ${code}, llegó ${e.code}: ${e.message}`); return; }
++  assert.fail(`esperaba error ${code}`);
++};
++const row = (ipv, code) => ipv.rows.find((r) => r.code === code);
++
++let tornillo, cemento;
++
++test('crear productos: código automático y stock inicial como movimiento', () => {
++  tornillo = repo.createProduct({ name: 'Tornillo 1"', price: 10, stock: 100, um: 'u', minStock: 20 });
++  cemento = repo.createProduct({ name: 'Cemento', price: 1500.5, stock: 10, um: 'saco' });
++  assert.strictEqual(tornillo.code, 'PROD-001');
++  assert.strictEqual(cemento.code, 'PROD-002');
++  assert.strictEqual(repo.listProducts().length, 2);
++  throwsCode(() => repo.createProduct({ name: 'Otro', code: 'prod-001' }), 'CODE_EXISTS');
++});
++
++test('venta: descuenta stock, ticket 101, importe con precio al momento de vender', () => {
++  const s = repo.recordSale({ items: [{ productId: tornillo.id, quantity: 30 }, { productId: cemento.id, quantity: 2 }], paymentMethod: 'efectivo' });
++  assert.strictEqual(s.ticketNumber, 'TKT-00101');
++  assert.strictEqual(s.total, 300 + 3001);
++  const p = repo.listProducts().find((x) => x.id === tornillo.id);
++  assert.strictEqual(p.stock, 70);
++});
++
++test('no se puede vender más de lo que hay y el stock no cambia', () => {
++  throwsCode(() => repo.recordSale({ items: [{ productId: cemento.id, quantity: 9 }], paymentMethod: 'efectivo' }), 'INSUFFICIENT_STOCK');
++  assert.strictEqual(repo.listProducts().find((x) => x.id === cemento.id).stock, 8);
++  // dos líneas del mismo producto se suman antes de validar
++  throwsCode(() => repo.recordSale({ items: [{ productId: cemento.id, quantity: 5 }, { productId: cemento.id, quantity: 5 }], paymentMethod: 'efectivo' }), 'INSUFFICIENT_STOCK');
++});
++
++test('pago mixto debe cuadrar con el total', () => {
++  throwsCode(() => repo.recordSale({ items: [{ productId: tornillo.id, quantity: 1 }], paymentMethod: 'mixto', efectivoAmount: 3, transferenciaAmount: 3 }), 'PAYMENT_MISMATCH');
++  const ok = repo.recordSale({ items: [{ productId: tornillo.id, quantity: 1 }], paymentMethod: 'mixto', efectivoAmount: 4, transferenciaAmount: 6 });
++  assert.strictEqual(ok.ticketNumber, 'TKT-00102');
++});
++
++test('anular: repone exactamente, no se anula dos veces, tickets no se reutilizan', () => {
++  const before = repo.listProducts().find((x) => x.id === tornillo.id).stock; // 69
++  const s = repo.recordSale({ items: [{ productId: tornillo.id, quantity: 4 }], paymentMethod: 'transferencia' }); // 103
++  assert.strictEqual(repo.listProducts().find((x) => x.id === tornillo.id).stock, before - 4);
++  repo.voidSale(s.id);
++  assert.strictEqual(repo.listProducts().find((x) => x.id === tornillo.id).stock, before);
++  throwsCode(() => repo.voidSale(s.id), 'ALREADY_VOIDED');
++  const next = repo.recordSale({ items: [{ productId: tornillo.id, quantity: 1 }], paymentMethod: 'efectivo' });
++  assert.strictEqual(next.ticketNumber, 'TKT-00104'); // el 103 anulado no se reutiliza
++});
++
++test('IPV del día: saldo ini + entrada - vendido = saldo final, anuladas no cuentan', () => {
++  const ipv = repo.getIpvDay(D1);
++  const t = row(ipv, 'PROD-001');
++  assert.strictEqual(t.saldoIni, 0);
++  assert.strictEqual(t.entrada, 100);
++  assert.strictEqual(t.vendido, 32); // 30 + 1 + 1 (la de 4 se anuló)
++  assert.strictEqual(t.saldoFinal, 68);
++  assert.strictEqual(t.importe, 320);
++  assert.strictEqual(ipv.totalVendido, 320 + 3001);
++  assert.strictEqual(ipv.sales.count, 3);
++});
++
++test('cierre de caja: calcula diferencia y bloquea el día', () => {
++  const ipv = repo.getIpvDay(D1);
++  const close = repo.closeDay(D1, {
++    denominations: [{ id: 'd1000', label: '1000', value: 1000, count: 3 }, { id: 'd100', label: '100', value: 100, count: 2 }],
++    menoresAmount: 50, transferenciasAmount: 6,
++  });
++  assert.strictEqual(close.totalContado, 3000 + 200 + 50 + 6);
++  assert.strictEqual(close.totalIpv, ipv.totalVendido);
++  assert.strictEqual(close.diferencia, 3256 - 3321);
++  throwsCode(() => repo.closeDay(D1, { denominations: [] }), 'DAY_CLOSED');
++  throwsCode(() => repo.recordSale({ items: [{ productId: tornillo.id, quantity: 1 }], paymentMethod: 'efectivo' }), 'DAY_CLOSED');
++  const anyId = repo.listSales(D1)[0].id;
++  throwsCode(() => repo.voidSale(anyId), 'DAY_CLOSED');
++  assert.strictEqual(repo.listCloses(10).length, 1);
++});
++
++test('día siguiente: saldo inicial = saldo final de ayer y el histórico no cambia', () => {
++  nextDay();
++  const d2 = repo.getIpvDay(D2);
++  assert.strictEqual(row(d2, 'PROD-001').saldoIni, 68);
++  assert.strictEqual(row(d2, 'PROD-001').vendido, 0);
++  repo.addStock(tornillo.id, 50, 'Compra proveedor');
++  repo.recordSale({ items: [{ productId: tornillo.id, quantity: 8 }], paymentMethod: 'efectivo' });
++  const d2b = repo.getIpvDay(D2);
++  const t2 = row(d2b, 'PROD-001');
++  assert.deepStrictEqual([t2.saldoIni, t2.entrada, t2.vendido, t2.saldoFinal], [68, 50, 8, 110]);
++  const d1 = row(repo.getIpvDay(D1), 'PROD-001'); // ayer intacto
++  assert.deepStrictEqual([d1.saldoIni, d1.entrada, d1.vendido, d1.saldoFinal], [0, 100, 32, 68]);
++});
++
++test('producto creado hoy no aparece en días anteriores', () => {
++  const nuevo = repo.createProduct({ name: 'Martillo', price: 900, stock: 5 });
++  assert.ok(row(repo.getIpvDay(D2), nuevo.code));
++  assert.ok(!row(repo.getIpvDay(D1), nuevo.code));
++});
++
++test('ajuste manual desde catálogo queda como movimiento y no rompe la identidad', () => {
++  repo.updateProduct(cemento.id, { stock: 20, price: 1600 });
++  const c = row(repo.getIpvDay(D2), 'PROD-002');
++  assert.strictEqual(c.saldoIni, 8);
++  assert.strictEqual(c.ajuste, 12);
++  assert.strictEqual(c.saldoFinal, c.saldoIni + c.entrada - c.vendido + c.ajuste);
++  assert.strictEqual(c.price, 1600);
++  // las ventas viejas conservan el precio con el que se hicieron
++  assert.strictEqual(row(repo.getIpvDay(D1), 'PROD-002').importe, 3001);
++});
++
++test('archivar no borra el historial', () => {
++  repo.archiveProduct(cemento.id);
++  assert.ok(!repo.listProducts().find((p) => p.id === cemento.id));
++  assert.strictEqual(row(repo.getIpvDay(D1), 'PROD-002').importe, 3001);
++});
++
++test('respaldo: exportar -> borrar cambios -> restaurar deja todo igual', () => {
++  const snap = JSON.parse(JSON.stringify(repo.exportAll()));
++  const ipvBefore = JSON.stringify(repo.getIpvDay(D2));
++  repo.createProduct({ name: 'Basura', stock: 1 });
++  repo.recordSale({ items: [{ productId: tornillo.id, quantity: 1 }], paymentMethod: 'efectivo' });
++  repo.restoreAll(snap);
++  assert.strictEqual(JSON.stringify(repo.getIpvDay(D2)), ipvBefore);
++  throwsCode(() => repo.restoreAll({ format: 99 }), 'BAD_BACKUP');
++  // el contador de tickets sigue funcionando tras restaurar
++  const s = repo.recordSale({ items: [{ productId: tornillo.id, quantity: 1 }], paymentMethod: 'efectivo' });
++  assert.ok(Number(s.ticketNumber.slice(4)) > 104);
++});
++
++(async () => {
++  const file = path.join(tmp, 'copia.sqlite');
++  await repo.backupTo(file);
++  const copy = openDatabase(file, { clock: () => now });
++  assert.strictEqual(copy.repo.listProducts().length, repo.listProducts().length);
++  copy.close();
++  passed++;
++  console.log('  ok  db.backup (copia nativa) abre y coincide');
++  store.close();
++  fs.rmSync(tmp, { recursive: true, force: true });
++  console.log(`\n${passed} pruebas OK`);
++})().catch((e) => { console.error(e); process.exit(1); });
+diff --git a/electron/ipc.cjs b/electron/ipc.cjs
+new file mode 100644
+index 0000000..9763856
+--- /dev/null
++++ b/electron/ipc.cjs
+@@ -0,0 +1,81 @@
++'use strict';
++const { DomainError } = require('./db.cjs');
++
++// Cada canal es "espacio:función". El renderer solo puede llamar a lo que esté aquí.
++function buildHandlers(repo, { dialog, getWindow, fs }) {
++  return {
++    'products:list': () => repo.listProducts(),
++    'products:create': (input) => repo.createProduct(input),
++    'products:update': (id, patch) => repo.updateProduct(id, patch),
++    'products:archive': (id) => repo.archiveProduct(id),
++    'products:addStock': (id, qty, note) => repo.addStock(id, qty, note),
++
++    'sales:record': (input) => repo.recordSale(input),
++    'sales:void': (id) => repo.voidSale(id),
++    'sales:listByDate': (date) => repo.listSales(date),
++
++    'ipv:getDay': (date) => repo.getIpvDay(date),
++    'app:today': () => repo.today(),
++
++    'cash:getClose': (date) => repo.getClose(date),
++    'cash:listCloses': (limit) => repo.listCloses(limit),
++    'cash:closeDay': (date, input) => repo.closeDay(date, input),
++    'cash:reopenDay': (date) => repo.reopenDay(date),
++
++    // Respaldo a archivo: el diálogo se abre en el proceso principal.
++    'backup:saveSqlite': async () => {
++      const r = await dialog.showSaveDialog(getWindow(), {
++        title: 'Guardar copia de la base de datos',
++        defaultPath: `ipv-respaldo-${repo.today()}.sqlite`,
++        filters: [{ name: 'SQLite', extensions: ['sqlite'] }],
++      });
++      if (r.canceled || !r.filePath) return { canceled: true };
++      await repo.backupTo(r.filePath);
++      return { canceled: false, path: r.filePath };
++    },
++    'backup:saveJson': async () => {
++      const r = await dialog.showSaveDialog(getWindow(), {
++        title: 'Exportar respaldo (JSON)',
++        defaultPath: `ipv-respaldo-${repo.today()}.json`,
++        filters: [{ name: 'JSON', extensions: ['json'] }],
++      });
++      if (r.canceled || !r.filePath) return { canceled: true };
++      fs.writeFileSync(r.filePath, JSON.stringify(repo.exportAll()), 'utf8');
++      return { canceled: false, path: r.filePath };
++    },
++    'backup:restoreJson': async () => {
++      const r = await dialog.showOpenDialog(getWindow(), {
++        title: 'Restaurar respaldo (JSON)',
++        properties: ['openFile'],
++        filters: [{ name: 'JSON', extensions: ['json'] }],
++      });
++      if (r.canceled || !r.filePaths[0]) return { canceled: true };
++      let data;
++      try {
++        data = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
++      } catch {
++        throw new DomainError('BAD_BACKUP', 'El archivo no es un JSON válido.');
++      }
++      return { canceled: false, ...repo.restoreAll(data) };
++    },
++  };
++}
++
++// Respuesta uniforme {ok,data} | {ok:false,error:{code,message}}:
++// Electron pierde las propiedades de los Error que cruzan IPC, así que
++// el código de error viaja en el sobre.
++function register(ipcMain, handlers) {
++  for (const [channel, fn] of Object.entries(handlers)) {
++    ipcMain.handle(channel, async (_event, ...args) => {
++      try {
++        return { ok: true, data: await fn(...args) };
++      } catch (e) {
++        if (e instanceof DomainError) return { ok: false, error: { code: e.code, message: e.message } };
++        console.error(`[ipc ${channel}]`, e);
++        return { ok: false, error: { code: 'INTERNAL', message: 'Error interno al acceder a la base de datos.' } };
++      }
++    });
++  }
++}
++
++module.exports = { buildHandlers, register };
+diff --git a/electron/main.cjs b/electron/main.cjs
+new file mode 100644
+index 0000000..8e7e1ad
+--- /dev/null
++++ b/electron/main.cjs
+@@ -0,0 +1,61 @@
++'use strict';
++const { app, BrowserWindow, ipcMain, dialog } = require('electron');
++const fs = require('fs');
++const path = require('path');
++const { openDatabase } = require('./db.cjs');
++const { buildHandlers, register } = require('./ipc.cjs');
++
++app.setName('IPV'); // fija la carpeta de datos: %APPDATA%\IPV
++
++if (!app.requestSingleInstanceLock()) {
++  app.quit(); // una sola ventana por base de datos
++} else {
++  let win = null;
++  let store = null;
++
++  app.on('second-instance', () => {
++    if (win) {
++      if (win.isMinimized()) win.restore();
++      win.focus();
++    }
++  });
++
++  const createWindow = () => {
++    win = new BrowserWindow({
++      width: 1366,
++      height: 820,
++      minWidth: 1024,
++      minHeight: 640,
++      show: false,
++      webPreferences: {
++        preload: path.join(__dirname, 'preload.cjs'),
++        contextIsolation: true,
++        nodeIntegration: false,
++        sandbox: true,
++      },
++    });
++    win.once('ready-to-show', () => win.show());
++    win.setMenuBarVisibility(false);
++    const devUrl = process.env.IPV_DEV_URL; // ej. http://localhost:3000
++    if (devUrl) win.loadURL(devUrl);
++    else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
++    win.on('closed', () => { win = null; });
++  };
++
++  app.whenReady().then(() => {
++    const dbFile = path.join(app.getPath('userData'), 'ipv.sqlite');
++    try {
++      store = openDatabase(dbFile);
++    } catch (e) {
++      dialog.showErrorBox('No se pudo abrir la base de datos', `${dbFile}\n\n${e && e.message}`);
++      app.quit();
++      return;
++    }
++    register(ipcMain, buildHandlers(store.repo, { dialog, getWindow: () => win, fs }));
++    createWindow();
++    app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
++  });
++
++  app.on('window-all-closed', () => app.quit());
++  app.on('before-quit', () => { if (store) { store.close(); store = null; } });
++}
+diff --git a/electron/preload.cjs b/electron/preload.cjs
+new file mode 100644
+index 0000000..6767e31
+--- /dev/null
++++ b/electron/preload.cjs
+@@ -0,0 +1,38 @@
++'use strict';
++const { contextBridge, ipcRenderer } = require('electron');
++
++const call = async (channel, ...args) => {
++  const res = await ipcRenderer.invoke(channel, ...args);
++  if (res && res.ok) return res.data;
++  const err = new Error((res && res.error && res.error.message) || 'Error desconocido');
++  err.code = (res && res.error && res.error.code) || 'INTERNAL';
++  throw err;
++};
++
++contextBridge.exposeInMainWorld('api', {
++  today: () => call('app:today'),
++  products: {
++    list: () => call('products:list'),
++    create: (input) => call('products:create', input),
++    update: (id, patch) => call('products:update', id, patch),
++    archive: (id) => call('products:archive', id),
++    addStock: (id, qty, note) => call('products:addStock', id, qty, note),
++  },
++  sales: {
++    record: (input) => call('sales:record', input),
++    void: (id) => call('sales:void', id),
++    listByDate: (date) => call('sales:listByDate', date),
++  },
++  ipv: { getDay: (date) => call('ipv:getDay', date) },
++  cash: {
++    getClose: (date) => call('cash:getClose', date),
++    listCloses: (limit) => call('cash:listCloses', limit),
++    closeDay: (date, input) => call('cash:closeDay', date, input),
++    reopenDay: (date) => call('cash:reopenDay', date),
++  },
++  backup: {
++    saveSqlite: () => call('backup:saveSqlite'),
++    saveJson: () => call('backup:saveJson'),
++    restoreJson: () => call('backup:restoreJson'),
++  },
++});
+diff --git a/package.json b/package.json
+index 5a45da5..f18c682 100644
+--- a/package.json
++++ b/package.json
+@@ -1,5 +1,5 @@
+ {
+-  "name": "react-example",
++  "name": "ipv",
+   "private": true,
+   "version": "0.0.0",
+   "type": "module",
+@@ -8,7 +8,10 @@
+     "build": "vite build",
+     "preview": "vite preview",
+     "clean": "rm -rf dist server.js",
+-    "lint": "tsc --noEmit"
++    "lint": "tsc --noEmit",
++    "test:db": "node electron/db.test.cjs",
++    "app": "npm run build && electron .",
++    "app:dev": "electron ."
+   },
+   "dependencies": {
+     "@google/genai": "^2.4.0",
+@@ -21,7 +24,8 @@
+     "react": "^19.0.1",
+     "react-dom": "^19.0.1",
+     "recharts": "^3.10.1",
+-    "vite": "^8.3.0"
++    "vite": "^8.3.0",
++    "better-sqlite3": "^8.7.0"
+   },
+   "devDependencies": {
+     "@types/node": "^22.14.0",
+@@ -32,12 +36,15 @@
+     "tailwindcss": "^4.3.3",
+     "tsx": "^4.21.0",
+     "typescript": "^7.0.2",
+-    "@types/express": "^4.17.21"
++    "@types/express": "^4.17.21",
++    "electron": "22.3.27"
+   },
+   "allowScripts": {
+     "esbuild@0.27.7": true,
+     "esbuild@0.28.2": true,
+     "protobufjs@7.6.6": true,
+     "@google/genai@2.28.0": true
+-  }
++  },
++  "productName": "IPV",
++  "main": "electron/main.cjs"
+ }
+diff --git a/src/data/api.ts b/src/data/api.ts
+new file mode 100644
+index 0000000..96da077
+--- /dev/null
++++ b/src/data/api.ts
+@@ -0,0 +1,127 @@
++import type { Product } from '../types';
++
++export type PaymentMethod = 'efectivo' | 'transferencia' | 'mixto';
++
++export interface SaleItemInput {
++  productId: string;
++  quantity: number;
++  unitPrice?: number; // si se omite, se usa el precio actual del producto
++}
++
++export interface SaleInput {
++  items: SaleItemInput[];
++  paymentMethod: PaymentMethod;
++  efectivoAmount?: number; // solo se exige en pago mixto
++  transferenciaAmount?: number;
++  amountReceived?: number;
++  change?: number;
++  note?: string;
++}
++
++export interface Sale {
++  id: string;
++  ticketNumber: string;
++  date: string; // AAAA-MM-DD
++  timestamp: string; // HH:MM
++  items: { productId: string; code: string; name: string; um: string; unitPrice: number; quantity: number; subtotal: number }[];
++  total: number;
++  paymentMethod: PaymentMethod;
++  efectivoAmount: number;
++  transferenciaAmount: number;
++  amountReceived?: number;
++  change?: number;
++  note?: string;
++  voided: boolean;
++}
++
++export interface IpvDayRow {
++  id: string;
++  num: string;
++  productId: string;
++  code: string;
++  name: string;
++  category: string;
++  detail: string;
++  um: string;
++  saldoIni: number;
++  entrada: number;
++  vendido: number;
++  ajuste: number; // saldoFinal = saldoIni + entrada - vendido + ajuste
++  saldoFinal: number;
++  price: number;
++  importe: number;
++  status: 'normal' | 'low' | 'zero';
++}
++
++export interface IpvDay {
++  date: string;
++  closed: boolean;
++  rows: IpvDayRow[];
++  totalVendido: number;
++  totalUnidades: number;
++  sales: { count: number; total: number; efectivo: number; transferencia: number };
++}
++
++export interface DenominationInput {
++  id: string;
++  label: string;
++  value: number;
++  count: number;
++}
++
++export interface DayClose {
++  date: string;
++  closedAt: string;
++  denominations: DenominationInput[];
++  menoresAmount: number;
++  transferenciasAmount: number;
++  totalContado: number;
++  totalIpv: number;
++  diferencia: number;
++  note?: string;
++}
++
++export type ApiErrorCode =
++  | 'INVALID' | 'NOT_FOUND' | 'CODE_EXISTS' | 'INSUFFICIENT_STOCK' | 'PAYMENT_MISMATCH'
++  | 'DAY_CLOSED' | 'ALREADY_VOIDED' | 'BAD_DATE' | 'BAD_BACKUP' | 'INTERNAL';
++
++export type ApiError = Error & { code: ApiErrorCode };
++
++type FileResult = { canceled: true } | { canceled: false; path: string };
++
++export interface IpvApi {
++  today(): Promise<string>;
++  products: {
++    list(): Promise<Product[]>;
++    create(input: Partial<Omit<Product, 'id' | 'status' | 'createdAt'>> & { name: string }): Promise<Product>;
++    update(id: string, patch: Partial<Omit<Product, 'id' | 'status' | 'createdAt'>>): Promise<Product>;
++    archive(id: string): Promise<{ id: string }>;
++    addStock(id: string, qty: number, note?: string): Promise<Product>;
++  };
++  sales: {
++    record(input: SaleInput): Promise<Sale>;
++    void(id: string): Promise<Sale>;
++    listByDate(date: string): Promise<Sale[]>;
++  };
++  ipv: { getDay(date: string): Promise<IpvDay> };
++  cash: {
++    getClose(date: string): Promise<DayClose | null>;
++    listCloses(limit?: number): Promise<DayClose[]>;
++    closeDay(
++      date: string,
++      input: { denominations: DenominationInput[]; menoresAmount: number; transferenciasAmount: number; note?: string }
++    ): Promise<DayClose>;
++    reopenDay(date: string): Promise<{ date: string }>;
++  };
++  backup: {
++    saveSqlite(): Promise<FileResult>;
++    saveJson(): Promise<FileResult>;
++    restoreJson(): Promise<{ canceled: true } | { canceled: false; restored: Record<string, number> }>;
++  };
++}
++
++declare global {
++  interface Window {
++    api: IpvApi;
++  }
++}
+diff --git a/vite.config.ts b/vite.config.ts
+index 94a0b3b..f919e53 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -5,6 +5,7 @@ import {defineConfig} from 'vite';
+ 
+ export default defineConfig(() => {
+   return {
++    base: './', // necesario para cargar dist/index.html con file:// en Electron
+     plugins: [react(), tailwindcss()],
+     resolve: {
+       alias: {

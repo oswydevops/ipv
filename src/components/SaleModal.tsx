@@ -19,6 +19,8 @@ export const SaleModal: React.FC = () => {
     totalVentasEfectivo,
     totalVentasTransferencia,
     ipvTotalVendido,
+    isCurrentDayClosed,
+    isViewingPastDate,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'nueva' | 'historial'>('nueva');
@@ -65,7 +67,7 @@ export const SaleModal: React.FC = () => {
     } catch {}
   };
 
-  // Keyboard shortcut F1 to open/close or Escape
+  // Cerrar modal con tecla Escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isSaleModalOpen) {
@@ -182,7 +184,7 @@ export const SaleModal: React.FC = () => {
   const categories = ['all', ...Array.from(new Set(products.map((p) => p.category)))];
 
   // Submit sale
-  const handleConfirmSale = () => {
+  const handleConfirmSale = async () => {
     if (cart.length === 0 || totalSale <= 0) return;
 
     const saleItems = cart.map((item) => ({
@@ -197,7 +199,7 @@ export const SaleModal: React.FC = () => {
       subtotal: item.product.price * item.quantity,
     }));
 
-    const success = recordSale({
+    const success = await recordSale({
       items: saleItems,
       paymentMethod,
       efectivoAmount: cashToPay,
@@ -640,12 +642,20 @@ export const SaleModal: React.FC = () => {
                 )}
               </div>
 
+              {/* Aviso si el día está cerrado */}
+              {(isCurrentDayClosed || isViewingPastDate) && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-900 text-xs flex items-center gap-2">
+                  <span className="material-symbols-outlined text-amber-600 text-lg">lock</span>
+                  <span>Jornada cerrada. No se pueden registrar ventas hasta reabrir el día.</span>
+                </div>
+              )}
+
               {/* Action Button: Confirm and Record Sale */}
               <button
                 onClick={handleConfirmSale}
-                disabled={cart.length === 0 || totalSale <= 0}
+                disabled={cart.length === 0 || totalSale <= 0 || isCurrentDayClosed || isViewingPastDate}
                 className={`w-full py-3.5 px-4 rounded-xl text-white font-headline font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer ${
-                  cart.length === 0 || totalSale <= 0
+                  cart.length === 0 || totalSale <= 0 || isCurrentDayClosed || isViewingPastDate
                     ? 'bg-outline-variant/60 cursor-not-allowed opacity-50'
                     : 'bg-primary hover:bg-primary-container shadow-primary/25 active:scale-[0.99]'
                 }`}
@@ -798,6 +808,7 @@ export const SaleModal: React.FC = () => {
                           <td className="py-3 px-3 text-center">
                             <button
                               onClick={() => {
+                                if (isCurrentDayClosed || isViewingPastDate) return;
                                 if (
                                   window.confirm(
                                     `¿Está seguro de anular la venta ${sale.ticketNumber}? Se restaurará el stock y el saldo en IPV.`
@@ -806,8 +817,17 @@ export const SaleModal: React.FC = () => {
                                   cancelSale(sale.id);
                                 }
                               }}
-                              className="px-2 py-1 rounded-lg bg-surface neo-raised text-on-surface-variant hover:text-error text-[11px] font-semibold transition-all active:neo-inset cursor-pointer"
-                              title="Anular venta y restaurar stock"
+                              disabled={isCurrentDayClosed || isViewingPastDate}
+                              className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                                isCurrentDayClosed || isViewingPastDate
+                                  ? 'bg-surface text-on-surface-variant opacity-40 cursor-not-allowed'
+                                  : 'bg-surface neo-raised text-on-surface-variant hover:text-error active:neo-inset cursor-pointer'
+                              }`}
+                              title={
+                                isCurrentDayClosed || isViewingPastDate
+                                  ? 'No se puede anular porque el día está cerrado'
+                                  : 'Anular venta y restaurar stock'
+                              }
                               type="button"
                             >
                               Anular

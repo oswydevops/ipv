@@ -1,24 +1,28 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { ViewType } from '../types';
+import { APP_NAME, APP_SUBTITLE, APP_VERSION } from '../config';
 
 interface NavItem {
   id: ViewType;
   label: string;
   icon: string;
   badge?: number;
+  badgeVariant?: 'error' | 'warning';
 }
 
 export const Sidebar: React.FC = () => {
-  const { currentView, setCurrentView, products, showToast, openSaleModal } = useApp();
+  const { currentView, setCurrentView, products, sales = [], ipvTotalVendido = 0, isCurrentDayClosed, openSaleModal } = useApp();
 
   const lowStockCount = products.filter((p) => p.status === 'low' || p.status === 'out').length;
+  const isClosePending = (sales.length > 0 || ipvTotalVendido > 0) && !isCurrentDayClosed;
 
   const navItems: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard General', icon: 'dashboard' },
     { id: 'ipv-del-dia', label: 'IPV del día', icon: 'point_of_sale' },
-    { id: 'alertas-de-stock', label: 'Alertas de stock', icon: 'notification_important', badge: lowStockCount },
-    { id: 'cierre-de-caja', label: 'Cierre de caja', icon: 'lock_clock' },
+    { id: 'historial-ventas', label: 'Historial de ventas', icon: 'receipt_long' },
+    { id: 'alertas-de-stock', label: 'Alertas de stock', icon: 'notification_important', badge: lowStockCount > 0 ? lowStockCount : undefined, badgeVariant: 'error' },
+    { id: 'cierre-de-caja', label: 'Cierre de caja', icon: 'lock_clock', badge: isClosePending ? 1 : undefined, badgeVariant: 'warning' },
     { id: 'reportes', label: 'Reportes', icon: 'analytics' },
     { id: 'productos', label: 'Productos', icon: 'inventory_2' },
     { id: 'respaldo-y-exportacion', label: 'Respaldo y exportación', icon: 'cloud_sync' },
@@ -30,12 +34,14 @@ export const Sidebar: React.FC = () => {
         {/* Brand header with FerreStock Logo */}
         <div
           onClick={() => setCurrentView('dashboard')}
-          className="px-2 py-0 cursor-pointer flex items-center justify-center -my-2 transition-transform hover:scale-[1.01]"
+          className="w-full cursor-pointer flex items-center justify-center transition-transform hover:scale-[1.01] -my-1"
           title="FerreStock - Ir al Dashboard"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 800 400"
+            width="100%"
+            height="100%"
             className="w-full h-auto object-contain max-h-24 drop-shadow-sm"
           >
             <defs>
@@ -59,24 +65,27 @@ export const Sidebar: React.FC = () => {
 
             <style>{`
               .brand-title {
-                font-family: 'Plus Jakarta Sans', 'Montserrat', 'Inter', sans-serif;
+                font-family: 'Montserrat', 'Inter', 'Rajdhani', 'Arial Black', sans-serif;
                 font-weight: 800;
                 font-size: 54px;
                 fill: #1E293B;
                 letter-spacing: -0.5px;
               }
+              
               .brand-accent {
                 fill: #0052CC;
               }
+
               .brand-tagline {
-                font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+                font-family: 'Inter', 'Roboto', sans-serif;
                 font-size: 15px;
                 font-weight: 600;
                 fill: #64748B;
                 letter-spacing: 2px;
               }
+
               .badge-text {
-                font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+                font-family: 'Inter', sans-serif;
                 font-size: 11px;
                 font-weight: 700;
                 fill: #FF7A00;
@@ -115,8 +124,8 @@ export const Sidebar: React.FC = () => {
                   fill="url(#primaryGrad)"
                 />
 
-                {/* Centro Hueco del Engranaje (Fondo transparente/color del sidebar) */}
-                <circle cx="120" cy="120" r="75" fill="var(--color-surface, #e8eaf0)" />
+                {/* Centro Hueco del Engranaje (Fondo a juego con el sidebar) */}
+                <circle cx="120" cy="120" r="75" fill="#e8eaf0" />
 
                 {/* Integración del CÓDIGO DE BARRAS */}
                 <g fill="url(#primaryGrad)">
@@ -154,13 +163,13 @@ export const Sidebar: React.FC = () => {
               {/* TIPOGRAFÍA Y MARCA */}
               {/* Tag Superior / Categoría */}
               <g transform="translate(265, 82)">
-                <rect x="0" y="0" width="145" height="22" rx="11" fill="#FF7A00" fillOpacity="0.12" />
+                <rect x="0" y="0" width="145" height="22" rx="11" fill="#FF7A00" fillOpacity={0.12} />
                 <text x="12" y="15" className="badge-text">
                   SISTEMA IPV
                 </text>
               </g>
 
-              {/* Nombre Principal 'FerreStock' */}
+              {/* Nombre Principal "FerreStock" */}
               <text x="265" y="142" className="brand-title">
                 Ferre<tspan className="brand-accent">Stock</tspan>
               </text>
@@ -178,16 +187,11 @@ export const Sidebar: React.FC = () => {
           {/* Quick Sale POS Action */}
           <button
             onClick={() => openSaleModal()}
-            className="w-full py-2.5 px-3.5 mb-3.5 rounded-xl bg-primary text-white flex items-center justify-between text-xs font-bold shadow-md shadow-primary/25 hover:bg-primary-container active:scale-[0.98] transition-all cursor-pointer"
+            className="w-full py-2.5 px-3.5 mb-3.5 rounded-xl bg-primary text-white flex items-center justify-center gap-2 text-xs font-bold shadow-md shadow-primary/25 hover:bg-primary-container active:scale-[0.98] transition-all cursor-pointer"
             type="button"
           >
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-[19px]">point_of_sale</span>
-              <span>⚡ Nueva Venta</span>
-            </div>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/20 text-white font-bold">
-              [F1]
-            </span>
+            <span className="material-symbols-outlined text-[19px]">point_of_sale</span>
+            <span>⚡ Nueva Venta</span>
           </button>
 
           <div className="text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant/80 mb-2">
@@ -216,7 +220,9 @@ export const Sidebar: React.FC = () => {
                       className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
                         isActive
                           ? 'bg-primary text-white shadow-sm'
-                          : 'bg-error-container text-on-error-container'
+                          : item.badgeVariant === 'warning'
+                          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold'
+                          : 'bg-error-container text-on-error-container font-bold'
                       }`}
                     >
                       {item.badge}
@@ -238,7 +244,7 @@ export const Sidebar: React.FC = () => {
           <span className="text-xs font-semibold text-on-surface leading-tight">Vendedor</span>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-[10px] text-on-surface-variant leading-none">v 1.0.1</span>
+            <span className="text-[10px] text-on-surface-variant leading-none">{APP_VERSION}</span>
           </div>
         </div>
       </div>

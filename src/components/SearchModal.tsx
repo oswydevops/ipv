@@ -15,10 +15,7 @@ export const SearchModal: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F2') {
-        e.preventDefault();
-        setIsSearchModalOpen(true);
-      } else if (e.key === 'Escape' && isSearchModalOpen) {
+      if (e.key === 'Escape' && isSearchModalOpen) {
         setIsSearchModalOpen(false);
       }
     };

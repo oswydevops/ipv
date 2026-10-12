@@ -1,6 +1,7 @@
 export type ViewType = 
   | 'dashboard'
   | 'ipv-del-dia'
+  | 'historial-ventas'
   | 'alertas-de-stock'
   | 'cierre-de-caja'
   | 'reportes'
@@ -37,6 +38,7 @@ export interface IPVRow {
   saldoIni: number;
   entrada: number;
   vendido: number;
+  ajuste?: number;
   saldoFinal: number;
   price: number;
   importe: number;

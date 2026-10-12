@@ -29,7 +29,6 @@ export const ProductsView: React.FC = () => {
   const [newPrice, setNewPrice] = useState<number>(0);
   const [newStock, setNewStock] = useState<number>(10);
   const [newMinStock, setNewMinStock] = useState<number>(5);
-  const [newProvider, setNewProvider] = useState('Proveedor Local S.A.');
   const [newLocation, setNewLocation] = useState('Almacén Central');
 
   // Edit product form state
@@ -40,7 +39,6 @@ export const ProductsView: React.FC = () => {
   const [editPrice, setEditPrice] = useState<number>(0);
   const [editStock, setEditStock] = useState<number>(0);
   const [editMinStock, setEditMinStock] = useState<number>(0);
-  const [editProvider, setEditProvider] = useState('');
   const [editLocation, setEditLocation] = useState('');
 
   const zeroCount = products.filter((p) => p.stock === 0).length;
@@ -88,12 +86,11 @@ export const ProductsView: React.FC = () => {
     setNewPrice(0);
     setNewStock(10);
     setNewMinStock(5);
-    setNewProvider('Proveedor Local S.A.');
     setNewLocation('Almacén Central');
     setIsNewModalOpen(true);
   };
 
-  const handleSaveProduct = () => {
+  const handleSaveProduct = async () => {
     if (!newName.trim()) {
       showToast('Error', 'El nombre del producto no puede estar vacío.', 'error');
       return;
@@ -108,7 +105,7 @@ export const ProductsView: React.FC = () => {
       now.toLocaleTimeString('es-CU', { hour: '2-digit', minute: '2-digit' }) +
       ' hrs';
 
-    addProduct({
+    const success = await addProduct({
       code: finalCode,
       name: newName.trim(),
       detail: `${newCategory} • Grado Profesional`,
@@ -119,12 +116,13 @@ export const ProductsView: React.FC = () => {
       minStock: Number(newMinStock) || 0,
       status,
       rotation: 'Normal (15 u)',
-      provider: newProvider.trim() || 'Proveedor Local',
       location: newLocation.trim() || 'Almacén Central',
       lastExit: 'Hoy',
       createdAt: formattedDate,
     });
-    setIsNewModalOpen(false);
+    if (success) {
+      setIsNewModalOpen(false);
+    }
   };
 
   const handleOpenEdit = (product: Product, e?: React.MouseEvent) => {
@@ -137,11 +135,10 @@ export const ProductsView: React.FC = () => {
     setEditPrice(product.price);
     setEditStock(product.stock);
     setEditMinStock(product.minStock);
-    setEditProvider(product.provider || 'Proveedor Local');
     setEditLocation(product.location || 'Almacén Central');
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingProduct) return;
     if (!editName.trim()) {
       showToast('Error', 'El nombre no puede estar vacío.', 'error');
@@ -151,7 +148,7 @@ export const ProductsView: React.FC = () => {
     const minStockNum = Number(editMinStock) || 0;
     const newStatus = stockNum === 0 ? 'out' : stockNum <= minStockNum ? 'low' : 'ok';
 
-    editProduct(editingProduct.id, {
+    const success = await editProduct(editingProduct.id, {
       code: editCode.trim() || editingProduct.code,
       name: editName.trim(),
       category: editCategory,
@@ -160,10 +157,11 @@ export const ProductsView: React.FC = () => {
       stock: stockNum,
       minStock: minStockNum,
       status: newStatus,
-      provider: editProvider.trim(),
       location: editLocation.trim(),
     });
-    setEditingProduct(null);
+    if (success) {
+      setEditingProduct(null);
+    }
   };
 
   const handleOpenDelete = (product: Product, e?: React.MouseEvent) => {
@@ -171,10 +169,12 @@ export const ProductsView: React.FC = () => {
     setDeletingProduct(product);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (deletingProduct) {
-      deleteProduct(deletingProduct.id);
-      setDeletingProduct(null);
+      const success = await deleteProduct(deletingProduct.id);
+      if (success) {
+        setDeletingProduct(null);
+      }
     }
   };
 
@@ -361,38 +361,22 @@ export const ProductsView: React.FC = () => {
                           {p.minStock}
                         </td>
                         <td className="py-3 px-4">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openSaleModal(p);
-                              }}
-                              disabled={p.stock <= 0}
-                              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer ${
-                                p.stock <= 0
-                                  ? 'bg-surface text-on-surface-variant/30 cursor-not-allowed neo-inset'
-                                  : 'bg-primary text-white hover:bg-primary-container shadow-sm active:scale-95'
-                              }`}
-                              title={p.stock <= 0 ? 'Sin existencias' : 'Vender este producto'}
-                              type="button"
-                            >
-                              <span className="material-symbols-outlined text-[15px]">point_of_sale</span>
-                            </button>
+                          <div className="flex items-center justify-center gap-2">
                             <button
                               onClick={(e) => handleOpenEdit(p, e)}
-                              className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-primary transition-all active:neo-inset cursor-pointer"
+                              className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-primary transition-all active:neo-inset cursor-pointer"
                               title="Editar producto"
                               type="button"
                             >
-                              <span className="material-symbols-outlined text-[15px]">edit</span>
+                              <span className="material-symbols-outlined text-[16px]">edit</span>
                             </button>
                             <button
                               onClick={(e) => handleOpenDelete(p, e)}
-                              className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-error transition-all active:neo-inset cursor-pointer"
+                              className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-error transition-all active:neo-inset cursor-pointer"
                               title="Eliminar producto"
                               type="button"
                             >
-                              <span className="material-symbols-outlined text-[15px]">delete</span>
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
                             </button>
                           </div>
                         </td>
@@ -558,20 +542,15 @@ export const ProductsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Ubicación y Proveedor */}
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="p-3 rounded-xl bg-surface neo-inset flex flex-col">
-                  <span className="text-[10px] text-on-surface-variant uppercase font-medium">Ubicación</span>
-                  <span className="font-semibold text-on-surface mt-0.5 truncate">
-                    {selectedProduct.location || 'Almacén Central'}
-                  </span>
-                </div>
-                <div className="p-3 rounded-xl bg-surface neo-inset flex flex-col">
-                  <span className="text-[10px] text-on-surface-variant uppercase font-medium">Proveedor</span>
-                  <span className="font-semibold text-on-surface mt-0.5 truncate">
-                    {selectedProduct.provider || 'Proveedor Local'}
-                  </span>
-                </div>
+              {/* Ubicación en Almacén */}
+              <div className="p-3 rounded-xl bg-surface neo-inset flex items-center justify-between text-xs">
+                <span className="text-[10px] text-on-surface-variant uppercase font-medium flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-primary">location_on</span>
+                  Ubicación en Almacén
+                </span>
+                <span className="font-semibold text-on-surface truncate">
+                  {selectedProduct.location || 'Almacén Central'}
+                </span>
               </div>
 
               {/* Requirement 7: Fecha y Hora en que se agregó */}
@@ -581,7 +560,7 @@ export const ProductsView: React.FC = () => {
                   <span className="font-medium">Fecha y hora de registro:</span>
                 </div>
                 <span className="font-mono font-bold text-on-surface text-[11px]">
-                  {selectedProduct.createdAt || '12/10/2024 • 08:30 hrs'}
+                  {selectedProduct.createdAt || 'Reciente'}
                 </span>
               </div>
 
@@ -637,18 +616,12 @@ export const ProductsView: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-4 text-xs">
               <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-on-surface">Código de Producto</label>
-                  <span className="text-[10px] font-mono text-primary font-bold bg-primary/10 px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
-                    Automático
-                  </span>
-                </div>
+                <label className="font-semibold text-on-surface">Código de Producto</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center justify-between border border-primary/25">
                   <span className="font-mono text-primary font-bold text-sm tracking-wide">
                     {newCode || 'PROD-AUTO'}
                   </span>
-                  <span className="material-symbols-outlined text-primary/70 text-[18px]" title="Asignado automáticamente al guardar">
+                  <span className="material-symbols-outlined text-primary/70 text-[18px]">
                     lock
                   </span>
                 </div>
@@ -660,7 +633,7 @@ export const ProductsView: React.FC = () => {
                   <select
                     value={newCategory}
                     onChange={(e) => setNewCategory(e.target.value)}
-                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer"
+                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
                   >
                     <option>Plomería</option>
                     <option>Electricidad</option>
@@ -681,7 +654,7 @@ export const ProductsView: React.FC = () => {
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     placeholder="Ej: Válvula Check 3/4 horizontal de bronce"
-                    className="bg-transparent border-none outline-none text-on-surface w-full font-medium"
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-medium text-xs"
                   />
                 </div>
               </div>
@@ -692,7 +665,7 @@ export const ProductsView: React.FC = () => {
                   <select
                     value={newUM}
                     onChange={(e) => setNewUM(e.target.value)}
-                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer"
+                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
                   >
                     <option>Unidad</option>
                     <option>Metro</option>
@@ -714,7 +687,7 @@ export const ProductsView: React.FC = () => {
                     value={newPrice || ''}
                     onChange={(e) => setNewPrice(parseFloat(e.target.value) || 0)}
                     placeholder="0.00"
-                    className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono"
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono text-xs"
                   />
                 </div>
               </div>
@@ -727,7 +700,7 @@ export const ProductsView: React.FC = () => {
                     min="0"
                     value={newStock}
                     onChange={(e) => setNewStock(parseInt(e.target.value) || 0)}
-                    className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold"
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
                 </div>
               </div>
@@ -740,31 +713,20 @@ export const ProductsView: React.FC = () => {
                     min="0"
                     value={newMinStock}
                     onChange={(e) => setNewMinStock(parseInt(e.target.value) || 0)}
-                    className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold"
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Proveedor</label>
-                <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
-                  <input
-                    type="text"
-                    value={newProvider}
-                    onChange={(e) => setNewProvider(e.target.value)}
-                    className="bg-transparent border-none outline-none text-on-surface w-full"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Ubicación</label>
+              <div className="col-span-2 flex flex-col gap-1.5">
+                <label className="font-semibold text-on-surface">Ubicación en Almacén</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
                     type="text"
                     value={newLocation}
                     onChange={(e) => setNewLocation(e.target.value)}
-                    className="bg-transparent border-none outline-none text-on-surface w-full"
+                    placeholder="Ej: Almacén Central • Estante B-4"
+                    className="bg-transparent border-none outline-none text-on-surface w-full text-xs"
                   />
                 </div>
               </div>
@@ -897,7 +859,7 @@ export const ProductsView: React.FC = () => {
                     min="0"
                     value={editStock}
                     onChange={(e) => setEditStock(parseInt(e.target.value) || 0)}
-                    className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold"
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
                 </div>
               </div>
@@ -910,31 +872,20 @@ export const ProductsView: React.FC = () => {
                     min="0"
                     value={editMinStock}
                     onChange={(e) => setEditMinStock(parseInt(e.target.value) || 0)}
-                    className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold"
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Proveedor</label>
-                <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
-                  <input
-                    type="text"
-                    value={editProvider}
-                    onChange={(e) => setEditProvider(e.target.value)}
-                    className="bg-transparent border-none outline-none text-on-surface w-full"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Ubicación</label>
+              <div className="col-span-2 flex flex-col gap-1.5">
+                <label className="font-semibold text-on-surface">Ubicación en Almacén</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
                     type="text"
                     value={editLocation}
                     onChange={(e) => setEditLocation(e.target.value)}
-                    className="bg-transparent border-none outline-none text-on-surface w-full"
+                    placeholder="Ej: Almacén Central • Estante B-4"
+                    className="bg-transparent border-none outline-none text-on-surface w-full text-xs"
                   />
                 </div>
               </div>
@@ -966,7 +917,7 @@ export const ProductsView: React.FC = () => {
           <div className="bg-surface rounded-2xl p-6 neo-raised w-full max-w-md flex flex-col gap-4 shadow-2xl">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-red-100 text-error flex items-center justify-center">
-                <span className="material-symbols-outlined text-[24px]">delete_forever</span>
+                <span className="material-symbols-outlined text-[24px]">delete</span>
               </div>
               <div>
                 <h3 className="font-headline font-bold text-base text-on-surface">
@@ -979,9 +930,9 @@ export const ProductsView: React.FC = () => {
             </div>
 
             <p className="text-xs text-on-surface-variant leading-relaxed">
-              Está a punto de eliminar definitivamente el producto{' '}
-              <strong className="text-on-surface">"{deletingProduct.name}"</strong> del catálogo maestro.
-              Esta acción no se puede deshacer.
+              Está a punto de eliminar el producto{' '}
+              <strong className="text-on-surface">"{deletingProduct.name}"</strong>.
+              El producto será retirado del catálogo activo de existencias. ¿Desea confirmar la eliminación?
             </p>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -994,7 +945,7 @@ export const ProductsView: React.FC = () => {
               </button>
               <button
                 onClick={handleConfirmDelete}
-                className="h-10 px-5 rounded-xl bg-error text-white text-xs font-semibold hover:opacity-90 active:neo-inset transition-all cursor-pointer"
+                className="h-10 px-5 rounded-xl bg-error text-white text-xs font-semibold hover:bg-error-container active:neo-inset transition-all cursor-pointer"
                 type="button"
               >
                 Sí, Eliminar

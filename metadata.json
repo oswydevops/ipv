@@ -1,6 +1,0 @@
-{
-  "name": "Ferretería Central - Control de Ventas v2.5",
-  "description": "Sistema integral de gestión de mostrador, IPV diario, alertas de stock, cierre de caja, analítica y respaldos en SQLite para Ferretería Central.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
