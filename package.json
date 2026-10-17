@@ -13,7 +13,7 @@
     "lint": "tsc --noEmit",
     "app": "npm run build && electron .",
     "app:dev": "electron .",
-    "dist": "npm run build && electron-builder --win nsis portable --x64 --ia32"
+    "dist": "npm run build && electron-builder --win nsis portable --x64"
   },
   "dependencies": {
     "better-sqlite3": "8.7.0"
