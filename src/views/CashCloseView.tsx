@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { DayClose } from '../data/api';
 import { APP_NAME } from '../config';
@@ -10,8 +10,6 @@ export const CashCloseView: React.FC = () => {
     currentIpvDay,
     denominations,
     updateDenominationCount,
-    menoresAmount,
-    setMenoresAmount,
     transferenciasAmount,
     setTransferenciasAmount,
     totalCashFisico,
@@ -25,6 +23,8 @@ export const CashCloseView: React.FC = () => {
     reopenDay,
     listCloses,
     showToast,
+    sales = [],
+    returns = [],
   } = useApp();
 
   const [responsibleName, setResponsibleName] = useState('Vendedor');
@@ -36,6 +36,7 @@ export const CashCloseView: React.FC = () => {
   const [historyList, setHistoryList] = useState<DayClose[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Set real current time and update every minute
   useEffect(() => {
@@ -91,11 +92,49 @@ export const CashCloseView: React.FC = () => {
   const totalPieces = denominations.reduce((acc, d) => acc + d.count, 0);
 
   // Differences
-  const cashDifference = totalCashFisico - totalVentasEfectivo;
+  const devolucionesToday = useMemo(() => {
+    return returns.filter((r) => r.date === todayDate);
+  }, [returns, todayDate]);
+
+  const totalDevolucionesRefundToday = useMemo(() => {
+    return devolucionesToday.reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+  }, [devolucionesToday]);
+
+  const voidedSalesToday = useMemo(() => {
+    const returnSaleIds = new Set(devolucionesToday.map((r) => r.saleId).filter(Boolean));
+    return sales.filter((s) => (s as any).voided && s.date === todayDate && !returnSaleIds.has(s.id));
+  }, [sales, todayDate, devolucionesToday]);
+
+  const autoDevolucionesTotal = useMemo(() => {
+    const voidedSalesTotal = voidedSalesToday.reduce((acc, s) => acc + (s.total || 0), 0);
+    return totalDevolucionesRefundToday + voidedSalesTotal;
+  }, [totalDevolucionesRefundToday, voidedSalesToday]);
+
+  const damagedCountToday = useMemo(() => {
+    return devolucionesToday.reduce((acc, r) => {
+      const damagedInReturn = (r.items || []).filter((it) => it.condition === 'mal_estado').reduce((s, it) => s + (it.quantity || 1), 0);
+      return acc + damagedInReturn;
+    }, 0);
+  }, [devolucionesToday]);
+
+  const [devolucionesAmount, setDevolucionesAmount] = useState<number>(0);
+
+  useEffect(() => {
+    setDevolucionesAmount(autoDevolucionesTotal);
+  }, [autoDevolucionesTotal]);
+
+  // Reembolsos en efectivo deducidos de la caja física esperada
+  const efectivoDevueltoToday = useMemo(() => {
+    return devolucionesToday
+      .filter((r) => r.refundMethod === 'efectivo' || !r.refundMethod)
+      .reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+  }, [devolucionesToday]);
+
+  const expectedCashInDrawer = Math.max(0, totalVentasEfectivo - efectivoDevueltoToday);
+  const cashDifference = totalCashFisico - expectedCashInDrawer;
   const transferDifference = transferenciasAmount - totalVentasTransferencia;
-
-
-  // Manejar el cierre real del día
+  const netIpvExpected = Math.max(0, ipvTotalVendido - devolucionesAmount);
+  const netDifference = totalGeneralContado - netIpvExpected;
   const handlePerformClose = async () => {
     if (isCurrentDayClosed) {
       showToast('Aviso', 'El día ya está cerrado.', 'info');
@@ -123,6 +162,84 @@ export const CashCloseView: React.FC = () => {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // Exportar cierre diario a Excel
+  const handleExportClose = async () => {
+    setIsExporting(true);
+    try {
+      if (!window.api?.reports?.exportarCierreExcel) {
+        throw new Error('La exportación a Excel no está disponible en esta versión de la aplicación.');
+      }
+      const res = await window.api.reports.exportarCierreExcel(todayDate);
+      if (res.canceled) {
+        return;
+      }
+      showToast('Cierre exportado a Excel', res.excelPath, 'success');
+    } catch (err: any) {
+      showToast('Error al exportar cierre', err?.message || 'No se pudo generar el reporte de cierre.', 'error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Impresión del Comprobante / Acta térmica de cierre de caja
+  const handlePrintActa = () => {
+    const printWindow = window.open('', '_blank', 'width=420,height=680');
+    if (!printWindow) {
+      window.print();
+      return;
+    }
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Acta Cierre de Caja - ${todayDate}</title>
+        <style>
+          @page { size: 80mm auto; margin: 4mm; }
+          body { font-family: 'Courier New', monospace, sans-serif; font-size: 11px; margin: 0; padding: 6px; color: #000; }
+          .center { text-align: center; }
+          .bold { font-weight: bold; }
+          .divider { border-bottom: 1px dashed #000; margin: 6px 0; }
+          .row { display: flex; justify-content: space-between; margin: 2px 0; }
+          .small { font-size: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="center">
+          <div class="bold" style="font-size: 14px;">${APP_NAME}</div>
+          <div class="small">ACTA DE ARQUEO Y CIERRE DIARIO</div>
+        </div>
+        <div class="divider"></div>
+        <div class="row small"><span>FECHA: ${todayDate}</span><span>HORA: ${closeTime}</span></div>
+        <div class="row small"><span>RESPONSABLE: ${responsibleName.toUpperCase()}</span><span>ESTADO: ${isCurrentDayClosed ? 'CERRADO' : 'POR CERRAR'}</span></div>
+        <div class="divider"></div>
+        <div class="center bold">VENTAS REGISTRADAS EN IPV</div>
+        <div class="row"><span>Ventas Efectivo:</span><span>$${formatCUP(totalVentasEfectivo)} CUP</span></div>
+        <div class="row"><span>Ventas Transferencia:</span><span>$${formatCUP(totalVentasTransferencia)} CUP</span></div>
+        <div class="row bold"><span>TOTAL FACTURADO IPV:</span><span>$${formatCUP(ipvTotalVendido)} CUP</span></div>
+        <div class="divider"></div>
+        <div class="center bold">DESGLOSE EFECTIVO CONTADO</div>
+        ${denominations.map(d => `<div class="row"><span>${d.count}x $${d.value} CUP</span><span>$${formatCUP(d.count * d.value)}</span></div>`).join('')}
+        ${devolucionesAmount > 0 ? `<div class="row bold" style="color:#b45309;"><span>Devoluciones/Reembolsos:</span><span>-$${formatCUP(devolucionesAmount)} CUP</span></div>` : ''}
+        ${damagedCountToday > 0 ? `<div class="row bold" style="color:#b91c1c;"><span>Mal Estado:</span><span>${damagedCountToday} u.</span></div>` : ''}
+        <div class="divider"></div>
+        <div class="row bold"><span>EFECTIVO CONTADO TOTAL:</span><span>$${formatCUP(totalCashFisico)} CUP</span></div>
+        <div class="row"><span>Diferencia vs Efectivo Esp.:</span><span>${cashDifference === 0 ? '0.00 (Exacto)' : (cashDifference > 0 ? '+' : '') + formatCUP(cashDifference) + ' CUP'}</span></div>
+        <div class="row"><span>TRANSFERENCIAS (ENZONA/TM):</span><span>$${formatCUP(transferenciasAmount)} CUP</span></div>
+        <div class="divider"></div>
+        <div class="row bold" style="font-size: 12px;"><span>TOTAL RECAUDADO:</span><span>$${formatCUP(totalGeneralContado)} CUP</span></div>
+        <div class="row bold"><span>DIFERENCIA REAL NETA:</span><span>${netDifference === 0 ? '0.00 (Cuadrado)' : (netDifference > 0 ? '+' : '') + formatCUP(netDifference) + ' CUP'}</span></div>
+        ${notes ? `<div class="divider"></div><div class="small">OBSERVACIONES: ${notes}</div>` : ''}
+        <script>window.onload = function() { window.print(); };</script>
+      </body>
+      </html>
+    `;
+    printWindow.document.open();
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   return (
@@ -254,9 +371,9 @@ export const CashCloseView: React.FC = () => {
                     className="grid grid-cols-12 items-center px-4 py-3 rounded-xl bg-surface neo-raised transition-all"
                   >
                     <div className="col-span-4 flex items-center gap-2.5">
-                      <span className="w-8 h-8 rounded-lg bg-surface neo-inset flex items-center justify-center text-primary text-xs font-bold font-mono">
-                        {denom.badge}
-                      </span>
+                      <div className="w-8 h-8 rounded-lg bg-surface neo-inset flex items-center justify-center text-primary shrink-0">
+                        <span className="material-symbols-outlined text-[18px]">payments</span>
+                      </div>
                       <div className="flex flex-col">
                         <span className="text-xs font-semibold text-on-surface">{denom.label}</span>
                         <span className="text-[10px] text-on-surface-variant">{denom.sublabel}</span>
@@ -304,42 +421,6 @@ export const CashCloseView: React.FC = () => {
                   </div>
                 );
               })}
-
-              {/* Row: Menores y Monedas */}
-              <div className="grid grid-cols-12 items-center px-4 py-3 rounded-xl bg-surface neo-raised transition-all">
-                <div className="col-span-4 flex items-center gap-2.5">
-                  <span className="w-8 h-8 rounded-lg bg-surface neo-inset flex items-center justify-center text-on-surface-variant text-xs font-bold">
-                    <span className="material-symbols-outlined text-[16px]">toll</span>
-                  </span>
-                  <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-on-surface">Menores (20, 10, 5)</span>
-                    <span className="text-[10px] text-on-surface-variant">Suelto &amp; monedas</span>
-                  </div>
-                </div>
-                <div className="col-span-2 text-right text-xs font-mono text-on-surface-variant font-medium">
-                  Mixto
-                </div>
-                <div className="col-span-3 flex items-center justify-center">
-                  <div className="flex items-center bg-surface neo-inset rounded-lg px-2.5 py-1">
-                    <span className="text-[10px] font-mono text-on-surface-variant mr-1">$</span>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      disabled={isCurrentDayClosed}
-                      value={menoresAmount}
-                      onChange={(e) => setMenoresAmount(parseFloat(e.target.value) || 0)}
-                      className="w-16 bg-transparent text-center font-mono text-xs font-semibold text-on-surface focus:outline-none disabled:opacity-60"
-                    />
-                  </div>
-                </div>
-                <div className="col-span-3 text-right">
-                  <span className="font-mono text-xs font-bold text-on-surface">
-                    {formatCUP(menoresAmount)}
-                  </span>
-                  <span className="text-[10px] text-on-surface-variant ml-0.5">CUP</span>
-                </div>
-              </div>
             </div>
           </div>
 
@@ -422,21 +503,29 @@ export const CashCloseView: React.FC = () => {
                   </span>
                   <span className="font-mono text-primary font-bold">${formatCUP(ipvTotalVendido)} CUP</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-outline-variant/15">
+                <div className="grid grid-cols-3 gap-2 text-xs pt-1 border-t border-outline-variant/15">
                   <div className="flex flex-col">
                     <span className="text-[10px] text-on-surface-variant flex items-center gap-1 font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> En Efectivo:
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Efectivo:
                     </span>
                     <span className="font-mono font-bold text-emerald-600 mt-0.5">
-                      ${formatCUP(totalVentasEfectivo)} CUP
+                      ${formatCUP(totalVentasEfectivo)}
                     </span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-[10px] text-on-surface-variant flex items-center gap-1 font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-primary"></span> Transferencia:
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary"></span> Transf.:
                     </span>
                     <span className="font-mono font-bold text-primary mt-0.5">
-                      ${formatCUP(totalVentasTransferencia)} CUP
+                      ${formatCUP(totalVentasTransferencia)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-on-surface-variant flex items-center gap-1 font-medium">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Devolución:
+                    </span>
+                    <span className="font-mono font-bold text-amber-600 mt-0.5">
+                      ${formatCUP(devolucionesAmount)}
                     </span>
                   </div>
                 </div>
@@ -505,6 +594,49 @@ export const CashCloseView: React.FC = () => {
                 </div>
               </div>
 
+              {/* Item 3: Monto Total de Devoluciones (Ventas Anuladas / Reembolsos) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-surface neo-raised gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-surface neo-inset flex items-center justify-center text-amber-600 shrink-0">
+                    <span className="material-symbols-outlined text-[20px]">
+                      assignment_return
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-on-surface">
+                      Monto Total de Devoluciones
+                    </span>
+                    <span className="text-[10px] text-on-surface-variant font-medium">
+                      Reembolsos del día ({devolucionesToday.length + voidedSalesToday.length} {(devolucionesToday.length + voidedSalesToday.length) === 1 ? 'operación' : 'operaciones'}
+                      {damagedCountToday > 0 ? ` • ${damagedCountToday} art. en mal estado` : ''})
+                    </span>
+                    {devolucionesAmount !== autoDevolucionesTotal && !isCurrentDayClosed && (
+                      <button
+                        onClick={() => setDevolucionesAmount(autoDevolucionesTotal)}
+                        className="text-[10px] text-amber-600 underline text-left font-semibold mt-0.5 cursor-pointer"
+                        type="button"
+                      >
+                        Sincronizar con devoluciones (${formatCUP(autoDevolucionesTotal)} CUP)
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 bg-surface neo-inset px-2.5 py-1.5 rounded-xl self-end sm:self-auto">
+                  <span className="text-xs font-mono text-on-surface-variant font-bold">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    disabled={isCurrentDayClosed}
+                    value={devolucionesAmount}
+                    onChange={(e) => setDevolucionesAmount(parseFloat(e.target.value) || 0)}
+                    className="w-24 bg-transparent text-right font-mono text-xs font-bold text-amber-600 focus:outline-none disabled:opacity-60"
+                    placeholder="0.00"
+                  />
+                  <span className="text-[10px] font-bold text-amber-600 font-mono ml-0.5">CUP</span>
+                </div>
+              </div>
+
               {/* Item 3: Total Recaudado (Suma Efectivo + Transferencias) */}
               <div className="p-4 rounded-xl bg-primary/5 border border-primary/25 neo-inset flex flex-col gap-2.5 mt-1">
                 <div className="flex items-center justify-between">
@@ -530,25 +662,29 @@ export const CashCloseView: React.FC = () => {
                     </span>
                   </div>
                 </div>
-                <div className="flex items-center justify-between pt-2 border-t border-primary/15 text-xs font-semibold">
-                  <span className="text-on-surface-variant text-[11px]">
-                    Diferencia Real vs Facturado (IPV ${formatCUP(ipvTotalVendido)}):
-                  </span>
-                  <span
-                    className={`font-mono text-xs font-bold ${
-                      diferenciaCaja === 0
-                        ? 'text-emerald-600'
-                        : diferenciaCaja > 0
-                        ? 'text-primary'
-                        : 'text-error'
-                    }`}
-                  >
-                    {diferenciaCaja === 0
-                      ? '✓ Cuadrado Exacto (0.00)'
-                      : diferenciaCaja > 0
-                      ? `+$${formatCUP(diferenciaCaja)} Superávit`
-                      : `-$${formatCUP(Math.abs(diferenciaCaja))} Faltante`}
-                  </span>
+                <div className="flex flex-col gap-1 pt-2 border-t border-primary/15 text-xs font-semibold">
+                  <div className="flex items-center justify-between">
+                    <span className="text-on-surface-variant text-[11px]">
+                      {devolucionesAmount > 0
+                        ? `Diferencia Real vs Neto (${formatCUP(netIpvExpected)} CUP tras -$${formatCUP(devolucionesAmount)} en devoluciones):`
+                        : `Diferencia Real vs Facturado (IPV $${formatCUP(ipvTotalVendido)}):`}
+                    </span>
+                    <span
+                      className={`font-mono text-xs font-bold ${
+                        netDifference === 0
+                          ? 'text-emerald-600'
+                          : netDifference > 0
+                          ? 'text-primary'
+                          : 'text-error'
+                      }`}
+                    >
+                      {netDifference === 0
+                        ? '✓ Cuadrado Exacto (0.00)'
+                        : netDifference > 0
+                        ? `+$${formatCUP(netDifference)} Superávit`
+                        : `-$${formatCUP(Math.abs(netDifference))} Faltante`}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -651,135 +787,203 @@ export const CashCloseView: React.FC = () => {
                 <span>Vista Previa Acta</span>
               </button>
             </div>
+
+            {/* Botón Exportar Cierre */}
+            <button
+              onClick={handleExportClose}
+              disabled={isExporting}
+              className="w-full py-3 px-5 rounded-2xl bg-surface neo-raised hover:text-primary active:neo-inset text-xs font-bold text-on-surface transition-all flex items-center justify-between border border-outline-variant/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm group"
+              type="button"
+              title="Genera el reporte Excel del cierre en Documentos/IPV/Reportes/AAAA/MM"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0 group-hover:bg-emerald-500/20 transition-colors">
+                  <span className="material-symbols-outlined text-[18px]">
+                    {isExporting ? 'hourglass_top' : 'file_download'}
+                  </span>
+                </div>
+                <div className="flex flex-col text-left">
+                  <span className="text-xs font-bold text-on-surface group-hover:text-primary transition-colors">
+                    {isExporting ? 'Exportando cierre...' : 'Exportar cierre'}
+                  </span>
+                  <span className="text-[10px] text-on-surface-variant font-normal">
+                    Exporta el cierre detallado en Excel (.xlsx)
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-surface neo-inset text-emerald-700">
+                XLSX
+              </span>
+            </button>
           </div>
         </div>
       </div>
 
       {/* Official Thermal Ticket / Acta Modal */}
       {showActaModal && (
-        <div className="fixed inset-0 z-50 bg-inverse-surface/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-5 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-outline-variant/30">
+        <div className="fixed inset-0 z-50 bg-inverse-surface/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="w-full max-w-xl max-h-[94vh] sm:max-h-[90vh] rounded-2xl bg-surface neo-raised p-4 sm:p-5 flex flex-col gap-3 shadow-2xl my-auto animate-fade-in border border-outline-variant/30">
+            {/* Header */}
+            <div className="shrink-0 flex items-center justify-between pb-2.5 border-b border-outline-variant/30">
               <div className="flex items-center gap-2.5">
-                <span className="material-symbols-outlined text-primary text-[24px]">receipt</span>
+                <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">receipt_long</span>
+                </div>
                 <div>
                   <h3 className="font-headline font-bold text-sm text-on-surface">
                     Acta Oficial de Cierre de Caja
                   </h3>
-                  <p className="text-[10px] text-on-surface-variant font-mono">{todayDate} • {closeTime}</p>
+                  <p className="text-[10px] text-on-surface-variant font-mono">
+                    {todayDate} • {closeTime} • <span className={isCurrentDayClosed ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'}>{isCurrentDayClosed ? 'JORNADA CERRADA' : 'POR CERRAR'}</span>
+                  </p>
                 </div>
               </div>
-              <button
-                onClick={() => setShowActaModal(false)}
-                className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface active:neo-inset cursor-pointer"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[16px]">close</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handlePrintActa}
+                  className="px-2.5 py-1.5 rounded-lg bg-surface neo-raised flex items-center gap-1.5 text-xs font-semibold text-on-surface hover:text-primary active:neo-inset cursor-pointer transition-colors"
+                  type="button"
+                  title="Imprimir Comprobante Térmico"
+                >
+                  <span className="material-symbols-outlined text-[16px]">print</span>
+                  <span className="hidden sm:inline text-[11px]">Imprimir</span>
+                </button>
+                <button
+                  onClick={() => setShowActaModal(false)}
+                  className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface active:neo-inset cursor-pointer"
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[16px]">close</span>
+                </button>
+              </div>
             </div>
 
-            {/* Thermal Slip Simulation */}
-            <div className="bg-white p-5 rounded-xl shadow-inner font-mono text-[11px] text-neutral-800 flex flex-col gap-2 border border-neutral-300">
+            {/* Thermal Slip Simulation - Responsive Scrollable Container */}
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-white p-3.5 sm:p-4 rounded-xl shadow-inner font-mono text-[10px] sm:text-[11px] text-neutral-800 flex flex-col gap-1.5 border border-neutral-300">
               <div className="text-center pb-2 border-b border-dashed border-neutral-400">
-                <p className="font-bold text-sm">{APP_NAME}</p>
-                <p className="text-[10px]">ACTA DE ARQUEO Y CIERRE DIARIO</p>
+                <p className="font-bold text-sm text-neutral-900">{APP_NAME}</p>
+                <p className="text-[9px] sm:text-[10px] text-neutral-600 tracking-wider font-semibold">ACTA DE ARQUEO Y CIERRE DIARIO</p>
               </div>
 
-              <div className="flex justify-between text-[10px] pt-1">
-                <span>FECHA: {todayDate}</span>
-                <span>HORA: {closeTime}</span>
-              </div>
-              <div className="flex justify-between text-[10px]">
-                <span>RESPONSABLE: {responsibleName.toUpperCase()}</span>
-                <span>ESTADO: {isCurrentDayClosed ? 'CERRADO' : 'POR CERRAR'}</span>
+              <div className="grid grid-cols-2 text-[10px] pt-0.5 gap-y-0.5 text-neutral-700">
+                <div><span>FECHA: </span><strong>{todayDate}</strong></div>
+                <div className="text-right"><span>HORA: </span><strong>{closeTime}</strong></div>
+                <div><span>RESPONSABLE: </span><strong>{responsibleName.toUpperCase()}</strong></div>
+                <div className="text-right"><span>ESTADO: </span><strong>{isCurrentDayClosed ? 'CERRADO' : 'POR CERRAR'}</strong></div>
               </div>
 
-              <div className="my-1 border-t border-dashed border-neutral-400"></div>
+              <div className="my-0.5 border-t border-dashed border-neutral-400"></div>
 
-              <p className="font-bold text-center">VENTAS REGISTRADAS EN IPV</p>
-              <div className="flex justify-between">
+              <p className="font-bold text-center text-[10px] sm:text-[11px] text-neutral-900">VENTAS REGISTRADAS EN IPV</p>
+              <div className="flex justify-between py-0.5">
                 <span>Ventas en Efectivo:</span>
-                <span>${formatCUP(totalVentasEfectivo)} CUP</span>
+                <span className="font-semibold">${formatCUP(totalVentasEfectivo)} CUP</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between py-0.5">
                 <span>Ventas por Transferencia:</span>
-                <span>${formatCUP(totalVentasTransferencia)} CUP</span>
+                <span className="font-semibold">${formatCUP(totalVentasTransferencia)} CUP</span>
               </div>
-              <div className="flex justify-between font-bold">
+              <div className="flex justify-between font-bold bg-neutral-100/70 px-2 py-1 rounded">
                 <span>TOTAL FACTURADO IPV:</span>
                 <span>${formatCUP(ipvTotalVendido)} CUP</span>
               </div>
 
-              <div className="my-1 border-t border-dashed border-neutral-400"></div>
+              <div className="my-0.5 border-t border-dashed border-neutral-400"></div>
 
-              <p className="font-bold text-center">DESGLOSE DE EFECTIVO CONTADO (CUP)</p>
-              {denominations.map((d) => (
-                <div key={d.id} className="flex justify-between">
-                  <span>
-                    {d.count.toString().padStart(2, ' ')}x ${d.value} CUP
-                  </span>
-                  <span>${formatCUP(d.count * d.value)}</span>
+              <div className="flex items-center justify-between">
+                <p className="font-bold text-[10px] sm:text-[11px] text-neutral-900">DESGLOSE DE EFECTIVO CONTADO</p>
+                <span className="text-[9px] text-neutral-500 font-normal">Moneda: CUP</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 bg-neutral-50 p-2 rounded border border-neutral-200/80">
+                {denominations.map((d) => (
+                  <div key={d.id} className="flex justify-between py-0.5 border-b border-neutral-200/50 last:border-0 sm:border-0">
+                    <span className="text-neutral-600">
+                      {d.count.toString().padStart(2, ' ')}x ${d.value} CUP
+                    </span>
+                    <span className="font-semibold text-neutral-900">${formatCUP(d.count * d.value)}</span>
+                  </div>
+                ))}
+              </div>
+
+              {(devolucionesAmount > 0 || damagedCountToday > 0) && (
+                <div className="flex flex-col gap-0.5 py-1 px-2 rounded bg-amber-50/70 border border-amber-200/60 my-0.5">
+                  {devolucionesAmount > 0 && (
+                    <div className="flex justify-between text-amber-800 font-semibold text-[10px] sm:text-[11px]">
+                      <span>Devoluciones / Reembolsos:</span>
+                      <span>-${formatCUP(devolucionesAmount)} CUP</span>
+                    </div>
+                  )}
+                  {damagedCountToday > 0 && (
+                    <div className="flex justify-between text-red-800 font-semibold text-[10px] sm:text-[11px]">
+                      <span>Artículos en Mal Estado:</span>
+                      <span>{damagedCountToday} u. (Merma/Garantía)</span>
+                    </div>
+                  )}
                 </div>
-              ))}
-              <div className="flex justify-between">
-                <span>Menores / Suelto:</span>
-                <span>${formatCUP(menoresAmount)}</span>
-              </div>
+              )}
 
-              <div className="my-1 border-t border-dashed border-neutral-400"></div>
+              <div className="my-0.5 border-t border-dashed border-neutral-400"></div>
 
-              <div className="flex justify-between font-bold">
+              <div className="flex justify-between font-bold py-0.5">
                 <span>EFECTIVO CONTADO TOTAL:</span>
-                <span>${formatCUP(totalCashFisico)} CUP</span>
+                <span className="text-neutral-900">${formatCUP(totalCashFisico)} CUP</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between py-0.5">
                 <span>Diferencia vs Ventas Efectivo:</span>
-                <span className={cashDifference === 0 ? '' : cashDifference > 0 ? 'text-blue-700 font-bold' : 'text-red-700 font-bold'}>
+                <span className={cashDifference === 0 ? 'text-neutral-700' : cashDifference > 0 ? 'text-blue-700 font-bold' : 'text-red-700 font-bold'}>
                   {cashDifference === 0 ? '0.00 (Exacto)' : `${cashDifference > 0 ? '+' : ''}${formatCUP(cashDifference)} CUP`}
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between py-0.5">
                 <span>TRANSFERENCIAS (ENZONA/TRANSFERMÓVIL):</span>
-                <span>${formatCUP(transferenciasAmount)} CUP</span>
+                <span className="font-semibold">${formatCUP(transferenciasAmount)} CUP</span>
               </div>
-              <div className="flex justify-between font-bold text-xs pt-1 border-t border-neutral-300 text-neutral-900">
+              <div className="flex justify-between font-bold text-xs pt-1.5 pb-0.5 border-t border-neutral-300 text-neutral-900 bg-neutral-100/60 px-2 rounded">
                 <span>TOTAL RECAUDADO:</span>
                 <span>${formatCUP(totalGeneralContado)} CUP</span>
               </div>
-              <div className="flex justify-between text-[11px] pt-1">
-                <span>DIFERENCIA REAL VS IPV:</span>
-                <span className={diferenciaCaja === 0 ? 'font-bold text-emerald-700' : 'font-bold text-red-700'}>
-                  {diferenciaCaja === 0 ? '0.00 (Cuadrado)' : `${diferenciaCaja > 0 ? '+' : ''}${formatCUP(diferenciaCaja)} CUP`}
+              <div className="flex justify-between text-[10px] sm:text-[11px] pt-1 px-1">
+                <span className="font-semibold">DIFERENCIA REAL VS ESPERADO:</span>
+                <span className={netDifference === 0 ? 'font-bold text-emerald-700' : 'font-bold text-red-700'}>
+                  {netDifference === 0 ? '0.00 (Cuadrado)' : `${netDifference > 0 ? '+' : ''}${formatCUP(netDifference)} CUP`}
                 </span>
               </div>
 
               {notes && (
                 <>
-                  <div className="my-1 border-t border-dashed border-neutral-400"></div>
-                  <p className="text-[10px] text-neutral-600">OBSERVACIONES: {notes}</p>
+                  <div className="my-0.5 border-t border-dashed border-neutral-400"></div>
+                  <p className="text-[10px] text-neutral-600 bg-neutral-50 p-1.5 rounded italic">
+                    <strong>OBSERVACIONES:</strong> {notes}
+                  </p>
                 </>
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setShowActaModal(false)}
-                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface hover:text-error active:neo-inset cursor-pointer"
-                type="button"
-              >
-                Cerrar
-              </button>
-              {!isCurrentDayClosed && (
+            {/* Modal Footer */}
+            <div className="shrink-0 flex items-center justify-between gap-3 pt-2 border-t border-outline-variant/30">
+              <span className="text-[10px] text-on-surface-variant font-mono">
+                {isCurrentDayClosed ? 'Jornada finalizada' : 'Confirmación requerida'}
+              </span>
+              <div className="flex items-center gap-2">
                 <button
-                  disabled={isSubmitting}
-                  onClick={handlePerformClose}
-                  className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-container transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  onClick={() => setShowActaModal(false)}
+                  className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface hover:text-error active:neo-inset cursor-pointer"
                   type="button"
                 >
-                  <span className="material-symbols-outlined text-[16px]">lock</span>
-                  <span>Confirmar y Cerrar Día</span>
+                  Cerrar
                 </button>
-              )}
+                {!isCurrentDayClosed && (
+                  <button
+                    disabled={isSubmitting}
+                    onClick={handlePerformClose}
+                    className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-container transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-sm"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">lock</span>
+                    <span>Confirmar y Cerrar Día</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -5,7 +5,7 @@ import { SaleRecord, SaleItem } from '../types';
 type PeriodFilter = 'diarias' | 'semanales' | 'mensual';
 
 export const SalesHistoryView: React.FC = () => {
-  const { sales = [], cancelSale, showToast, todayDate } = useApp();
+  const { sales = [], cancelSale, products = [], showToast, todayDate } = useApp();
 
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('diarias');
   const [searchQuery, setSearchQuery] = useState('');
@@ -155,6 +155,7 @@ export const SalesHistoryView: React.FC = () => {
       setSaleToVoid(null);
     }
   };
+
 
   // Impresión de ticket térmico
   const handlePrintSale = (sale: SaleRecord) => {
@@ -894,6 +895,8 @@ export const SalesHistoryView: React.FC = () => {
         </div>
       </div>
 
+
+
       {/* MODAL DE DETALLE DEL TICKET */}
       {selectedSaleForDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
@@ -1053,6 +1056,7 @@ export const SalesHistoryView: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
+
                 {!(selectedSaleForDetail as any).voided && (
                   <button
                     onClick={() => {
@@ -1120,6 +1124,9 @@ export const SalesHistoryView: React.FC = () => {
           </div>
         </div>
       )}
+
+
+
     </div>
   );
 };

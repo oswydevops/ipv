@@ -13,6 +13,7 @@ import { ReportsView } from './views/ReportsView';
 import { ProductsView } from './views/ProductsView';
 import { BackupView } from './views/BackupView';
 import { SalesHistoryView } from './views/SalesHistoryView';
+import { ReturnsView } from './views/ReturnsView';
 
 const MainContent: React.FC = () => {
   const { currentView } = useApp();
@@ -26,6 +27,7 @@ const MainContent: React.FC = () => {
           {currentView === 'dashboard' && <DashboardView />}
           {currentView === 'ipv-del-dia' && <IPVView />}
           {currentView === 'historial-ventas' && <SalesHistoryView />}
+          {currentView === 'devoluciones' && <ReturnsView />}
           {currentView === 'alertas-de-stock' && <StockAlertsView />}
           {currentView === 'cierre-de-caja' && <CashCloseView />}
           {currentView === 'reportes' && <ReportsView />}

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Reporte de Cierre de Caja - {{fecha}}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 12mm 15mm 15mm 15mm;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      background: #ffffff;
+      font-size: 11px;
+      line-height: 1.4;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .header {
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 12px;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .brand-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.5px;
+    }
+    .brand-subtitle {
+      font-size: 11px;
+      color: #475569;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    .meta-box {
+      text-align: right;
+      font-size: 10px;
+      color: #64748b;
+    }
+    .meta-box strong {
+      color: #0f172a;
+      font-size: 12px;
+    }
+    .badge-status {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      background: #f1f5f9;
+      color: #334155;
+      margin-top: 4px;
+    }
+    .badge-status.cerrado {
+      background: #ecfdf5;
+      color: #047857;
+      border: 1px solid #a7f3d0;
+    }
+    .badge-status.abierto {
+      background: #fffbeb;
+      color: #b45309;
+      border: 1px solid #fde68a;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #0f172a;
+      border-bottom: 1px solid #cbd5e1;
+      padding-bottom: 4px;
+      margin-top: 14px;
+      margin-bottom: 8px;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .kpi-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+    .kpi-label {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+    .kpi-value {
+      font-size: 14px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-top: 2px;
+      font-family: "Courier New", Courier, monospace;
+    }
+    .kpi-sub {
+      font-size: 9px;
+      color: #94a3b8;
+      margin-top: 2px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 14px;
+      font-size: 10px;
+    }
+    th {
+      background: #0f172a;
+      color: #ffffff;
+      text-align: left;
+      padding: 6px 8px;
+      font-weight: 700;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    td {
+      padding: 5px 8px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #334155;
+    }
+    tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+    .text-right {
+      text-align: right;
+    }
+    .text-center {
+      text-align: center;
+    }
+    .font-mono {
+      font-family: "Courier New", Courier, monospace;
+    }
+    .font-bold {
+      font-weight: 700;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .footer-signatures {
+      margin-top: 30px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      page-break-inside: avoid;
+    }
+    .sig-line {
+      border-top: 1px dashed #64748b;
+      padding-top: 6px;
+      text-align: center;
+      font-size: 10px;
+      color: #475569;
+    }
+    .disclaimer {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 8px;
+      color: #94a3b8;
+      border-top: 1px solid #f1f5f9;
+      padding-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Encabezado Oficial -->
+  <div class="header">
+    <div>
+      <div class="brand-title">IPV · SISTEMA DE GESTIÓN Y VENTAS</div>
+      <div class="brand-subtitle">Acta Oficial y Reporte Consolidado de Cierre Diario</div>
+    </div>
+    <div class="meta-box">
+      <div>Fecha de Operación: <strong>{{fechaFormateada}}</strong></div>
+      <div>Generado el: {{generadoEn}}</div>
+      <div>
+        {{#if totales.estaCerrado}}
+          <span class="badge-status cerrado">Jornada Cerrada</span>
+        {{else}}
+          <span class="badge-status abierto">Jornada en Curso</span>
+        {{/if}}
+      </div>
+    </div>
+  </div>
+
+  <!-- Métricas Principales -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Ventas Totales (IPV)</div>
+      <div class="kpi-value">${{money totales.totalVentas}} CUP</div>
+      <div class="kpi-sub">{{totales.cantidadTickets}} tickets emitidos</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Efectivo</div>
+      <div class="kpi-value">${{money totales.totalEfectivo}} CUP</div>
+      <div class="kpi-sub">Físico recaudado</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Transferencias</div>
+      <div class="kpi-value">${{money totales.totalTransferencia}} CUP</div>
+      <div class="kpi-sub">EnZona / Transfermóvil</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Diferencia de Caja</div>
+      <div class="kpi-value {{#if (eq totales.diferencia 0)}}text-emerald-700{{/if}}">
+        ${{money totales.diferencia}} CUP
+      </div>
+      <div class="kpi-sub">
+        {{#if (eq totales.diferencia 0)}}Cuadrada exacto{{else}}{{#if (gt totales.diferencia 0)}}Sobrante{{else}}Faltante{{/if}}{{/if}}
+      </div>
+    </div>
+  </div>
+
+  <!-- Resumen de Pagos y Arqueo Físico en 2 columnas -->
+  <div class="two-col">
+    <!-- Métodos de Pago -->
+    <div>
+      <div class="section-title">Distribución por Método de Pago</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Método</th>
+            <th class="text-right">Total (CUP)</th>
+            <th class="text-center">%</th>
+            <th class="text-center">Ops</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each porMetodoPago}}
+          <tr>
+            <td class="font-bold">{{metodo}}</td>
+            <td class="text-right font-mono font-bold">${{money total}}</td>
+            <td class="text-center">{{porcentajeStr}}</td>
+            <td class="text-center">{{operaciones}}</td>
+          </tr>
+          {{/each}}
+          {{#if (gt totales.totalDevoluciones 0)}}
+          <tr>
+            <td class="font-bold" style="color: #b45309;">Devoluciones</td>
+            <td class="text-right font-mono font-bold" style="color: #b45309;">-${{money totales.totalDevoluciones}}</td>
+            <td class="text-center">-</td>
+            <td class="text-center">{{totales.cantidadDevoluciones}}</td>
+          </tr>
+          {{/if}}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Desglose de Efectivo Físico -->
+    <div>
+      <div class="section-title">Arqueo de Gaveta / Efectivo</div>
+      {{#if denominaciones.length}}
+      <table>
+        <thead>
+          <tr>
+            <th>Denominación</th>
+            <th class="text-center">Cantidad</th>
+            <th class="text-right">Subtotal (CUP)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each denominaciones}}
+          <tr>
+            <td>{{label}}</td>
+            <td class="text-center font-mono">{{count}}</td>
+            <td class="text-right font-mono font-bold">${{money (multiply value count)}}</td>
+          </tr>
+          {{/each}}
+          <tr style="background: #f1f5f9;">
+            <td class="font-bold">Total Físico Contado</td>
+            <td class="text-center font-bold">-</td>
+            <td class="text-right font-mono font-bold">${{money totales.totalContado}}</td>
+          </tr>
+        </tbody>
+      </table>
+      {{else}}
+      <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 12px; text-align: center; color: #64748b; font-size: 10px;">
+        Sin desglose de denominaciones archivado para esta jornada.
+      </div>
+      {{/if}}
+    </div>
+  </div>
+
+  <!-- Detalle de Ventas por Producto -->
+  <div class="section-title">Detalle de Ventas por Producto ({{ventasPorProducto.length}} artículos)</div>
+  {{#if ventasPorProducto.length}}
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 70px;">Código</th>
+        <th>Descripción del Producto</th>
+        <th style="width: 80px;">Categoría</th>
+        <th class="text-center" style="width: 50px;">U/M</th>
+        <th class="text-center" style="width: 60px;">Cant.</th>
+        <th class="text-right" style="width: 85px;">P. Unit (CUP)</th>
+        <th class="text-right" style="width: 95px;">Total (CUP)</th>
+        <th class="text-center" style="width: 45px;">%</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each ventasPorProducto}}
+      <tr>
+        <td class="font-mono">{{codigo}}</td>
+        <td class="font-bold">{{nombre}}</td>
+        <td>{{categoria}}</td>
+        <td class="text-center">{{um}}</td>
+        <td class="text-center font-mono font-bold">{{cantidad}}</td>
+        <td class="text-right font-mono">${{money precioUnitario}}</td>
+        <td class="text-right font-mono font-bold">${{money total}}</td>
+        <td class="text-center">{{porcentajeStr}}</td>
+      </tr>
+      {{/each}}
+      <tr style="background: #0f172a; color: #ffffff;">
+        <td colspan="4" class="font-bold" style="color: #ffffff;">TOTALES DE LA JORNADA</td>
+        <td class="text-center font-mono font-bold" style="color: #ffffff;">{{totales.totalArticulosVendidos}}</td>
+        <td></td>
+        <td class="text-right font-mono font-bold" style="color: #ffffff;">${{money totales.totalVentas}}</td>
+        <td class="text-center font-bold" style="color: #ffffff;">100%</td>
+      </tr>
+    </tbody>
+  </table>
+  {{else}}
+  <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 16px; text-align: center; color: #64748b; font-size: 11px;">
+    No se registraron ventas en la fecha indicada.
+  </div>
+  {{/if}}
+
+  {{#if totales.notaCierre}}
+  <div style="margin-top: 10px; padding: 8px 12px; background: #f8fafc; border-left: 3px solid #6366f1; border-radius: 4px; font-size: 10px;">
+    <strong>Observaciones del Cierre:</strong> {{totales.notaCierre}}
+  </div>
+  {{/if}}
+
+  <!-- Firmas -->
+  <div class="footer-signatures">
+    <div>
+      <div style="height: 40px;"></div>
+      <div class="sig-line">Firma del Cajero / Responsable de Turno</div>
+    </div>
+    <div>
+      <div style="height: 40px;"></div>
+      <div class="sig-line">Firma de Administración / Verificado por</div>
+    </div>
+  </div>
+
+  <div class="disclaimer">
+    Este documento es un comprobante oficial de operaciones generado automáticamente por IPV Offline.
+  </div>
+</body>
+</html>

@@ -130,6 +130,31 @@ test('archivar no borra el historial', () => {
   assert.strictEqual(row(repo.getIpvDay(D1), 'PROD-002').importe, 3001);
 });
 
+test('devolución: registra y consulta artículos devueltos', () => {
+  const record = repo.recordReturn({
+    totalRefund: 20,
+    refundMethod: 'efectivo',
+    reason: 'Artículo defectuoso',
+    items: [{
+      productId: tornillo.id,
+      code: tornillo.code,
+      name: tornillo.name,
+      um: tornillo.um,
+      quantity: 2,
+      unitPrice: 10,
+      refundAmount: 20,
+      condition: 'mal_estado',
+      reintegrateToStock: false,
+    }],
+  });
+
+  assert.ok(record.id.startsWith('return-'));
+  assert.strictEqual(record.date, D2);
+  assert.strictEqual(record.totalRefund, 20);
+  assert.strictEqual(record.items.length, 1);
+  assert.strictEqual(repo.listReturns()[0].id, record.id);
+});
+
 test('respaldo: exportar -> borrar cambios -> restaurar deja todo igual', () => {
   const snap = JSON.parse(JSON.stringify(repo.exportAll()));
   const ipvBefore = JSON.stringify(repo.getIpvDay(D2));
@@ -170,6 +195,51 @@ test('clockStatus: reloj atrasado detecta warning true', () => {
   assert.ok(status.lastActivityDate !== null);
   assert.ok(status.today < status.lastActivityDate);
   now = savedNow; // Restaurar reloj
+});
+
+test('migración repara tablas de devoluciones ausentes', () => {
+  const file = path.join(tmp, 'returns-migration.sqlite');
+  const oldStore = openDatabase(file, { clock: () => now });
+  oldStore.db.exec('DROP TABLE return_items; DROP TABLE returns; PRAGMA user_version = 3;');
+  oldStore.close();
+
+  const repairedStore = openDatabase(file, { clock: () => now });
+  const product = repairedStore.repo.createProduct({ name: 'Producto devuelto', price: 25 });
+  const record = repairedStore.repo.recordReturn({
+    totalRefund: 25,
+    refundMethod: 'efectivo',
+    items: [{
+      productId: product.id,
+      code: product.code,
+      name: product.name,
+      um: product.um,
+      quantity: 1,
+      unitPrice: product.price,
+      refundAmount: 25,
+      condition: 'mal_estado',
+    }],
+  });
+
+  assert.strictEqual(record.items.length, 1);
+  assert.strictEqual(repairedStore.repo.listReturns()[0].returnNumber, record.returnNumber);
+  repairedStore.close();
+});
+
+test('restablecimiento elimina todos los datos comerciales y reinicia las secuencias', () => {
+  const result = repo.resetAll();
+  assert.ok(result.cleared.products > 0);
+  assert.ok(result.cleared.sales > 0);
+  assert.ok(result.cleared.returns > 0);
+  for (const table of ['products', 'sales', 'sale_items', 'stock_movements', 'day_closes', 'returns', 'return_items']) {
+    assert.strictEqual(store.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0, `${table} debe quedar vacía`);
+  }
+  assert.strictEqual(store.db.prepare("SELECT value FROM meta WHERE key = 'ticket_seq'").get().value, '100');
+
+  const product = repo.createProduct({ name: 'Producto después del reset' });
+  const sale = repo.recordSale({ items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'efectivo' });
+  assert.strictEqual(sale.ticketNumber, 'TKT-00101');
+  const returnRecord = repo.recordReturn({ items: [], totalRefund: 0, refundMethod: 'efectivo' });
+  assert.strictEqual(returnRecord.returnNumber, 'DEV-001');
 });
 
 (async () => {

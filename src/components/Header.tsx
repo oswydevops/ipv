@@ -367,13 +367,12 @@ export const Header: React.FC = () => {
               </div>
             )}
 
-            <button
-              onClick={() => showToast('Usuario Activo', 'M. Gómez · Encargado Turno A · Terminal T-01')}
-              className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white hover:opacity-90 transition-opacity"
-              type="button"
+            <div
+              className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white shadow-xs select-none"
+              title="FerreStock © 2026"
             >
-              <span className="material-symbols-outlined text-on-primary text-[18px]">person</span>
-            </button>
+              <span className="material-symbols-outlined text-on-primary text-[18px]">copyright</span>
+            </div>
           </div>
         </div>
       </header>

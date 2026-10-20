@@ -1,17 +1,18 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
-import { ViewType, Product, IPVRow, Denomination, BackupRecord, SaleRecord, SaleItem } from '../types';
-import { IpvDay, IpvDayRow, SaleInput, DayClose, ClockStatus } from '../data/api';
+import { ViewType, Product, IPVRow, Denomination, BackupRecord, SaleRecord, SaleItem, ReturnRecord, ReturnItem } from '../types';
+import { IpvDay, IpvDayRow, SaleInput, DayClose } from '../data/api';
 
 export const INITIAL_DENOMINATIONS: Denomination[] = [
-  { id: 'd-1000', label: '$1,000 CUP', sublabel: 'Billetes mayores', badge: 'Alta', value: 1000, count: 0 },
-  { id: 'd-500', label: '$500 CUP', sublabel: 'Billetes corrientes', badge: 'Media', value: 500, count: 0 },
-  { id: 'd-200', label: '$200 CUP', sublabel: 'Billetes corrientes', badge: 'Media', value: 200, count: 0 },
-  { id: 'd-100', label: '$100 CUP', sublabel: 'Billetes menores', badge: 'Frecuente', value: 100, count: 0 },
-  { id: 'd-50', label: '$50 CUP', sublabel: 'Billetes de cambio', badge: 'Frecuente', value: 50, count: 0 },
-  { id: 'd-20', label: '$20 CUP', sublabel: 'Fraccionario', badge: 'Menor', value: 20, count: 0 },
-  { id: 'd-10', label: '$10 CUP', sublabel: 'Fraccionario', badge: 'Menor', value: 10, count: 0 },
-  { id: 'd-5', label: '$5 CUP', sublabel: 'Moneda / Billete', badge: 'Menor', value: 5, count: 0 },
-  { id: 'd-1', label: '$1 CUP', sublabel: 'Fraccionario base', badge: 'Menor', value: 1, count: 0 },
+  { id: 'd-20000', label: '$20,000 CUP', sublabel: 'Billete 20 Mil', badge: '', value: 20000, count: 0 },
+  { id: 'd-10000', label: '$10,000 CUP', sublabel: 'Billete 10 Mil', badge: '', value: 10000, count: 0 },
+  { id: 'd-5000', label: '$5,000 CUP', sublabel: 'Billete 5 Mil', badge: '', value: 5000, count: 0 },
+  { id: 'd-2000', label: '$2,000 CUP', sublabel: 'Billete 2 Mil', badge: '', value: 2000, count: 0 },
+  { id: 'd-1000', label: '$1,000 CUP', sublabel: 'Billete 1 Mil', badge: '', value: 1000, count: 0 },
+  { id: 'd-500', label: '$500 CUP', sublabel: 'Billete 500', badge: '', value: 500, count: 0 },
+  { id: 'd-200', label: '$200 CUP', sublabel: 'Billete 200', badge: '', value: 200, count: 0 },
+  { id: 'd-100', label: '$100 CUP', sublabel: 'Billete 100', badge: '', value: 100, count: 0 },
+  { id: 'd-50', label: '$50 CUP', sublabel: 'Billete 50', badge: '', value: 50, count: 0 },
+  { id: 'd-20', label: '$20 CUP', sublabel: 'Billete 20', badge: '', value: 20, count: 0 },
 ];
 
 export const ERROR_MESSAGES_ES: Record<string, string> = {
@@ -103,6 +104,7 @@ interface AppContextType {
   editProduct: (id: string, updated: Partial<Product>) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
   updateProductStock: (idOrCode: string, addedStock: number) => Promise<boolean>;
+  reponerProduct: (id: string, qty: number) => Promise<boolean>;
   selectedProductId: string | null;
   setSelectedProductId: (id: string | null) => void;
 
@@ -133,12 +135,15 @@ interface AppContextType {
   addBackupRecord: (rec: Omit<BackupRecord, 'id'>) => void;
   restoreBackup: (backupData: any) => Promise<boolean>;
 
-  // Ventas
+  // Ventas y Devoluciones
   sales: SaleRecord[];
   totalVentasEfectivo: number;
   totalVentasTransferencia: number;
   recordSale: (saleInput: RecordSaleInput) => Promise<boolean>;
   cancelSale: (saleId: string) => Promise<boolean>;
+  returns: ReturnRecord[];
+  addReturn: (returnData: any) => Promise<boolean>;
+  totalDevolucionesToday: number;
   isSaleModalOpen: boolean;
   setIsSaleModalOpen: (open: boolean) => void;
   preselectedProductForSale: Product | null;
@@ -151,7 +156,6 @@ interface AppContextType {
   showToast: (title: string, desc: string, type?: 'success' | 'info' | 'error') => void;
   hideToast: () => void;
   refreshAll: () => Promise<void>;
-  syncClock: (manual?: boolean) => Promise<{ changed: boolean; today: string; warning?: boolean; clockStatus?: ClockStatus }>;
   isLoading: boolean;
 }
 
@@ -176,6 +180,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [sales, setSales] = useState<SaleRecord[]>([]);
+  const [returns, setReturns] = useState<ReturnRecord[]>([]);
 
   // Caja y Denominaciones
   const [denominations, setDenominations] = useState<Denomination[]>(INITIAL_DENOMINATIONS);
@@ -267,6 +272,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         note: s.note,
       }));
       setSales(formattedSales);
+
+      if (window.api && (window.api as any).returns) {
+        try {
+          const loadedReturns = await (window.api as any).returns.list();
+          setReturns(loadedReturns || []);
+        } catch {
+          // fallback
+        }
+      } else {
+        try {
+          const raw = localStorage.getItem('ipv_returns_v2');
+          if (raw) setReturns(JSON.parse(raw));
+        } catch {}
+      }
     } catch (err: any) {
       console.error('Error al sincronizar con SQLite:', err);
       showToast('Error de Base de Datos', getFriendlyErrorMessage(err), 'error');
@@ -279,96 +298,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
-
-  // Sincronizar reloj (Paso 1: actualiza fecha y recarga si difiere; Paso 2: estado y warning de reloj atrasado)
-  const syncClock = useCallback(
-    async (manual = false) => {
-      if (!window.api) return { changed: false, today: todayDate, warning: false };
-      try {
-        const serverToday = await window.api.today();
-        let changed = false;
-
-        if (serverToday !== todayDate) {
-          changed = true;
-          setTodayDate(serverToday);
-          setSelectedIpvDate(serverToday);
-
-          const [loadedProducts, loadedDay, loadedSales] = await Promise.all([
-            window.api.products.list(),
-            window.api.ipv.getDay(serverToday),
-            window.api.sales.listRange
-              ? window.api.sales.listRange()
-              : window.api.sales.listByDate(serverToday),
-          ]);
-
-          setProducts(loadedProducts);
-          setCurrentIpvDay(loadedDay);
-          setIsCurrentDayClosed(loadedDay.closed);
-          setTransferenciasAmount(loadedDay.sales?.transferencia || 0);
-
-          const formattedSales: SaleRecord[] = loadedSales.map((s) => ({
-            id: s.id,
-            ticketNumber: s.ticketNumber,
-            timestamp: s.timestamp,
-            date: s.date,
-            items: s.items.map((it) => ({
-              productId: it.productId,
-              code: it.code,
-              name: it.name,
-              um: it.um,
-              unitPrice: it.unitPrice,
-              quantity: it.quantity,
-              subtotal: it.subtotal,
-            })),
-            total: s.total,
-            paymentMethod: s.paymentMethod,
-            efectivoAmount: s.efectivoAmount,
-            transferenciaAmount: s.transferenciaAmount,
-            amountReceived: s.amountReceived,
-            change: s.change,
-            note: s.note,
-          }));
-          setSales(formattedSales);
-          showToast('Fecha actualizada', `Fecha actualizada: ${serverToday}`, 'info');
-        } else {
-          if (manual) {
-            showToast('Reloj sincronizado', 'Reloj ya sincronizado', 'info');
-          }
-        }
-
-        let clockStatus: ClockStatus | undefined;
-        let warning = false;
-        if (manual && window.api.clock) {
-          clockStatus = await window.api.clock.status();
-          warning = Boolean(clockStatus && clockStatus.warning);
-        }
-
-        return { changed, today: serverToday, warning, clockStatus };
-      } catch (err: any) {
-        console.error('Error al sincronizar reloj:', err);
-        if (manual) {
-          showToast('Error de reloj', 'No se pudo sincronizar el reloj', 'error');
-        }
-        return { changed: false, today: todayDate, warning: false };
-      }
-    },
-    [todayDate, showToast]
-  );
-
-  // Automático (sin pulsar): Repetir el paso 1 al recuperar el foco la ventana y cada 60 s, para detectar el cambio de día.
-  useEffect(() => {
-    const handleFocus = () => {
-      syncClock(false);
-    };
-    window.addEventListener('focus', handleFocus);
-    const interval = setInterval(() => {
-      syncClock(false);
-    }, 60000);
-    return () => {
-      window.removeEventListener('focus', handleFocus);
-      clearInterval(interval);
-    };
-  }, [syncClock]);
 
   // Cuando cambia la fecha del IPV seleccionada, recargar datos para esa fecha
   useEffect(() => {
@@ -518,6 +447,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         price: productData.price,
         stock: productData.stock,
         minStock: productData.minStock,
+        almacenStock: (productData as any).almacenStock || 0,
         provider: productData.provider,
         location: productData.location,
         rotation: productData.rotation,
@@ -543,6 +473,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         price: updated.price,
         stock: updated.stock,
         minStock: updated.minStock,
+        almacenStock: (updated as any).almacenStock !== undefined ? (updated as any).almacenStock : undefined,
         provider: updated.provider,
         location: updated.location,
         rotation: updated.rotation,
@@ -586,6 +517,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return true;
     } catch (err: any) {
       showToast('Error al añadir stock', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
+  };
+
+  const reponerProduct = async (id: string, qty: number): Promise<boolean> => {
+    try {
+      if (!window.api) return false;
+      const targetProd = products.find((p) => p.id === id);
+      if (!targetProd) {
+        showToast('Error', 'Producto no encontrado.', 'error');
+        return false;
+      }
+      await window.api.products.reponerStock(id, qty);
+      await refreshAll();
+      showToast(
+        'Reposición Exitosa',
+        `Se traspasaron ${qty} unidades de almacén al mostrador para "${targetProd.name}".`,
+        'success'
+      );
+      return true;
+    } catch (err: any) {
+      showToast('Error al reponer', getFriendlyErrorMessage(err), 'error');
       return false;
     }
   };
@@ -647,6 +600,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return true;
     } catch (err: any) {
       showToast('Error al anular venta', getFriendlyErrorMessage(err), 'error');
+      return false;
+    }
+  };
+
+  const totalDevolucionesToday = useMemo(() => {
+    return returns
+      .filter((r) => r.date === todayDate)
+      .reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+  }, [returns, todayDate]);
+
+  const addReturn = async (returnData: any): Promise<boolean> => {
+    if (isCurrentDayClosed) {
+      showToast('Día Cerrado', 'No se pueden registrar devoluciones porque la jornada ya fue cerrada.', 'error');
+      return false;
+    }
+    try {
+      if (window.api && (window.api as any).returns) {
+        await (window.api as any).returns.record(returnData);
+      } else {
+        const today = todayDate || new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const newRecord: ReturnRecord = {
+          id: `dev-${Date.now()}`,
+          returnNumber: `DEV-${String(returns.length + 1).padStart(3, '0')}`,
+          saleId: returnData.saleId,
+          ticketNumber: returnData.ticketNumber,
+          date: today,
+          timestamp: time,
+          items: returnData.items || [],
+          totalRefund: Number(returnData.totalRefund) || 0,
+          refundMethod: returnData.refundMethod || 'efectivo',
+          customerName: returnData.customerName,
+          reason: returnData.reason || 'Devolución de cliente',
+          hasDamagedItems: (returnData.items || []).some((it: any) => it.condition === 'mal_estado'),
+          createdAt: `${today} ${time}`,
+        };
+        const updated = [newRecord, ...returns];
+        setReturns(updated);
+        try {
+          localStorage.setItem('ipv_returns_v2', JSON.stringify(updated));
+        } catch {}
+      }
+      await refreshAll();
+      showToast(
+        'Devolución Registrada',
+        `Reembolso de $${(Number(returnData.totalRefund) || 0).toFixed(2)} CUP registrado exitosamente.`,
+        'success'
+      );
+      return true;
+    } catch (err: any) {
+      showToast('Error en Devolución', getFriendlyErrorMessage(err), 'error');
       return false;
     }
   };
@@ -718,6 +723,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         editProduct,
         deleteProduct,
         updateProductStock,
+        reponerProduct,
         selectedProductId,
         setSelectedProductId,
         ipvRows,
@@ -742,6 +748,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         totalVentasTransferencia,
         recordSale,
         cancelSale,
+        returns,
+        addReturn,
+        totalDevolucionesToday,
         isSaleModalOpen,
         setIsSaleModalOpen,
         preselectedProductForSale,
@@ -756,7 +765,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         reopenDay,
         listCloses,
         refreshAll,
-        syncClock,
         isLoading,
       }}
     >

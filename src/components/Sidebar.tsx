@@ -12,15 +12,17 @@ interface NavItem {
 }
 
 export const Sidebar: React.FC = () => {
-  const { currentView, setCurrentView, products, sales = [], ipvTotalVendido = 0, isCurrentDayClosed, openSaleModal } = useApp();
+  const { currentView, setCurrentView, products, sales = [], returns = [], todayDate, ipvTotalVendido = 0, isCurrentDayClosed, openSaleModal } = useApp();
 
   const lowStockCount = products.filter((p) => p.status === 'low' || p.status === 'out').length;
   const isClosePending = (sales.length > 0 || ipvTotalVendido > 0) && !isCurrentDayClosed;
+  const damagedReturnsToday = returns.filter((r) => r.date === todayDate && r.hasDamagedItems).length;
 
   const navItems: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard General', icon: 'dashboard' },
     { id: 'ipv-del-dia', label: 'IPV del día', icon: 'point_of_sale' },
     { id: 'historial-ventas', label: 'Historial de ventas', icon: 'receipt_long' },
+    { id: 'devoluciones', label: 'Devoluciones', icon: 'assignment_return', badge: damagedReturnsToday > 0 ? damagedReturnsToday : undefined, badgeVariant: 'warning' },
     { id: 'alertas-de-stock', label: 'Alertas de stock', icon: 'notification_important', badge: lowStockCount > 0 ? lowStockCount : undefined, badgeVariant: 'error' },
     { id: 'cierre-de-caja', label: 'Cierre de caja', icon: 'lock_clock', badge: isClosePending ? 1 : undefined, badgeVariant: 'warning' },
     { id: 'reportes', label: 'Reportes', icon: 'analytics' },
@@ -235,15 +237,15 @@ export const Sidebar: React.FC = () => {
         </div>
       </div>
 
-      {/* User profile capsule at bottom */}
+      {/* Copyright capsule at bottom */}
       <div className="p-3.5 rounded-xl bg-surface neo-raised flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white shrink-0">
-          <span className="material-symbols-outlined text-[18px]">person</span>
+        <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white shrink-0 shadow-sm">
+          <span className="material-symbols-outlined text-[18px]">copyright</span>
         </div>
         <div className="flex flex-col">
-          <span className="text-xs font-semibold text-on-surface leading-tight">Vendedor</span>
+          <span className="text-xs font-semibold text-on-surface leading-tight">Copyright 2026</span>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
             <span className="text-[10px] text-on-surface-variant leading-none">{APP_VERSION}</span>
           </div>
         </div>

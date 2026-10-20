@@ -1,4 +1,5 @@
 import type { Product } from '../types';
+import type { ReturnRecord } from '../types';
 
 export type PaymentMethod = 'efectivo' | 'transferencia' | 'mixto';
 
@@ -87,13 +88,18 @@ export type ApiErrorCode =
 
 export type ApiError = Error & { code: ApiErrorCode };
 
-export interface ClockStatus {
-  today: string;
-  lastActivityDate: string | null;
-  warning: boolean;
-}
-
 type FileResult = { canceled: true } | { canceled: false; path: string };
+
+export interface IpvExcelReportInput {
+  date: string;
+  fileName: string;
+  title: string;
+  period: string;
+  columns: { header: string; key: string; width?: number }[];
+  rows: Record<string, string | number>[];
+  metrics: { label: string; value: string | number }[];
+  returns: ReturnRecord[];
+}
 
 export interface IpvApi {
   today(): Promise<string>;
@@ -103,6 +109,7 @@ export interface IpvApi {
     update(id: string, patch: Partial<Omit<Product, 'id' | 'status' | 'createdAt'>>): Promise<Product>;
     archive(id: string): Promise<{ id: string }>;
     addStock(id: string, qty: number, note?: string): Promise<Product>;
+    reponerStock(id: string, qty: number): Promise<Product>;
   };
   sales: {
     record(input: SaleInput): Promise<Sale>;
@@ -124,12 +131,22 @@ export interface IpvApi {
     saveSqlite(): Promise<FileResult>;
     saveJson(): Promise<FileResult>;
     restoreJson(): Promise<{ canceled: true } | { canceled: false; restored: Record<string, number> }>;
+    resetApplication(password: string): Promise<{ cleared: Record<string, number> }>;
   };
-  clock: {
-    status(): Promise<ClockStatus>;
+  reports: {
+    exportarCierre(date: string): Promise<{ ok: boolean; pdfPath: string; excelPath: string; directory?: string; fecha: string }>;
+    exportarCierreExcel?(date: string): Promise<
+      { canceled: true } | { canceled: false; ok: boolean; excelPath: string; fecha: string }
+    >;
+    exportarIpvExcel?(input: IpvExcelReportInput): Promise<
+      { canceled: true } | { canceled: false; excelPath: string }
+    >;
   };
-  system: {
-    openDateSettings(): Promise<{ opened: boolean } | void>;
+  exportarCierre?(date: string): Promise<{ ok: boolean; pdfPath: string; excelPath: string; directory?: string; fecha: string }>;
+  returns?: {
+    record(input: any): Promise<any>;
+    list(): Promise<any[]>;
+    listByDate?(date: string): Promise<any[]>;
   };
 }
 

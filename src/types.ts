@@ -2,6 +2,7 @@ export type ViewType =
   | 'dashboard'
   | 'ipv-del-dia'
   | 'historial-ventas'
+  | 'devoluciones'
   | 'alertas-de-stock'
   | 'cierre-de-caja'
   | 'reportes'
@@ -18,6 +19,7 @@ export interface Product {
   price: number;
   stock: number;
   minStock: number;
+  almacenStock?: number;
   status: 'ok' | 'low' | 'out';
   rotation?: string;
   provider?: string;
@@ -102,4 +104,33 @@ export interface SaleRecord {
   amountReceived?: number;
   change?: number;
   note?: string;
+}
+
+export interface ReturnItem {
+  productId: string;
+  code: string;
+  name: string;
+  um: string;
+  quantity: number;
+  unitPrice: number;
+  refundAmount: number;
+  condition: 'mal_estado' | 'buen_estado';
+  damagedReason?: string;
+  reintegrateToStock: boolean;
+}
+
+export interface ReturnRecord {
+  id: string;
+  returnNumber: string;
+  saleId?: string;
+  ticketNumber?: string;
+  date: string;
+  timestamp: string;
+  items: ReturnItem[];
+  totalRefund: number;
+  refundMethod: 'efectivo' | 'transferencia' | 'mixto';
+  customerName?: string;
+  reason: string;
+  hasDamagedItems: boolean;
+  createdAt: string;
 }

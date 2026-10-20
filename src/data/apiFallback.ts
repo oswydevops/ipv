@@ -7,6 +7,7 @@ const STORAGE_KEYS = {
   SALES: 'ipv_sales_v2',
   CLOSES: 'ipv_closes_v2',
   DATE: 'ipv_date_v2',
+  RETURNS: 'ipv_returns_v2',
 };
 
 // Limpieza automática de datos de prueba / mock anteriores
@@ -56,11 +57,13 @@ export function createFallbackApi(): IpvApi {
   let products = getStored<Product[]>(STORAGE_KEYS.PRODUCTS, []);
   let sales = purgeOldSales(getStored<Sale[]>(STORAGE_KEYS.SALES, []));
   let closes = getStored<DayClose[]>(STORAGE_KEYS.CLOSES, []);
+  let returns = getStored<any[]>(STORAGE_KEYS.RETURNS, []);
 
   const persist = () => {
     setStored(STORAGE_KEYS.PRODUCTS, products);
     setStored(STORAGE_KEYS.SALES, purgeOldSales(sales));
     setStored(STORAGE_KEYS.CLOSES, closes);
+    setStored(STORAGE_KEYS.RETURNS, returns);
   };
 
   return {
@@ -86,6 +89,7 @@ export function createFallbackApi(): IpvApi {
           price: Number(input.price) || 0,
           stock: Number(input.stock) || 0,
           minStock: Number(input.minStock) || 0,
+          almacenStock: Number(input.almacenStock) || 0,
           status: (Number(input.stock) || 0) === 0 ? 'out' : (Number(input.stock) || 0) <= (Number(input.minStock) || 0) ? 'low' : 'ok',
           provider: input.provider || 'Proveedor General',
           location: input.location || 'Almacén Central',
@@ -101,6 +105,9 @@ export function createFallbackApi(): IpvApi {
         const idx = products.findIndex((p) => p.id === id);
         if (idx === -1) throw new Error('Producto no encontrado');
         const updated = { ...products[idx], ...patch };
+        if (patch.almacenStock !== undefined) {
+          updated.almacenStock = Number(patch.almacenStock) || 0;
+        }
         if (patch.stock !== undefined || patch.minStock !== undefined) {
           const s = updated.stock;
           const ms = updated.minStock;
@@ -122,6 +129,22 @@ export function createFallbackApi(): IpvApi {
         const newStock = prod.stock + Number(qty);
         prod.stock = newStock;
         prod.status = newStock === 0 ? 'out' : newStock <= prod.minStock ? 'low' : 'ok';
+        products[idx] = prod;
+        persist();
+        return prod;
+      },
+      async reponerStock(id, qty) {
+        const idx = products.findIndex((p) => p.id === id);
+        if (idx === -1) throw new Error('Producto no encontrado');
+        const prod = products[idx];
+        const numQty = Number(qty);
+        const disp = prod.almacenStock || 0;
+        if (numQty > disp) {
+          throw new Error(`No hay suficiente cantidad en almacén. Disponible: ${disp}`);
+        }
+        prod.almacenStock = disp - numQty;
+        prod.stock = prod.stock + numQty;
+        prod.status = prod.stock === 0 ? 'out' : prod.stock <= prod.minStock ? 'low' : 'ok';
         products[idx] = prod;
         persist();
         return prod;
@@ -357,6 +380,22 @@ export function createFallbackApi(): IpvApi {
     },
 
     backup: {
+      async resetApplication(password: string) {
+        if (password !== 'adminreset') throw new Error('Contraseña incorrecta.');
+        const cleared = {
+          products: products.length,
+          sales: sales.length,
+          day_closes: closes.length,
+          returns: returns.length,
+        };
+        products = [];
+        sales = [];
+        closes = [];
+        returns = [];
+        persist();
+        return { cleared };
+      },
+
       async saveSqlite() {
         const today = getTodayStr();
         const fileName = `ipv-respaldo-${today}.sqlite`;
@@ -455,29 +494,70 @@ export function createFallbackApi(): IpvApi {
       },
     },
 
-    clock: {
-      async status() {
-        const curToday = getTodayStr();
-        let maxDate: string | null = null;
-        for (const s of sales) {
-          if (!maxDate || s.date > maxDate) maxDate = s.date;
-        }
-        for (const c of closes) {
-          if (!maxDate || c.date > maxDate) maxDate = c.date;
-        }
-        const warning = maxDate !== null && curToday < maxDate;
+    reports: {
+      async exportarCierre(date: string) {
+        const targetDate = date || getTodayStr();
+        const [year, month] = targetDate.split('-');
+        const dummyPdf = `Documentos/IPV/Reportes/${year}/${month}/cierre-${targetDate}.pdf`;
+        const dummyXlsx = `Documentos/IPV/Reportes/${year}/${month}/cierre-${targetDate}.xlsx`;
         return {
-          today: curToday,
-          lastActivityDate: maxDate,
-          warning,
+          ok: true,
+          fecha: targetDate,
+          pdfPath: dummyPdf,
+          excelPath: dummyXlsx,
+          directory: `Documentos/IPV/Reportes/${year}/${month}`,
         };
       },
     },
 
-    system: {
-      async openDateSettings() {
-        console.info('[apiFallback] openDateSettings invoked');
-        return { opened: false };
+    returns: {
+      async record(input: any) {
+        const today = getTodayStr();
+        const now = new Date();
+        const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+        const id = `dev-${Date.now()}`;
+        const returnNumber = `DEV-${pad(returns.length + 1)}`;
+
+        // Si hay artículos en buen estado para reintegrar, se aumenta el stock del mostrador
+        for (const it of (input.items || [])) {
+          if (it.reintegrateToStock && it.condition === 'buen_estado') {
+            const prod = products.find((p) => p.id === it.productId);
+            if (prod) {
+              prod.stock += Number(it.quantity) || 0;
+              prod.status = prod.stock === 0 ? 'out' : prod.stock <= prod.minStock ? 'low' : 'ok';
+            }
+          }
+        }
+
+        const hasDamagedItems = (input.items || []).some((it: any) => it.condition === 'mal_estado');
+
+        const record = {
+          id,
+          returnNumber,
+          saleId: input.saleId || undefined,
+          ticketNumber: input.ticketNumber || undefined,
+          date: today,
+          timestamp: time,
+          items: input.items || [],
+          totalRefund: Number(input.totalRefund) || 0,
+          refundMethod: input.refundMethod || 'efectivo',
+          customerName: input.customerName || undefined,
+          reason: input.reason || 'Devolución de cliente',
+          hasDamagedItems,
+          createdAt: `${today} ${time}`,
+        };
+
+        returns = [record, ...returns];
+        persist();
+        return record;
+      },
+
+      async list() {
+        return [...returns];
+      },
+
+      async listByDate(date: string) {
+        return returns.filter((r) => r.date === date);
       },
     },
   };

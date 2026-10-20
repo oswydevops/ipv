@@ -17,12 +17,17 @@ contextBridge.exposeInMainWorld('api', {
     update: (id, patch) => call('products:update', id, patch),
     archive: (id) => call('products:archive', id),
     addStock: (id, qty, note) => call('products:addStock', id, qty, note),
+    reponerStock: (id, qty) => call('products:reponerStock', id, qty),
   },
   sales: {
     record: (input) => call('sales:record', input),
     void: (id) => call('sales:void', id),
     listByDate: (date) => call('sales:listByDate', date),
     listRange: (startDate, endDate) => call('sales:listRange', startDate, endDate),
+  },
+  returns: {
+    record: (input) => call('returns:record', input),
+    list: () => call('returns:list'),
   },
   ipv: { getDay: (date) => call('ipv:getDay', date) },
   cash: {
@@ -35,11 +40,12 @@ contextBridge.exposeInMainWorld('api', {
     saveSqlite: () => call('backup:saveSqlite'),
     saveJson: () => call('backup:saveJson'),
     restoreJson: () => call('backup:restoreJson'),
+    resetApplication: (password) => call('backup:resetApplication', password),
   },
-  clock: {
-    status: () => call('clock:status'),
+  reports: {
+    exportarCierre: (fecha) => call('reportes:exportar-cierre', fecha),
+    exportarCierreExcel: (fecha) => call('reportes:exportar-cierre-excel', fecha),
+    exportarIpvExcel: (input) => call('reportes:exportar-ipv-excel', input),
   },
-  system: {
-    openDateSettings: () => call('system:openDateSettings'),
-  },
+  exportarCierre: (fecha) => call('reportes:exportar-cierre', fecha),
 });

@@ -1,34 +1,29 @@
 {
-  "name": "ferrestock",
+  "name": "ipv",
   "private": true,
-  "version": "1.0.0-beta.1",
-  "description": "Inventario y punto de venta para mostrador",
-  "author": "OswyDevOps",
+  "version": "0.0.0",
   "type": "module",
-  "productName": "FerreStock",
+  "productName": "IPV",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "app": "npm run build && electron .",
-    "app:dev": "electron .",
-    "dist": "npm run build && electron-builder --win nsis portable --x64"
+    "test:db": "node electron/db.test.cjs",
+    "app": "npm run build && npm run prepare:sqlite && electron .",
+    "app:dev": "npm run prepare:sqlite && electron .",
+    "prepare:sqlite": "node scripts/prepare-sqlite.cjs",
+    "test:reports": "node src/main/reports/reports.test.cjs"
   },
   "dependencies": {
-    "better-sqlite3": "8.7.0"
-  },
-  "devDependencies": {
     "@fontsource/plus-jakarta-sans": "^5.3.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/node": "^22.14.0",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
-    "autoprefixer": "^10.4.21",
-    "electron": "22.3.27",
-    "electron-builder": "^24.13.3",
-    "esbuild": "^0.28.1",
+    "better-sqlite3": "^8.7.0",
+    "exceljs": "^4.4.0",
+    "handlebars": "^4.7.10",
     "lucide-react": "^0.546.0",
     "material-symbols": "^0.48.0",
     "motion": "^12.23.24",
@@ -36,29 +31,41 @@
     "react-dom": "^19.0.1",
     "react-is": "^19.3.0",
     "recharts": "^3.10.1",
-    "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2",
     "vite": "^8.3.0"
   },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.21",
+    "electron": "22.3.27",
+    "esbuild": "^0.28.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
+  },
   "build": {
-    "appId": "com.oswy.ipv",
-    "productName": "FerreStock",
-    "copyright": "© 2026 FerreStock. All rights reserved.",
-    "directories": { "output": "release", "buildResources": "assets" },
-    "files": ["dist/**", "electron/**", "!electron/*.test.cjs", "package.json"],
-    "asarUnpack": ["**/node_modules/better-sqlite3/**"],
+    "appId": "com.ferrestock.ipv",
+    "productName": "IPV",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "src/main/**/*",
+      "templates/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "templates",
+        "to": "templates"
+      }
+    ],
     "win": {
-      "target": ["nsis", "portable"],
-      "icon": "assets/icono.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "language": "3082",
-      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
-    },
-    "portable": {
-      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+      "target": "nsis"
     }
+  },
+  "allowScripts": {
+    "better-sqlite3@8.7.0": true,
+    "electron@22.3.27": true,
+    "esbuild@0.28.2": true
   }
 }

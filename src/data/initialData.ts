@@ -73,8 +73,16 @@ export const INITIAL_DENOMINATIONS: Denomination[] = [
     id: 'denom-50',
     label: '50 CUP',
     sublabel: 'Billete Calixto G.',
-    badge: '50',
+    badge: '',
     value: 50,
+    count: 0,
+  },
+  {
+    id: 'denom-20',
+    label: '20 CUP',
+    sublabel: 'Billete Camilo C.',
+    badge: '',
+    value: 20,
     count: 0,
   },
 ];

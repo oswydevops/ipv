@@ -50,10 +50,47 @@ export const BackupView: React.FC = () => {
   // Modals and form state
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [backupFormat, setBackupFormat] = useState<'sqlite' | 'json'>('sqlite');
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleResetApplication = async () => {
+    if (!resetPassword) {
+      showToast('Contraseña requerida', 'Ingrese la contraseña para continuar.', 'error');
+      return;
+    }
+    setIsResetting(true);
+    try {
+      await window.api.backup.resetApplication(resetPassword);
+      await refreshAll();
+      localStorage.removeItem('ferrestock_last_backup_info');
+      setLastBackup({
+        date: 'Sin respaldos',
+        time: '--:--',
+        folderPath: 'N/A',
+        fileName: 'Sin archivo generado',
+        fullPath: 'No se ha generado ningún archivo de respaldo aún',
+        size: '0 KB',
+        status: 'Pendiente',
+      });
+      setResetPassword('');
+      setIsResetModalOpen(false);
+      showToast(
+        'Aplicación restablecida',
+        'Se eliminaron los productos, ventas, devoluciones, movimientos de inventario y cierres.',
+        'success'
+      );
+    } catch (err: any) {
+      console.error(err);
+      showToast('No se pudo restablecer', err.message || 'Error al borrar los datos de la aplicación.', 'error');
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   // Helper to extract filename and directory from path
   const updateBackupState = (fullPath: string, format: 'sqlite' | 'json') => {
@@ -433,7 +470,7 @@ export const BackupView: React.FC = () => {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
           {/* Card 1: Planilla Diaria */}
           <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform group">
             <div className="flex flex-col gap-3">
@@ -538,6 +575,34 @@ export const BackupView: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Card 4: Restablecer Aplicación */}
+          <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between border border-error/20">
+            <div className="flex flex-col gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-error/10 flex items-center justify-center text-error">
+                <span className="material-symbols-outlined text-[30px]">delete_forever</span>
+              </div>
+              <div className="flex flex-col gap-1 mt-2">
+                <span className="text-[11px] font-semibold text-error uppercase tracking-wider">
+                  Acción irreversible
+                </span>
+                <h3 className="font-bold text-base text-on-surface leading-snug">
+                  Restablecer aplicación
+                </h3>
+                <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
+                  Elimina productos, ventas, devoluciones, movimientos de inventario y cierres. La aplicación y su configuración se conservarán.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsResetModalOpen(true)}
+              className="w-full mt-6 py-2.5 px-4 rounded-xl bg-error text-white text-xs font-bold hover:opacity-90 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[17px]">restart_alt</span>
+              <span>Restablecer aplicación</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -637,6 +702,68 @@ export const BackupView: React.FC = () => {
                   {isBackingUp ? 'hourglass_top' : 'save'}
                 </span>
                 <span>{isBackingUp ? 'Guardando...' : 'Seleccionar Carpeta y Guardar'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Restablecer Aplicación */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-50 bg-inverse-surface/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-5 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-error/10 flex items-center justify-center text-error shrink-0">
+                <span className="material-symbols-outlined text-[26px]">warning</span>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-on-surface">Confirmar restablecimiento</h3>
+                <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
+                  Esta acción borrará permanentemente todos los datos comerciales. No se puede deshacer; cree un respaldo antes si necesita conservarlos.
+                </p>
+              </div>
+            </div>
+
+            <label className="flex flex-col gap-2 text-xs font-semibold text-on-surface">
+              Contraseña de restablecimiento
+              <input
+                type="password"
+                value={resetPassword}
+                onChange={(event) => setResetPassword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !isResetting) void handleResetApplication();
+                }}
+                autoComplete="current-password"
+                className="h-10 px-3 rounded-xl bg-surface neo-inset border-none outline-none font-normal"
+                placeholder="Ingrese la contraseña"
+                disabled={isResetting}
+              />
+            </label>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => {
+                  if (!isResetting) {
+                    setIsResetModalOpen(false);
+                    setResetPassword('');
+                  }
+                }}
+                disabled={isResetting}
+                className="px-4 py-2.5 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface disabled:opacity-50 cursor-pointer"
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleResetApplication}
+                disabled={isResetting || !resetPassword}
+                className="px-5 py-2.5 rounded-xl bg-error text-white text-xs font-bold hover:opacity-90 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[17px]">
+                  {isResetting ? 'hourglass_top' : 'delete_forever'}
+                </span>
+                <span>{isResetting ? 'Restableciendo...' : 'Borrar todos los datos'}</span>
               </button>
             </div>
           </div>

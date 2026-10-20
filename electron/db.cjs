@@ -9,96 +9,7 @@
  *
  * Compatible con Node 16 (Electron 22) y better-sqlite3 8.x.
  */
-let Database;
-try {
-  Database = require('better-sqlite3');
-} catch {
-  Database = null;
-}
-
-let BetterSqliteAdapter = null;
-try {
-  const { DatabaseSync } = require('node:sqlite');
-  const fs = require('fs');
-  BetterSqliteAdapter = class BetterSqliteAdapter {
-    constructor(file) {
-      this._file = file;
-      this._db = new DatabaseSync(file);
-    }
-    pragma(sql, opts) {
-      if (sql.includes('=')) {
-        this._db.exec('PRAGMA ' + sql);
-        return;
-      }
-      const r = this._db.prepare('PRAGMA ' + sql).get();
-      if (opts && opts.simple) {
-        return r ? Object.values(r)[0] : undefined;
-      }
-      return r;
-    }
-    exec(sql) {
-      return this._db.exec(sql);
-    }
-    prepare(sql) {
-      const s = this._db.prepare(sql);
-      const normalizeParams = (arg) => {
-        if (typeof arg === 'object' && arg !== null && !Array.isArray(arg)) {
-          const params = {};
-          for (const [k, v] of Object.entries(arg)) {
-            params[k.startsWith('@') || k.startsWith(':') ? k : '@' + k] = v;
-          }
-          return params;
-        }
-        return arg;
-      };
-      return {
-        all: (...args) => {
-          if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])) {
-            return s.all(normalizeParams(args[0]));
-          }
-          return s.all(...args);
-        },
-        get: (...args) => {
-          if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])) {
-            return s.get(normalizeParams(args[0]));
-          }
-          return s.get(...args);
-        },
-        run: (...args) => {
-          if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])) {
-            return s.run(normalizeParams(args[0]));
-          }
-          return s.run(...args);
-        },
-      };
-    }
-    transaction(fn) {
-      return (...args) => {
-        this._db.exec('BEGIN TRANSACTION');
-        try {
-          const res = fn(...args);
-          this._db.exec('COMMIT');
-          return res;
-        } catch (e) {
-          this._db.exec('ROLLBACK');
-          throw e;
-        }
-      };
-    }
-    backup(dest) {
-      return new Promise((resolve) => {
-        try { this._db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
-        fs.copyFileSync(this._file, dest);
-        resolve();
-      });
-    }
-    close() {
-      this._db.close();
-    }
-  };
-} catch {
-  BetterSqliteAdapter = null;
-}
+const Database = require('better-sqlite3');
 const crypto = require('crypto');
 
 class DomainError extends Error {
@@ -199,6 +110,77 @@ const MIGRATIONS = [
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT INTO meta (key, value) VALUES ('ticket_seq', '100');
   `),
+  (db) => {
+    try {
+      db.exec('ALTER TABLE products ADD COLUMN almacen_stock REAL NOT NULL DEFAULT 0;');
+    } catch {}
+  },
+  (db) => {
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS returns (
+          id TEXT PRIMARY KEY,
+          return_number TEXT NOT NULL,
+          sale_id TEXT,
+          ticket_number TEXT,
+          date TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          total_refund REAL NOT NULL,
+          refund_method TEXT NOT NULL,
+          customer_name TEXT,
+          reason TEXT,
+          has_damaged_items INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS return_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          return_id TEXT NOT NULL REFERENCES returns(id),
+          product_id TEXT NOT NULL,
+          code TEXT NOT NULL,
+          name TEXT NOT NULL,
+          um TEXT NOT NULL,
+          quantity REAL NOT NULL,
+          unit_price REAL NOT NULL,
+          refund_amount REAL NOT NULL,
+          condition TEXT NOT NULL,
+          damaged_reason TEXT,
+          reintegrate_to_stock INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+    } catch {}
+  },
+  // Reintenta la migración anterior, que podía ocultar errores y avanzar user_version.
+  (db) =>
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS returns (
+        id TEXT PRIMARY KEY,
+        return_number TEXT NOT NULL,
+        sale_id TEXT,
+        ticket_number TEXT,
+        date TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        total_refund REAL NOT NULL,
+        refund_method TEXT NOT NULL,
+        customer_name TEXT,
+        reason TEXT,
+        has_damaged_items INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS return_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        return_id TEXT NOT NULL REFERENCES returns(id),
+        product_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        um TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit_price REAL NOT NULL,
+        refund_amount REAL NOT NULL,
+        condition TEXT NOT NULL,
+        damaged_reason TEXT,
+        reintegrate_to_stock INTEGER NOT NULL DEFAULT 0
+      );
+    `),
 ];
 
 function migrate(db) {
@@ -226,6 +208,7 @@ const mapProduct = (r) => ({
   price: r.price,
   stock: r.stock,
   minStock: r.min_stock,
+  almacenStock: r.almacen_stock !== undefined ? r.almacen_stock : 0,
   status: productStatus(r.stock, r.min_stock),
   provider: r.provider || undefined,
   location: r.location || undefined,
@@ -292,20 +275,23 @@ function createRepo(db, { clock = () => new Date() } = {}) {
     if (db.prepare('SELECT 1 FROM products WHERE code = ? COLLATE NOCASE').get(code)) {
       throw new DomainError('CODE_EXISTS', `Ya existe un producto con el código ${code}.`);
     }
+    const almacenStock = input.almacenStock === undefined ? 0 : Number(input.almacenStock);
+    if (!isNum(almacenStock) || almacenStock < 0) throw new DomainError('INVALID', 'Stock en almacén inválido.');
+
     const id = `prod-${crypto.randomUUID()}`;
     db.prepare(
-      `INSERT INTO products (id, code, name, detail, category, um, price, stock, min_stock, provider, location, rotation, created_at)
-       VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?)`
+      `INSERT INTO products (id, code, name, detail, category, um, price, stock, min_stock, almacen_stock, provider, location, rotation, created_at)
+       VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?)`
     ).run(
       id, code, name,
       String(input.detail || ''),
       String(input.category || 'General'),
       String(input.um || 'Unidad'),
-      round2(price), minStock,
+      round2(price), minStock, almacenStock,
       input.provider || null, input.location || null, input.rotation || null,
       nowStamp()
     );
-    if (stock > 0) move(id, 'inicial', stock, { note: 'Stock inicial' });
+    if (stock > 0) move(id, 'inicial', stock, { note: 'Stock inicial mostrador' });
     return mapProduct(q.productById.get(id));
   });
 
@@ -346,6 +332,25 @@ function createRepo(db, { clock = () => new Date() } = {}) {
       const delta = round2(target - cur.stock);
       if (delta !== 0) move(id, 'ajuste', delta, { note: 'Ajuste manual desde catálogo' });
     }
+    if (patch.almacenStock !== undefined) {
+      const astock = Number(patch.almacenStock);
+      if (!isNum(astock) || astock < 0) throw new DomainError('INVALID', 'Stock en almacén inválido.');
+      db.prepare('UPDATE products SET almacen_stock = ? WHERE id = ?').run(astock, id);
+    }
+    return mapProduct(q.productById.get(id));
+  });
+
+  const reponerStock = db.transaction((id, qty) => {
+    const cur = q.productById.get(id);
+    if (!cur || cur.archived) throw new DomainError('NOT_FOUND', 'Producto no encontrado.');
+    const qNum = Number(qty);
+    if (!isNum(qNum) || qNum <= 0) throw new DomainError('INVALID', 'La cantidad a reponer debe ser mayor a cero.');
+    const dispAlmacen = Number(cur.almacen_stock || 0);
+    if (qNum > dispAlmacen) {
+      throw new DomainError('INVALID', `No hay suficiente existencia en almacén. Disponible: ${dispAlmacen}.`);
+    }
+    db.prepare('UPDATE products SET almacen_stock = almacen_stock - ? WHERE id = ?').run(qNum, id);
+    move(id, 'entrada', qNum, { note: 'Reposición desde almacén a mostrador' });
     return mapProduct(q.productById.get(id));
   });
 
@@ -650,51 +655,132 @@ function createRepo(db, { clock = () => new Date() } = {}) {
     return { restored: Object.fromEntries(TABLES.map((t) => [t, data.tables[t].length])) };
   });
 
-  /* ---------------- Estado de Reloj ---------------- */
-  function clockStatus() {
-    const curToday = today();
-    const row = db.prepare(`
-      SELECT MAX(d) AS last_date FROM (
-        SELECT MAX(date) AS d FROM sales
-        UNION ALL
-        SELECT MAX(date) AS d FROM day_closes
-        UNION ALL
-        SELECT MAX(date) AS d FROM stock_movements
-      )
-    `).get();
-    const lastActivityDate = (row && row.last_date) ? row.last_date : null;
-    const warning = lastActivityDate !== null && curToday < lastActivityDate;
+  const resetAll = db.transaction(() => {
+    const tables = ['return_items', 'returns', 'day_closes', 'stock_movements', 'sale_items', 'sales', 'products'];
+    const cleared = Object.fromEntries(
+      tables.map((table) => [table, db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count])
+    );
+    for (const table of tables) db.prepare(`DELETE FROM ${table}`).run();
+    db.prepare('DELETE FROM meta').run();
+    db.prepare("INSERT INTO meta (key, value) VALUES ('ticket_seq', '100')").run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('sale_items', 'stock_movements', 'return_items')").run();
+    return { cleared };
+  });
+
+  /* ---------------- Devoluciones ---------------- */
+  const recordReturn = db.transaction((input) => {
+    const id = `return-${crypto.randomUUID()}`;
+    const d = clock();
+    const dateStr = localDate(d);
+    const timeStr = localTime(d);
+    const countRow = db.prepare('SELECT COUNT(*) as c FROM returns').get();
+    const retSeq = (countRow ? countRow.c : 0) + 1;
+    const returnNumber = `DEV-${String(retSeq).padStart(3, '0')}`;
+    const items = input.items || [];
+    const hasDamaged = items.some((it) => it.condition === 'mal_estado') ? 1 : 0;
+    const totalRefund = Number(input.totalRefund) || 0;
+
+    db.prepare(`
+      INSERT INTO returns (id, return_number, sale_id, ticket_number, date, timestamp, total_refund, refund_method, customer_name, reason, has_damaged_items, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      returnNumber,
+      input.saleId || null,
+      input.ticketNumber || null,
+      dateStr,
+      timeStr,
+      totalRefund,
+      input.refundMethod || 'efectivo',
+      input.customerName || null,
+      input.reason || 'Devolución de cliente',
+      hasDamaged,
+      `${dateStr} ${timeStr}`
+    );
+
+    const insItem = db.prepare(`
+      INSERT INTO return_items (return_id, product_id, code, name, um, quantity, unit_price, refund_amount, condition, damaged_reason, reintegrate_to_stock)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const it of items) {
+      const q = Number(it.quantity) || 1;
+      const uPrice = Number(it.unitPrice) || 0;
+      const refAmt = Number(it.refundAmount) || (q * uPrice);
+      const isDamaged = it.condition === 'mal_estado';
+      const reintegrate = it.reintegrateToStock && !isDamaged ? 1 : 0;
+      insItem.run(
+        id,
+        it.productId,
+        it.code || '',
+        it.name || '',
+        it.um || 'Unidad',
+        q,
+        uPrice,
+        refAmt,
+        it.condition || 'mal_estado',
+        it.damagedReason || null,
+        reintegrate
+      );
+      if (reintegrate) {
+        move(it.productId, 'entrada', q, { note: `Reingreso por devolución ${returnNumber}` });
+      }
+    }
+
+    return loadReturn(id);
+  });
+
+  function loadReturn(id) {
+    const r = db.prepare('SELECT * FROM returns WHERE id = ?').get(id);
+    if (!r) return null;
+    const items = db.prepare('SELECT * FROM return_items WHERE return_id = ?').all(id).map((it) => ({
+      productId: it.product_id,
+      code: it.code,
+      name: it.name,
+      um: it.um,
+      quantity: it.quantity,
+      unitPrice: it.unit_price,
+      refundAmount: it.refund_amount,
+      condition: it.condition,
+      damagedReason: it.damaged_reason,
+      reintegrateToStock: Boolean(it.reintegrate_to_stock),
+    }));
     return {
-      today: curToday,
-      lastActivityDate,
-      warning,
+      id: r.id,
+      returnNumber: r.return_number,
+      saleId: r.sale_id,
+      ticketNumber: r.ticket_number,
+      date: r.date,
+      timestamp: r.timestamp,
+      totalRefund: r.total_refund,
+      refundMethod: r.refund_method,
+      customerName: r.customer_name,
+      reason: r.reason,
+      hasDamagedItems: Boolean(r.has_damaged_items),
+      createdAt: r.created_at,
+      items,
     };
+  }
+
+  function listReturns() {
+    const rows = db.prepare('SELECT id FROM returns ORDER BY created_at DESC').all();
+    return rows.map((r) => loadReturn(r.id)).filter(Boolean);
   }
 
   return {
     today,
-    clockStatus,
-    listProducts, createProduct, updateProduct, archiveProduct, addStock,
+    listProducts, createProduct, updateProduct, archiveProduct, addStock, reponerStock,
     recordSale, voidSale, listSales, listSalesRange,
+    recordReturn, listReturns,
     getIpvDay,
     getClose, listCloses, closeDay, reopenDay,
-    exportAll, restoreAll,
+    exportAll, restoreAll, resetAll,
     backupTo: (file) => db.backup(file),
   };
 }
 
 function openDatabase(file, options) {
-  let db;
-  try {
-    if (!Database) throw new Error('better-sqlite3 not loaded');
-    db = new Database(file);
-  } catch (err) {
-    if (BetterSqliteAdapter) {
-      db = new BetterSqliteAdapter(file);
-    } else {
-      throw err;
-    }
-  }
+  const db = new Database(file);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');

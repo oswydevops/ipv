@@ -22,14 +22,13 @@ if (!app.requestSingleInstanceLock()) {
 
   const createWindow = () => {
     win = new BrowserWindow({
-      icon: path.join(__dirname, '..', 'assets', 'icono.png'),
       width: 1366,
       height: 820,
       minWidth: 1024,
       minHeight: 640,
       show: false,
       webPreferences: {
-        preload: path.join(__dirname, 'preload.cjs'),       
+        preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -52,7 +51,7 @@ if (!app.requestSingleInstanceLock()) {
       app.quit();
       return;
     }
-    register(ipcMain, buildHandlers(store.repo, { dialog, getWindow: () => win, fs }));
+    register(ipcMain, buildHandlers(store.repo, { dialog, getWindow: () => win, fs, db: store.db }));
     createWindow();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });

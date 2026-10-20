@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Product } from '../types';
 
 export const StockAlertsView: React.FC = () => {
-  const { products, updateProductStock, refreshAll, showToast } = useApp();
+  const { products, reponerProduct, refreshAll, showToast } = useApp();
 
   const [activeTab, setActiveTab] = useState<'todos' | 'agotados' | 'stock-bajo' | 'disponibles'>('todos');
   const [familyFilter, setFamilyFilter] = useState('all');
@@ -48,44 +48,50 @@ export const StockAlertsView: React.FC = () => {
   const startIdx = displayedList.length === 0 ? 0 : (validPage - 1) * pageSize + 1;
   const endIdx = Math.min(validPage * pageSize, displayedList.length);
 
-  const handleOpenRestock = (targetProduct?: string | Product, defaultQty = 20) => {
+  const handleOpenRestock = (targetProduct?: Product) => {
     let prodId = '';
-    let cost = 0;
-    if (typeof targetProduct === 'object' && targetProduct) {
+    let initialQty = 1;
+    if (targetProduct) {
       prodId = targetProduct.id;
-      cost = targetProduct.price || 0;
-    } else if (typeof targetProduct === 'string' && targetProduct) {
-      const found = products.find((p) => p.id === targetProduct || p.name === targetProduct || p.code === targetProduct);
-      if (found) {
-        prodId = found.id;
-        cost = found.price || 0;
-      } else if (products.length > 0) {
-        prodId = products[0].id;
-        cost = products[0].price || 0;
-      }
+      const disp = targetProduct.almacenStock || 0;
+      initialQty = disp > 0 ? Math.min(disp, 10) : 1;
     } else if (products.length > 0) {
       prodId = products[0].id;
-      cost = products[0].price || 0;
+      const disp = products[0].almacenStock || 0;
+      initialQty = disp > 0 ? Math.min(disp, 10) : 1;
     }
 
     setModalProductId(prodId);
-    setModalQty(defaultQty > 0 ? defaultQty : 20);
-    setModalCost(cost);
+    setModalQty(initialQty);
     setIsModalOpen(true);
   };
 
   const handleConfirmRestock = async () => {
     if (!modalProductId) {
-      showToast('Error', 'Seleccione un producto para registrar la entrada.', 'error');
+      showToast('Error', 'Seleccione un producto para reponer.', 'error');
+      return;
+    }
+    const targetProd = products.find((p) => p.id === modalProductId);
+    if (!targetProd) {
+      showToast('Error', 'Producto no encontrado.', 'error');
       return;
     }
     const qty = Number(modalQty);
     if (!qty || qty <= 0) {
-      showToast('Error', 'La cantidad a ingresar debe ser mayor que cero.', 'error');
+      showToast('Error', 'La cantidad a reponer debe ser mayor que cero.', 'error');
+      return;
+    }
+    const dispAlmacen = targetProd.almacenStock || 0;
+    if (dispAlmacen <= 0) {
+      showToast('Almacén sin existencias', `"${targetProd.name}" no tiene existencias en almacén para reponer.`, 'error');
+      return;
+    }
+    if (qty > dispAlmacen) {
+      showToast('Cantidad excede almacén', `Solo hay ${dispAlmacen} unidades disponibles en almacén.`, 'error');
       return;
     }
 
-    const success = await updateProductStock(modalProductId, qty);
+    const success = await reponerProduct(modalProductId, qty);
     if (success) {
       setIsModalOpen(false);
     }
@@ -382,119 +388,100 @@ export const StockAlertsView: React.FC = () => {
               <tr className="text-on-surface-variant font-semibold uppercase tracking-wider text-[11px] bg-surface-container-low/50">
                 <th className="py-3.5 px-6">Estado / Prioridad</th>
                 <th className="py-3.5 px-6">Código y Descripción</th>
-                <th className="py-3.5 px-3">U/M</th>
-                <th className="py-3.5 px-6 min-w-[170px]">Saldo / Nivel Óptimo</th>
-                <th className="py-3.5 px-4 text-center">Stock Mín.</th>
-                <th className="py-3.5 px-4 text-right">Déficit / Balance</th>
+                <th className="py-3.5 px-3 text-center">U/M</th>
+                <th className="py-3.5 px-4 text-center">Mostrador</th>
+                <th className="py-3.5 px-4 text-center">Almacén</th>
                 <th className="py-3.5 px-4">Últ. Salida</th>
                 <th className="py-3.5 px-6 text-right">Acción</th>
               </tr>
             </thead>
             <tbody className="divide-y-0 text-on-surface">
-              {paginatedAlerts.map((item) => {
-                const isZero = item.stock === 0;
-                const isLow = item.stock > 0 && item.stock <= item.minStock;
-                const isAvailable = item.stock > item.minStock;
-                const deficit = item.minStock * 2 - item.stock;
-                const pct = Math.min(100, Math.round((item.stock / (item.minStock * 2)) * 100));
+              {paginatedAlerts.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-on-surface-variant text-xs">
+                    No hay productos que coincidan con los filtros seleccionados.
+                  </td>
+                </tr>
+              ) : (
+                paginatedAlerts.map((item) => {
+                  const isZero = item.stock === 0;
+                  const isLow = item.stock > 0 && item.stock <= item.minStock;
 
-                return (
-                  <tr key={item.id} className="hover:bg-surface-bright/60 transition-colors group">
-                    <td className="py-4 px-6 align-middle">
-                      {isZero ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-error-container text-on-error-container">
-                          <span className="w-1.5 h-1.5 rounded-full bg-error animate-pulse"></span>
-                          Agotado (Cero)
-                        </span>
-                      ) : isLow ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                          Stock Bajo
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-900">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                          Disponible
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-4 px-6 align-middle">
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-on-surface text-[13px] group-hover:text-primary transition-colors">
-                          {item.name}
-                        </span>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="font-mono text-[11px] text-on-surface-variant font-semibold">
-                            SKU: {item.code}
+                  return (
+                    <tr key={item.id} className="hover:bg-surface-bright/60 transition-colors group">
+                      <td className="py-4 px-6 align-middle">
+                        {isZero ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-error-container text-on-error-container">
+                            <span className="w-1.5 h-1.5 rounded-full bg-error animate-pulse"></span>
+                            Agotado (Cero)
                           </span>
-                          <span className="text-outline text-[10px]">•</span>
-                          <span className="text-[11px] text-on-surface-variant">{item.detail}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-4 px-3 align-middle font-medium text-on-surface-variant">
-                      {item.um}
-                    </td>
-                    <td className="py-4 px-6 align-middle">
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex justify-between text-[11px] font-mono">
-                          <span
-                            className={`font-bold ${
-                              isZero ? 'text-error' : isLow ? 'text-amber-700' : 'text-emerald-700'
-                            }`}
-                          >
-                            {item.stock} {item.um}
+                        ) : isLow ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                            Stock Bajo
                           </span>
-                          <span className="text-on-surface-variant">
-                            Meta: {item.minStock * 2} {item.um}
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-900">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            Disponible
                           </span>
+                        )}
+                      </td>
+                      <td className="py-4 px-6 align-middle">
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-on-surface text-[13px] group-hover:text-primary transition-colors">
+                            {item.name}
+                          </span>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="font-mono text-[11px] text-on-surface-variant font-semibold">
+                              SKU: {item.code}
+                            </span>
+                            <span className="text-outline text-[10px]">•</span>
+                            <span className="text-[11px] text-on-surface-variant">{item.detail}</span>
+                          </div>
                         </div>
-                        <div className="w-full h-2 rounded-full bg-surface neo-inset p-0.5">
-                          <div
-                            className={`h-full rounded-full ${
-                              isZero ? 'bg-error' : isLow ? 'bg-amber-500' : 'bg-emerald-500'
-                            }`}
-                            style={{ width: `${pct}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-4 px-4 align-middle text-center">
-                      <span className="px-2 py-1 rounded-lg bg-surface neo-raised font-mono text-[11px] font-semibold text-on-surface">
-                        {item.minStock} {item.um}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 align-middle text-right">
-                      {deficit > 0 ? (
+                      </td>
+                      <td className="py-4 px-3 align-middle text-center font-medium text-on-surface-variant">
+                        {item.um}
+                      </td>
+                      <td className="py-4 px-4 align-middle text-center">
                         <span
-                          className={`font-mono font-bold text-[13px] ${
-                            isZero ? 'text-error' : 'text-amber-700'
+                          className={`inline-flex px-2.5 py-1 rounded-lg font-mono font-bold text-xs ${
+                            isZero ? 'bg-error-container text-on-error-container' : isLow ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-900'
                           }`}
                         >
-                          -{deficit} {item.um}
+                          {item.stock} {item.um}
                         </span>
-                      ) : (
-                        <span className="font-mono font-semibold text-[11px] text-emerald-600">
-                          +{Math.abs(deficit)} {item.um}
+                      </td>
+                      <td className="py-4 px-4 align-middle text-center">
+                        <span
+                          className={`inline-flex px-2.5 py-1 rounded-lg font-mono font-bold text-xs ${
+                            (item.almacenStock || 0) > 0
+                              ? 'bg-blue-100 text-blue-900'
+                              : 'bg-surface neo-inset text-on-surface-variant opacity-60'
+                          }`}
+                        >
+                          {item.almacenStock || 0} {item.um}
                         </span>
-                      )}
-                    </td>
-                    <td className="py-4 px-4 align-middle font-mono text-[11px] text-on-surface-variant">
-                      {item.lastExit || 'Ayer'}
-                    </td>
-                    <td className="py-4 px-6 align-middle text-right">
-                      <button
-                        onClick={() => handleOpenRestock(item, Math.max(10, deficit > 0 ? deficit : 20))}
-                        className="px-3 py-1.5 rounded-xl bg-surface neo-raised text-primary hover:text-on-primary hover:bg-primary transition-all font-semibold text-[11px] inline-flex items-center gap-1.5 active:neo-inset cursor-pointer"
-                        type="button"
-                      >
-                        <span className="material-symbols-outlined text-[15px]">add_circle</span>
-                        <span>{deficit > 0 ? 'Pedir' : 'Ajustar'}</span>
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                      <td className="py-4 px-4 align-middle font-mono text-[11px] text-on-surface-variant">
+                        {item.lastExit || 'Ayer'}
+                      </td>
+                      <td className="py-4 px-6 align-middle text-right">
+                        <button
+                          onClick={() => handleOpenRestock(item)}
+                          className="px-3.5 py-1.5 rounded-xl bg-surface neo-raised text-primary hover:text-white hover:bg-primary transition-all font-semibold text-xs inline-flex items-center gap-1.5 active:neo-inset cursor-pointer shadow-sm"
+                          type="button"
+                          title={`Reponer ${item.name} desde el almacén al mostrador`}
+                        >
+                          <span className="material-symbols-outlined text-[15px]">sync_alt</span>
+                          <span>Reponer</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -560,127 +547,137 @@ export const StockAlertsView: React.FC = () => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-surface neo-raised flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-[22px]">inventory</span>
+                  <span className="material-symbols-outlined text-[22px]">sync_alt</span>
                 </div>
                 <div>
                   <h3 className="font-headline font-semibold text-base text-on-surface">
-                    Registrar Entrada de Mercancía
+                    Reponer Mostrador desde Almacén
                   </h3>
                   <span className="text-xs text-on-surface-variant">
-                    Recepción directa a almacén o mostrador
+                    Descuenta existencias del almacén y las agrega al mostrador
                   </span>
                 </div>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface active:neo-inset"
+                className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface active:neo-inset cursor-pointer"
                 type="button"
               >
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
 
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-on-surface">Producto o Referencia</label>
-                <div className="h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center text-xs text-on-surface">
-                  <select
-                    value={modalProductId}
-                    onChange={(e) => {
-                      const selectedId = e.target.value;
-                      setModalProductId(selectedId);
-                      const prod = products.find((p) => p.id === selectedId);
-                      if (prod) {
-                        setModalCost(prod.price || 0);
-                      }
-                    }}
-                    className="bg-transparent w-full focus:outline-none font-medium text-on-surface"
-                  >
-                    {products.length === 0 ? (
-                      <option value="">No hay productos disponibles</option>
-                    ) : (
-                      products.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.code} - {p.name} (Stock actual: {p.stock} {p.um})
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-              </div>
+            {/* Selected Product Info */}
+            {(() => {
+              const currentProd = products.find((p) => p.id === modalProductId);
+              const dispAlmacen = currentProd ? (currentProd.almacenStock || 0) : 0;
+              const enMostrador = currentProd ? currentProd.stock : 0;
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-on-surface">Cantidad a ingresar</label>
-                  <div className="h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center text-xs">
-                    <input
-                      type="number"
-                      min="1"
-                      value={modalQty}
-                      onChange={(e) => setModalQty(parseInt(e.target.value) || 0)}
-                      className="bg-transparent w-full focus:outline-none font-mono font-bold text-on-surface"
-                    />
+              return (
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-on-surface">Producto a reponer</label>
+                    <div className="h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center text-xs text-on-surface">
+                      <select
+                        value={modalProductId}
+                        onChange={(e) => {
+                          const selectedId = e.target.value;
+                          setModalProductId(selectedId);
+                          const prod = products.find((p) => p.id === selectedId);
+                          if (prod) {
+                            const disp = prod.almacenStock || 0;
+                            setModalQty(disp > 0 ? Math.min(disp, 10) : 1);
+                          }
+                        }}
+                        className="bg-transparent w-full focus:outline-none font-medium text-on-surface cursor-pointer"
+                      >
+                        {products.length === 0 ? (
+                          <option value="">No hay productos disponibles</option>
+                        ) : (
+                          products.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.code} - {p.name}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Badges mostrador vs almacén */}
+                  {currentProd && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="p-3 rounded-xl bg-surface neo-inset flex flex-col gap-1">
+                        <span className="text-[10px] uppercase font-bold text-on-surface-variant">En Mostrador</span>
+                        <span className="text-base font-bold font-mono text-on-surface">
+                          {enMostrador} {currentProd.um}
+                        </span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-surface neo-inset flex flex-col gap-1">
+                        <span className="text-[10px] uppercase font-bold text-on-surface-variant">Disponible en Almacén</span>
+                        <span className={`text-base font-bold font-mono ${dispAlmacen > 0 ? 'text-primary' : 'text-error'}`}>
+                          {dispAlmacen} {currentProd.um}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {dispAlmacen <= 0 && (
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-800 text-xs flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[18px] text-amber-600">warning</span>
+                      <span>No quedan unidades de este artículo en el almacén para reponer.</span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-on-surface">Cantidad a traspasar al mostrador</label>
+                      {dispAlmacen > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setModalQty(dispAlmacen)}
+                          className="text-[11px] text-primary font-bold hover:underline cursor-pointer"
+                        >
+                          Todo el almacén ({dispAlmacen})
+                        </button>
+                      )}
+                    </div>
+                    <div className="h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center text-xs">
+                      <input
+                        type="number"
+                        min="1"
+                        max={dispAlmacen > 0 ? dispAlmacen : 1}
+                        value={modalQty}
+                        onChange={(e) => setModalQty(parseInt(e.target.value) || 0)}
+                        className="bg-transparent w-full focus:outline-none font-mono font-bold text-sm text-on-surface"
+                      />
+                    </div>
+                    <span className="text-[10px] text-on-surface-variant">
+                      Se sumará al mostrador y se descontará automáticamente del almacén.
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <button
+                      onClick={() => setIsModalOpen(false)}
+                      className="px-4 py-2.5 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface-variant hover:text-on-surface active:neo-inset cursor-pointer"
+                      type="button"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={handleConfirmRestock}
+                      disabled={dispAlmacen <= 0}
+                      className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary/90 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[17px]">check_circle</span>
+                      <span>Confirmar Reposición</span>
+                    </button>
                   </div>
                 </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-on-surface">Costo Unitario (CUP)</label>
-                  <div className="h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center text-xs">
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={modalCost}
-                      onChange={(e) => setModalCost(parseFloat(e.target.value) || 0)}
-                      className="bg-transparent w-full focus:outline-none font-mono font-bold text-on-surface"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-on-surface">Ubicación destino</label>
-                <div className="h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center text-xs text-on-surface">
-                  <select
-                    value={modalDest}
-                    onChange={(e) => setModalDest(e.target.value)}
-                    className="bg-transparent w-full focus:outline-none font-medium text-on-surface"
-                  >
-                    <option>Mostrador Principal / Repisa Inmediata</option>
-                    <option>Almacén A - Pasillo Eléctrico</option>
-                    <option>Patio Trasero Materiales</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-surface neo-inset flex items-center justify-between text-xs font-mono">
-                <span className="text-on-surface-variant font-medium">Impacto Total de Compra:</span>
-                <span className="font-bold text-primary text-sm">
-                  {(modalQty * modalCost).toLocaleString('es-CU', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}{' '}
-                  CUP
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2.5 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface-variant hover:text-on-surface active:neo-inset"
-                type="button"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleConfirmRestock}
-                className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all flex items-center gap-1.5 cursor-pointer"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[17px]">check_circle</span>
-                <span>Actualizar Stock Local</span>
-              </button>
-            </div>
+              );
+            })()}
           </div>
         </div>
       )}

@@ -17,12 +17,41 @@ export const IPVView: React.FC = () => {
     isViewDateClosed,
     isViewingPastDate,
     refreshIpvDay,
+    returns = [],
+    showToast,
   } = useApp();
 
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'zero' | 'low'>('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
   const pageSize = 8;
+
+  // Devoluciones correspondientes a la fecha consultada en el IPV
+  const returnsForDate = useMemo(() => {
+    const targetDate = selectedIpvDate || todayDate;
+    return returns.filter((r) => r.date === targetDate);
+  }, [returns, selectedIpvDate, todayDate]);
+
+  const returnsForDateTotal = useMemo(() => {
+    return returnsForDate.reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+  }, [returnsForDate]);
+
+  const returnedUnitsDate = useMemo(() => {
+    return returnsForDate.reduce((acc, r) => {
+      const q = (r.items || []).reduce((s, it) => s + (it.quantity || 1), 0);
+      return acc + q;
+    }, 0);
+  }, [returnsForDate]);
+
+  const damagedUnitsDate = useMemo(() => {
+    return returnsForDate.reduce((acc, r) => {
+      const q = (r.items || [])
+        .filter((it) => it.condition === 'mal_estado')
+        .reduce((s, it) => s + (it.quantity || 1), 0);
+      return acc + q;
+    }, 0);
+  }, [returnsForDate]);
 
   const formatCUP = (val: number) => {
     return Number(val).toLocaleString('es-CU', {
@@ -57,6 +86,68 @@ export const IPVView: React.FC = () => {
   const paginatedRows = filteredRows.slice((validPage - 1) * pageSize, validPage * pageSize);
   const startIdx = filteredRows.length === 0 ? 0 : (validPage - 1) * pageSize + 1;
   const endIdx = Math.min(validPage * pageSize, filteredRows.length);
+
+  const handleExportDailyReport = async () => {
+    setIsExporting(true);
+    try {
+      if (!window.api?.reports?.exportarIpvExcel) {
+        throw new Error('La exportación IPV a Excel no está disponible en esta versión de la aplicación.');
+      }
+      const result = await window.api.reports.exportarIpvExcel({
+        date: selectedIpvDate,
+        fileName: `Reporte_IPV_Diario_${selectedIpvDate}.xlsx`,
+        title: 'Reporte IPV Diario',
+        period: selectedIpvDate,
+        columns: [
+          { header: 'Núm.', key: 'num', width: 10 },
+          { header: 'Código', key: 'code', width: 16 },
+          { header: 'Producto', key: 'name', width: 32 },
+          { header: 'Categoría', key: 'category', width: 20 },
+          { header: 'Unidad', key: 'um', width: 14 },
+          { header: 'Saldo inicial', key: 'saldoIni', width: 16 },
+          { header: 'Entradas', key: 'entrada', width: 14 },
+          { header: 'Vendido', key: 'vendido', width: 14 },
+          { header: 'Ajustes', key: 'ajuste', width: 14 },
+          { header: 'Saldo final', key: 'saldoFinal', width: 16 },
+          { header: 'Precio (CUP)', key: 'price', width: 18 },
+          { header: 'Importe vendido (CUP)', key: 'importe', width: 22 },
+          { header: 'Estado', key: 'status', width: 14 },
+        ],
+        rows: ipvRows.map((row) => ({
+          num: row.num,
+          code: row.code,
+          name: row.name,
+          category: row.category,
+          um: row.um,
+          saldoIni: row.saldoIni,
+          entrada: row.entrada,
+          vendido: row.vendido,
+          ajuste: row.ajuste ?? 0,
+          saldoFinal: row.saldoFinal,
+          price: row.price,
+          importe: row.importe,
+          status: row.status === 'zero' ? 'Sin existencia' : row.status === 'low' ? 'Stock bajo' : 'Normal',
+        })),
+        metrics: [
+          { label: 'Total vendido (CUP)', value: ipvTotalVendido },
+          { label: 'Unidades vendidas', value: ipvTotalUnidades },
+          { label: 'Ventas en efectivo (CUP)', value: totalVentasEfectivo },
+          { label: 'Ventas por transferencia (CUP)', value: totalVentasTransferencia },
+          { label: 'Total reembolsado (CUP)', value: returnsForDateTotal },
+          { label: 'Unidades devueltas', value: returnedUnitsDate },
+        ],
+        returns: returnsForDate,
+      });
+      if (!result.canceled) {
+        showToast('IPV diario exportado', result.excelPath, 'success');
+      }
+    } catch (error: any) {
+      console.error('Error al exportar el IPV diario:', error);
+      showToast('Error al exportar IPV diario', error?.message || 'No se pudo generar el Excel.', 'error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const zeroCount = ipvRows.filter((r) => r.status === 'zero').length;
   const lowCount = ipvRows.filter((r) => r.status === 'low').length;
@@ -118,6 +209,17 @@ export const IPVView: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <button
+            onClick={handleExportDailyReport}
+            disabled={isExporting}
+            className="px-4 py-2.5 rounded-xl bg-surface neo-raised text-xs font-bold text-emerald-700 hover:text-emerald-800 active:neo-inset transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[18px]">
+              {isExporting ? 'hourglass_top' : 'download'}
+            </span>
+            <span>{isExporting ? 'Exportando...' : 'Exportar IPV Excel'}</span>
+          </button>
+          <button
             onClick={() => openSaleModal()}
             disabled={isClosedForSales}
             className={`px-4 py-2.5 rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-2 ${
@@ -135,7 +237,7 @@ export const IPVView: React.FC = () => {
       </div>
 
       {/* KPI Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {/* KPI 1: Total Vendido */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative overflow-hidden group">
           <div className="flex items-start justify-between">
@@ -250,7 +352,132 @@ export const IPVView: React.FC = () => {
             <p className="text-[11px] text-on-surface-variant mt-1">Existencia por debajo del mínimo</p>
           </div>
         </div>
+
+        {/* KPI 5: Devoluciones */}
+        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative group">
+          <div className="flex items-start justify-between">
+            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-600">
+              <span className="material-symbols-outlined text-xl">assignment_return</span>
+            </div>
+            <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700">
+              <span>{returnsForDate.length} {returnsForDate.length === 1 ? 'dev.' : 'devs.'}</span>
+            </div>
+          </div>
+          <div className="mt-4">
+            <span className="text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant">
+              Devoluciones
+            </span>
+            <div className="flex items-baseline gap-1.5 mt-1">
+              <span className="text-2xl font-bold tracking-tight text-amber-600 font-mono">
+                ${formatCUP(returnsForDateTotal)}
+              </span>
+              <span className="text-xs font-bold text-amber-600">CUP</span>
+            </div>
+            <div className="mt-2.5 pt-2 border-t border-outline-variant/15 flex items-center justify-between text-[11px]">
+              <span className="text-on-surface-variant font-medium">
+                {returnedUnitsDate} u. dev.{damagedUnitsDate > 0 ? ` • ${damagedUnitsDate} merma` : ''}
+              </span>
+              <button
+                onClick={() => setCurrentView('devoluciones')}
+                className="text-amber-700 hover:underline font-semibold flex items-center gap-0.5 cursor-pointer"
+                type="button"
+              >
+                <span>Ver</span>
+                <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Devoluciones del día consultado */}
+      <section className="rounded-2xl bg-surface neo-raised overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-5 py-4 border-b border-outline-variant/20">
+          <div>
+            <h2 className="text-sm font-bold text-on-surface">Detalle de devoluciones</h2>
+            <p className="text-[11px] text-on-surface-variant mt-0.5">
+              Reembolsos registrados el {selectedIpvDate}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[10px] font-semibold">
+            {(['efectivo', 'transferencia', 'mixto'] as const).map((method) => {
+              const amount = returnsForDate
+                .filter((record) => record.refundMethod === method)
+                .reduce((sum, record) => sum + (record.totalRefund || 0), 0);
+              return (
+                <span key={method} className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-800">
+                  {method === 'efectivo' ? 'Efectivo' : method === 'transferencia' ? 'Transferencia' : 'Mixto'}: ${formatCUP(amount)}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+        {returnsForDate.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left">
+              <thead className="bg-surface-container/50 text-[10px] uppercase tracking-wide text-on-surface-variant">
+                <tr>
+                  <th className="px-4 py-3 font-bold">Devolución</th>
+                  <th className="px-4 py-3 font-bold">Cliente</th>
+                  <th className="px-4 py-3 font-bold">Motivo</th>
+                  <th className="px-4 py-3 font-bold">Método</th>
+                  <th className="px-4 py-3 font-bold">Artículos devueltos</th>
+                  <th className="px-4 py-3 text-right font-bold">Reembolso</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/15">
+                {returnsForDate.map((record) => (
+                  <tr key={record.id} className="align-top hover:bg-surface-container/30">
+                    <td className="px-4 py-3">
+                      <div className="text-xs font-bold text-on-surface">{record.returnNumber}</div>
+                      <div className="text-[10px] text-on-surface-variant">{record.timestamp}</div>
+                      {record.ticketNumber && (
+                        <div className="text-[10px] text-on-surface-variant">Ticket: {record.ticketNumber}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-on-surface">
+                      {record.customerName || 'No especificado'}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-on-surface-variant">
+                      <div>{record.reason || 'No especificado'}</div>
+                      {(record.items || []).some((item) => item.damagedReason) && (
+                        <div className="mt-1 text-[10px] text-amber-800">
+                          {(record.items || [])
+                            .filter((item) => item.damagedReason)
+                            .map((item) => `${item.name}: ${item.damagedReason}`)
+                            .join(' • ')}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs font-semibold text-on-surface">
+                      {record.refundMethod === 'efectivo'
+                        ? 'Efectivo'
+                        : record.refundMethod === 'transferencia'
+                        ? 'Transferencia'
+                        : 'Mixto'}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-on-surface-variant">
+                      {(record.items || []).map((item) => (
+                        <div key={`${record.id}-${item.productId}-${item.code}`} className="mb-1 last:mb-0">
+                          {item.quantity} × {item.name} ({item.code}) · {item.condition === 'buen_estado' ? 'Buen estado' : 'Mal estado'}
+                          {item.reintegrateToStock ? ' · Reintegrado a stock' : ''}
+                        </div>
+                      ))}
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs font-bold text-amber-700">
+                      ${formatCUP(record.totalRefund)} CUP
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="px-5 py-6 text-xs text-on-surface-variant">
+            No hay devoluciones registradas para esta fecha.
+          </p>
+        )}
+      </section>
 
       {/* Filters & Controls Bar with Date Selector */}
       <div className="p-4 rounded-2xl bg-surface neo-raised flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
@@ -382,13 +609,12 @@ export const IPVView: React.FC = () => {
                 <th className="py-3.5 px-4 text-center">Saldo Final</th>
                 <th className="py-3.5 px-3 text-right min-w-[110px]">Precio (CUP)</th>
                 <th className="py-3.5 px-4 text-right min-w-[130px]">Importe (CUP)</th>
-                <th className="py-3.5 px-3 text-center w-28">Venta</th>
               </tr>
             </thead>
             <tbody className="text-xs font-medium divide-y-0">
               {paginatedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={hasAnyAjuste ? 11 : 10} className="py-12 text-center text-on-surface-variant">
+                  <td colSpan={hasAnyAjuste ? 10 : 9} className="py-12 text-center text-on-surface-variant">
                     <span className="material-symbols-outlined text-4xl block mb-2 opacity-50">inventory_2</span>
                     No hay productos con movimientos para esta fecha o filtros seleccionados.
                   </td>
@@ -484,28 +710,6 @@ export const IPVView: React.FC = () => {
                     </td>
                     <td className="py-4 px-4 text-right font-mono font-bold text-on-surface">
                       {formatCUP(row.importe)}
-                    </td>
-                    <td className="py-4 px-3 text-center">
-                      <button
-                        onClick={() => openSaleModal(row)}
-                        disabled={isClosedForSales || row.saldoFinal <= 0}
-                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 mx-auto shadow-sm ${
-                          isClosedForSales || row.saldoFinal <= 0
-                            ? 'bg-surface text-on-surface-variant opacity-40 cursor-not-allowed'
-                            : 'bg-surface neo-raised text-primary hover:bg-primary hover:text-white active:neo-inset cursor-pointer'
-                        }`}
-                        title={
-                          isClosedForSales
-                            ? 'Ventas bloqueadas'
-                            : row.saldoFinal <= 0
-                            ? 'Sin existencias'
-                            : `Vender ${row.name}`
-                        }
-                        type="button"
-                      >
-                        <span className="material-symbols-outlined text-[15px]">point_of_sale</span>
-                        <span>Vender</span>
-                      </button>
                     </td>
                   </tr>
                 ))

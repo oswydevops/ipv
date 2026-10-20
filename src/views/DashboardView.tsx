@@ -72,6 +72,9 @@ export const DashboardView: React.FC = () => {
     products,
     ipvRows,
     sales,
+    returns = [],
+    totalDevolucionesToday,
+    todayDate,
     setCurrentView,
     refreshAll,
     showToast,
@@ -81,6 +84,26 @@ export const DashboardView: React.FC = () => {
 
   const zeroStockCount = products.filter((p) => p.stock === 0).length;
   const lowStockCount = products.filter((p) => p.stock > 0 && p.stock <= p.minStock).length;
+
+  const returnsToday = useMemo(() => {
+    return returns.filter((r) => r.date === todayDate);
+  }, [returns, todayDate]);
+
+  const damagedUnitsToday = useMemo(() => {
+    return returnsToday.reduce((acc, r) => {
+      const damaged = (r.items || [])
+        .filter((it) => it.condition === 'mal_estado')
+        .reduce((s, it) => s + (it.quantity || 1), 0);
+      return acc + damaged;
+    }, 0);
+  }, [returnsToday]);
+
+  const returnedUnitsToday = useMemo(() => {
+    return returnsToday.reduce((acc, r) => {
+      const qty = (r.items || []).reduce((s, it) => s + (it.quantity || 1), 0);
+      return acc + qty;
+    }, 0);
+  }, [returnsToday]);
 
   const formatCUP = (val: number) => {
     return Number(val).toLocaleString('es-CU', {
@@ -121,42 +144,70 @@ export const DashboardView: React.FC = () => {
     }));
   }, [ipvRows, products, ipvTotalVendido]);
 
-  // Distribución por categorías calculada a partir de los datos reales
+  // Distribución por categorías calculada estrictamente a partir de ventas reales
   const categoryDistribution = useMemo(() => {
-    const catMap = new Map<string, number>();
+    const catMap = new Map<string, { total: number; units: number }>();
 
-    // Si hay ventas, sumar los importes vendidos por categoría
-    if (ipvTotalVendido > 0) {
-      for (const row of ipvRows) {
+    // Mapeo rápido de categoría de producto por ID o código
+    const productCatMap = new Map<string, string>();
+    products.forEach((p) => {
+      if (p.category) {
+        productCatMap.set(p.id, p.category);
+        productCatMap.set(p.code, p.category);
+      }
+    });
+    ipvRows.forEach((r) => {
+      if (r.category) {
+        productCatMap.set(r.productId, r.category);
+        productCatMap.set(r.code, r.category);
+      }
+    });
+
+    let hasSales = false;
+
+    // 1. Acumular a partir de los tickets de venta (excluyendo ventas anuladas)
+    const activeSales = sales.filter((s) => !(s as any).voided);
+    if (activeSales.length > 0) {
+      activeSales.forEach((s) => {
+        (s.items || []).forEach((item) => {
+          const cat = productCatMap.get(item.productId) || productCatMap.get(item.code) || 'General';
+          const cur = catMap.get(cat) || { total: 0, units: 0 };
+          cur.total += item.subtotal || 0;
+          cur.units += item.quantity || 0;
+          catMap.set(cat, cur);
+          hasSales = true;
+        });
+      });
+    } else if (ipvTotalVendido > 0) {
+      // 2. Si no hay tickets detallados pero hay ventas registradas en IPV del día
+      ipvRows.forEach((row) => {
         if (row.vendido > 0) {
           const cat = row.category || 'General';
-          catMap.set(cat, (catMap.get(cat) || 0) + row.importe);
+          const cur = catMap.get(cat) || { total: 0, units: 0 };
+          cur.total += row.importe || 0;
+          cur.units += row.vendido || 0;
+          catMap.set(cat, cur);
+          hasSales = true;
         }
-      }
-    } else {
-      // Si no hay ventas todavía, distribuir por volumen de catálogo
-      for (const p of products) {
-        const cat = p.category || 'General';
-        catMap.set(cat, (catMap.get(cat) || 0) + p.stock * p.price);
-      }
+      });
     }
 
-    const totalSum = Array.from(catMap.values()).reduce((a, b) => a + b, 0) || 1;
-    const entries = Array.from(catMap.entries()).sort((a, b) => b[1] - a[1]);
-
-    if (entries.length === 0) {
-      return [
-        { category: 'General', total: 0, porcentaje: 100, color: '#6366f1' },
-      ];
+    if (!hasSales || catMap.size === 0) {
+      return [];
     }
 
-    return entries.slice(0, 5).map(([category, total], idx) => ({
+    // Ordenar de mayor a menor según las categorías que más se vendan
+    const entries = Array.from(catMap.entries()).sort((a, b) => b[1].total - a[1].total);
+    const totalSum = entries.reduce((acc, curr) => acc + curr[1].total, 0) || 1;
+
+    return entries.slice(0, 5).map(([category, data], idx) => ({
       category,
-      total,
-      porcentaje: Number(((total / totalSum) * 100).toFixed(1)),
+      total: data.total,
+      units: data.units,
+      porcentaje: Number(((data.total / totalSum) * 100).toFixed(1)),
       color: CATEGORY_COLORS[idx % CATEGORY_COLORS.length],
     }));
-  }, [ipvRows, products, ipvTotalVendido]);
+  }, [sales, ipvRows, products, ipvTotalVendido]);
 
   // Curva horaria calculada a partir de los tickets reales de hoy
   const hourlyData = useMemo<TrendDataPoint[]>(() => {
@@ -264,8 +315,8 @@ export const DashboardView: React.FC = () => {
         </div>
       </div>
 
-      {/* 3 Bento KPI Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+      {/* 4 Bento KPI Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {/* Metric 1: Total Recaudado */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative overflow-hidden group">
           <div className="flex items-start justify-between">
@@ -323,7 +374,7 @@ export const DashboardView: React.FC = () => {
           </div>
         </div>
 
-        {/* Metric 3: Inventario en Alerta */}
+        {/* Metric 3: Inventario en Alerta (Stock Crítico) */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
           <div className="flex items-start justify-between">
             <div className="flex flex-col gap-1">
@@ -352,6 +403,47 @@ export const DashboardView: React.FC = () => {
             </button>
             {zeroStockCount > 0 && (
               <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
+            )}
+          </div>
+        </div>
+
+        {/* Metric 4: Devoluciones del Día (al lado de Stock Crítico) */}
+        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
+          <div className="flex items-start justify-between">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
+                Devoluciones del Día
+              </span>
+              <div className="flex items-baseline gap-1.5 mt-0.5">
+                <span className="text-2xl font-headline font-bold text-amber-600 font-mono">
+                  ${formatCUP(totalDevolucionesToday)}
+                </span>
+                <span className="text-xs font-bold text-amber-600">CUP</span>
+              </div>
+            </div>
+            <div className="w-11 h-11 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-600">
+              <span className="material-symbols-outlined text-[22px]">assignment_return</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between mt-4 pt-3 text-xs">
+            <button
+              onClick={() => setCurrentView('devoluciones')}
+              className="text-amber-700 hover:text-amber-800 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
+              type="button"
+            >
+              <span>
+                {returnsToday.length} {returnsToday.length === 1 ? 'devolución' : 'devoluciones'} ({returnedUnitsToday} u.)
+              </span>
+              <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
+            </button>
+            {damagedUnitsToday > 0 ? (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-600 border border-red-500/20">
+                {damagedUnitsToday} merma
+              </span>
+            ) : (
+              <span className="text-[11px] text-on-surface-variant font-medium">
+                Descontado en caja
+              </span>
             )}
           </div>
         </div>
@@ -465,60 +557,74 @@ export const DashboardView: React.FC = () => {
             <span className="material-symbols-outlined text-primary text-[20px]">category</span>
           </div>
 
-          {/* Recharts Horizontal Bar Chart */}
-          <div className="w-full h-52">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={categoryDistribution}
-                layout="vertical"
-                margin={{ top: 5, right: 10, left: 15, bottom: 5 }}
-              >
-                <XAxis type="number" hide />
-                <YAxis
-                  dataKey="category"
-                  type="category"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: '#2e3040', fontSize: 11, fontWeight: 600 }}
-                  width={80}
-                />
-                <Tooltip
-                  formatter={(value) => [`$${formatCUP(Number(value) || 0)} CUP`, 'Total']}
-                  contentStyle={{
-                    backgroundColor: '#e8eaf0',
-                    borderRadius: '0.75rem',
-                    boxShadow: '4px 4px 10px rgba(0,0,0,0.08), -4px -4px 10px rgba(255,255,255,0.7)',
-                    border: 'none',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                  }}
-                />
-                <Bar dataKey="total" radius={[0, 8, 8, 0]}>
-                  {categoryDistribution.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Category detail list */}
-          <div className="flex flex-col gap-2 pt-2 border-t border-outline-variant/20">
-            {categoryDistribution.slice(0, 3).map((cat) => (
-              <div key={cat.category} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color }}></span>
-                  <span className="font-medium text-on-surface">{cat.category}</span>
-                </div>
-                <div className="flex items-center gap-2 font-mono">
-                  <span className="font-bold text-on-surface">${formatCUP(cat.total)}</span>
-                  <span className="text-[10px] text-on-surface-variant font-semibold">
-                    ({cat.porcentaje}%)
-                  </span>
-                </div>
+          {categoryDistribution.length === 0 ? (
+            <div className="h-56 flex flex-col items-center justify-center text-center p-4 gap-2.5 text-on-surface-variant">
+              <div className="w-12 h-12 rounded-2xl bg-surface neo-inset flex items-center justify-center text-primary/60">
+                <span className="material-symbols-outlined text-[26px]">pie_chart</span>
               </div>
-            ))}
-          </div>
+              <p className="text-xs font-semibold text-on-surface">Sin ventas por categoría aún</p>
+              <p className="text-[11px] text-on-surface-variant max-w-[240px] leading-relaxed">
+                Este gráfico se ordenará automáticamente según las categorías que más se vendan a medida que se registren operaciones.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Recharts Horizontal Bar Chart */}
+              <div className="w-full h-52">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={categoryDistribution}
+                    layout="vertical"
+                    margin={{ top: 5, right: 10, left: 15, bottom: 5 }}
+                  >
+                    <XAxis type="number" hide />
+                    <YAxis
+                      dataKey="category"
+                      type="category"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: '#2e3040', fontSize: 11, fontWeight: 600 }}
+                      width={80}
+                    />
+                    <Tooltip
+                      formatter={(value) => [`$${formatCUP(Number(value) || 0)} CUP`, 'Total']}
+                      contentStyle={{
+                        backgroundColor: '#e8eaf0',
+                        borderRadius: '0.75rem',
+                        boxShadow: '4px 4px 10px rgba(0,0,0,0.08), -4px -4px 10px rgba(255,255,255,0.7)',
+                        border: 'none',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                      }}
+                    />
+                    <Bar dataKey="total" radius={[0, 8, 8, 0]}>
+                      {categoryDistribution.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Category detail list */}
+              <div className="flex flex-col gap-2 pt-2 border-t border-outline-variant/20">
+                {categoryDistribution.slice(0, 3).map((cat) => (
+                  <div key={cat.category} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color }}></span>
+                      <span className="font-medium text-on-surface">{cat.category}</span>
+                    </div>
+                    <div className="flex items-center gap-2 font-mono">
+                      <span className="font-bold text-on-surface">${formatCUP(cat.total)}</span>
+                      <span className="text-[10px] text-on-surface-variant font-semibold">
+                        ({cat.porcentaje}%)
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
 

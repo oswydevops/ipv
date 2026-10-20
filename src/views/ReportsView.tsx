@@ -44,13 +44,14 @@ const WEEKS_DEF: { key: WeekKey; label: string; startDay: number; endDay: number
 ];
 
 export const ReportsView: React.FC = () => {
-  const { showToast, sales = [], ipvRows = [], products = [], todayDate } = useApp();
+  const { showToast, sales = [], returns = [], ipvRows = [], products = [], todayDate } = useApp();
 
   const [periodTab, setPeriodTab] = useState<'semanal' | 'mensual' | 'trimestral'>('semanal');
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
   const [isWeekDropdownOpen, setIsWeekDropdownOpen] = useState(false);
   const [filterSort, setFilterSort] = useState<'recaudacion' | 'volumen'>('recaudacion');
   const [page, setPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Fecha de referencia actual
   const refDate = useMemo(() => {
@@ -82,10 +83,10 @@ export const ReportsView: React.FC = () => {
       });
     }
 
-    // Agregar cualquier otro mes de ventas históricas
-    sales.forEach((s) => {
-      if (s.date && s.date.length >= 7) {
-        const ym = s.date.slice(0, 7);
+    // Agregar otros meses con ventas o devoluciones históricas
+    [...sales, ...returns].forEach((record) => {
+      if (record.date && record.date.length >= 7) {
+        const ym = record.date.slice(0, 7);
         if (!monthsMap.has(ym)) {
           const parts = ym.split('-');
           const y = parseInt(parts[0], 10);
@@ -104,7 +105,7 @@ export const ReportsView: React.FC = () => {
     });
 
     return Array.from(monthsMap.values()).sort((a, b) => b.key.localeCompare(a.key));
-  }, [refDate, sales]);
+  }, [refDate, sales, returns]);
 
   const defaultMonthKey = availableMonths[0]?.key || `${refDate.getFullYear()}-${String(refDate.getMonth() + 1).padStart(2, '0')}`;
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(defaultMonthKey);
@@ -153,6 +154,36 @@ export const ReportsView: React.FC = () => {
       return dayNum >= weekStartDay && dayNum <= weekEndDay;
     });
   }, [sales, periodTab, availableMonths, currentMonthOption.key, weekStartDay, weekEndDay]);
+
+  const periodFilteredReturns = useMemo(() => {
+    if (periodTab === 'trimestral') {
+      const allowedKeys = new Set(availableMonths.slice(0, 3).map((month) => month.key));
+      return returns.filter((record) => record.date && allowedKeys.has(record.date.slice(0, 7)));
+    }
+    if (periodTab === 'mensual') {
+      return returns.filter((record) => record.date?.startsWith(currentMonthOption.key));
+    }
+    return returns.filter((record) => {
+      if (!record.date?.startsWith(currentMonthOption.key)) return false;
+      const day = Number(record.date.split('-')[2]);
+      return day >= weekStartDay && day <= weekEndDay;
+    });
+  }, [returns, periodTab, availableMonths, currentMonthOption.key, weekStartDay, weekEndDay]);
+
+  const periodReturnTotals = useMemo(() => {
+    const byMethod = periodFilteredReturns.reduce(
+      (totals, record) => {
+        totals[record.refundMethod] += Number(record.totalRefund || 0);
+        return totals;
+      },
+      { efectivo: 0, transferencia: 0, mixto: 0 }
+    );
+    return {
+      count: periodFilteredReturns.length,
+      total: byMethod.efectivo + byMethod.transferencia + byMethod.mixto,
+      ...byMethod,
+    };
+  }, [periodFilteredReturns]);
 
   // Si no hay ventas registradas en sales pero hay datos en el IPV del día actual, respaldar con el IPV
   const isCurrentSelectionToday = currentMonthOption.key === defaultMonthKey;
@@ -552,40 +583,66 @@ export const ReportsView: React.FC = () => {
   const startIdx = sortedProducts.length === 0 ? 0 : (validPage - 1) * pageSize + 1;
   const endIdx = Math.min(validPage * pageSize, sortedProducts.length);
 
-  // Exportar datos reales a archivo descargable
-  const handleExport = () => {
+  // Exportar productos y devoluciones del periodo a un libro de Excel
+  const handleExport = async () => {
     const filename =
       periodTab === 'trimestral'
-        ? `Reporte_Ventas_Trimestral_${currentMonthOption.year}.csv`
+        ? `Reporte_IPV_Trimestral_${currentMonthOption.year}.xlsx`
         : periodTab === 'mensual'
-        ? `Reporte_Ventas_${currentMonthOption.name.replace(' ', '_')}.csv`
-        : `Reporte_Ventas_${currentMonthOption.name.replace(' ', '_')}_${selectedWeekKey.toUpperCase()}.csv`;
+        ? `Reporte_IPV_${currentMonthOption.key}.xlsx`
+        : `Reporte_IPV_${currentMonthOption.key}_${selectedWeekKey.toUpperCase()}.xlsx`;
+    const periodLabel = periodTab === 'trimestral'
+      ? `Trimestre hasta ${currentMonthOption.name}`
+      : periodTab === 'mensual'
+      ? currentMonthOption.name
+      : `${selectedWeekDef.label} de ${currentMonthOption.name}`;
 
-    // Generar contenido CSV con datos reales
-    const headers = ['Rank', 'Codigo', 'Producto', 'Categoria', 'Unidades_Vendidas', 'Precio_Unitario_CUP', 'Total_Ingresos_CUP', 'Porcentaje'];
-    const rows = sortedProducts.map((p) => [
-      p.rank,
-      `"${p.code}"`,
-      `"${p.name.replace(/"/g, '""')}"`,
-      `"${p.category}"`,
-      p.soldUnits,
-      p.unitPrice.toFixed(2),
-      p.totalIncome.toFixed(2),
-      `${p.percentage}%`,
-    ]);
-
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    showToast('Exportación Completada', `Se ha descargado "${filename}" con los datos reales del periodo.`);
+    setIsExporting(true);
+    try {
+      if (!window.api?.reports?.exportarIpvExcel) {
+        throw new Error('La exportación IPV a Excel no está disponible en esta versión de la aplicación.');
+      }
+      const result = await window.api.reports.exportarIpvExcel({
+        date: `${currentMonthOption.key}-01`,
+        fileName: filename,
+        title: 'Reporte IPV y ventas',
+        period: periodLabel,
+        columns: [
+          { header: 'Posición', key: 'rank', width: 12 },
+          { header: 'Código', key: 'code', width: 16 },
+          { header: 'Producto', key: 'name', width: 32 },
+          { header: 'Categoría', key: 'category', width: 20 },
+          { header: 'Unidades vendidas', key: 'soldUnits', width: 20 },
+          { header: 'Precio unitario (CUP)', key: 'unitPrice', width: 22 },
+          { header: 'Ingresos (CUP)', key: 'totalIncome', width: 20 },
+          { header: 'Participación', key: 'percentage', width: 16 },
+        ],
+        rows: sortedProducts.map((product) => ({
+          rank: product.rank,
+          code: product.code,
+          name: product.name,
+          category: product.category,
+          soldUnits: product.soldUnits,
+          unitPrice: product.unitPrice,
+          totalIncome: product.totalIncome,
+          percentage: `${product.percentage}%`,
+        })),
+        metrics: [
+          { label: 'Ingresos del periodo (CUP)', value: periodTotalRevenue },
+          { label: 'Ventas registradas', value: periodFilteredSales.length },
+          { label: 'Devoluciones registradas', value: periodReturnTotals.count },
+        ],
+        returns: periodFilteredReturns,
+      });
+      if (!result.canceled) {
+        showToast('Reporte IPV exportado', result.excelPath, 'success');
+      }
+    } catch (error: any) {
+      console.error('Error al exportar reporte IPV:', error);
+      showToast('Error al exportar reporte', error?.message || 'No se pudo generar el archivo Excel.', 'error');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handlePeriodTabChange = (tab: 'semanal' | 'mensual' | 'trimestral') => {
@@ -790,22 +847,23 @@ export const ReportsView: React.FC = () => {
             </div>
           )}
 
-          {/* Export to Excel / CSV */}
+          {/* Export to Excel */}
           <button
             onClick={handleExport}
-            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700 active:neo-inset transition-all group cursor-pointer"
+            disabled={isExporting}
+            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700 active:neo-inset transition-all group cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             type="button"
           >
             <span className="material-symbols-outlined text-[19px] transition-transform group-hover:-translate-y-0.5">
-              table_view
+              {isExporting ? 'hourglass_top' : 'table_view'}
             </span>
-            <span>Exportar [.csv]</span>
+            <span>{isExporting ? 'Exportando...' : 'Exportar [.xlsx]'}</span>
           </button>
         </div>
       </div>
 
       {/* 4 Bento Metric Cards dynamically driven by period & real sales */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5">
         {/* Card 1: Total Ventas del Periodo */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative overflow-hidden group">
           <div className="flex items-start justify-between">
@@ -924,6 +982,35 @@ export const ReportsView: React.FC = () => {
               <span>Rentabilidad neta</span>
               <span className="font-semibold text-on-surface font-mono">{kpis.netProfit}</span>
             </div>
+          </div>
+        </div>
+
+        {/* Card 5: Devoluciones del periodo */}
+        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
+          <div className="flex items-start justify-between">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
+                Devoluciones del periodo
+              </span>
+              <div className="flex items-baseline gap-1.5 mt-0.5">
+                <span className="text-2xl font-headline font-bold text-amber-700 tracking-tight font-mono">
+                  {periodReturnTotals.total.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-xs font-semibold text-amber-700 font-mono">CUP</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-600">
+              <span className="material-symbols-outlined text-[22px]">assignment_return</span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1 mt-4 pt-3 border-t border-outline-variant/15 text-[10px] text-on-surface-variant">
+            <span>{periodReturnTotals.count} devoluciones registradas</span>
+            <span>
+              Efectivo {periodReturnTotals.efectivo.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Transferencia {periodReturnTotals.transferencia.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span>
+              Mixto {periodReturnTotals.mixto.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
           </div>
         </div>
       </div>

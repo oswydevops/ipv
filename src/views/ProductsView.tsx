@@ -2,6 +2,49 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Product } from '../types';
 
+const PRODUCT_CATEGORIES = [
+  'Herramientas manuales',
+  'Herramientas eléctricas',
+  'Tornillería y fijaciones',
+  'Electricidad e iluminación',
+  'Plomería y gasfitería',
+  'Pinturas y accesorios',
+  'Adhesivos y selladores',
+  'Cerrajería y herrajes',
+  'Construcción y obra',
+  'Jardinería y exteriores',
+  'Seguridad y protección (EPIs)',
+] as const;
+
+const getCategoryBadgeClass = (category: string) => {
+  switch (category) {
+    case 'Herramientas manuales':
+      return 'bg-amber-100 text-amber-800';
+    case 'Herramientas eléctricas':
+      return 'bg-orange-100 text-orange-800';
+    case 'Tornillería y fijaciones':
+      return 'bg-indigo-100 text-indigo-700';
+    case 'Electricidad e iluminación':
+      return 'bg-yellow-100 text-yellow-800';
+    case 'Plomería y gasfitería':
+      return 'bg-blue-100 text-blue-700';
+    case 'Pinturas y accesorios':
+      return 'bg-emerald-100 text-emerald-800';
+    case 'Adhesivos y selladores':
+      return 'bg-violet-100 text-violet-700';
+    case 'Cerrajería y herrajes':
+      return 'bg-stone-100 text-stone-700';
+    case 'Construcción y obra':
+      return 'bg-red-100 text-red-700';
+    case 'Jardinería y exteriores':
+      return 'bg-green-100 text-green-700';
+    case 'Seguridad y protección (EPIs)':
+      return 'bg-cyan-100 text-cyan-700';
+    default:
+      return 'bg-surface-container-high text-on-surface';
+  }
+};
+
 export const ProductsView: React.FC = () => {
   const {
     products,
@@ -24,21 +67,23 @@ export const ProductsView: React.FC = () => {
   // New product form state
   const [newCode, setNewCode] = useState('');
   const [newName, setNewName] = useState('');
-  const [newCategory, setNewCategory] = useState('Plomería');
+  const [newCategory, setNewCategory] = useState<string>(PRODUCT_CATEGORIES[0]);
   const [newUM, setNewUM] = useState('Unidad');
   const [newPrice, setNewPrice] = useState<number>(0);
   const [newStock, setNewStock] = useState<number>(10);
   const [newMinStock, setNewMinStock] = useState<number>(5);
+  const [newAlmacenStock, setNewAlmacenStock] = useState<number>(0);
   const [newLocation, setNewLocation] = useState('Almacén Central');
 
   // Edit product form state
   const [editCode, setEditCode] = useState('');
   const [editName, setEditName] = useState('');
-  const [editCategory, setEditCategory] = useState('Plomería');
+  const [editCategory, setEditCategory] = useState<string>(PRODUCT_CATEGORIES[0]);
   const [editUM, setEditUM] = useState('Unidad');
   const [editPrice, setEditPrice] = useState<number>(0);
   const [editStock, setEditStock] = useState<number>(0);
   const [editMinStock, setEditMinStock] = useState<number>(0);
+  const [editAlmacenStock, setEditAlmacenStock] = useState<number>(0);
   const [editLocation, setEditLocation] = useState('');
 
   const zeroCount = products.filter((p) => p.stock === 0).length;
@@ -81,11 +126,12 @@ export const ProductsView: React.FC = () => {
     const autoCode = generateNextProductCode(products);
     setNewCode(autoCode);
     setNewName('');
-    setNewCategory('Plomería');
+    setNewCategory(PRODUCT_CATEGORIES[0]);
     setNewUM('Unidad');
     setNewPrice(0);
     setNewStock(10);
     setNewMinStock(5);
+    setNewAlmacenStock(0);
     setNewLocation('Almacén Central');
     setIsNewModalOpen(true);
   };
@@ -114,6 +160,7 @@ export const ProductsView: React.FC = () => {
       price: Number(newPrice) || 0,
       stock: Number(newStock) || 0,
       minStock: Number(newMinStock) || 0,
+      almacenStock: Number(newAlmacenStock) || 0,
       status,
       rotation: 'Normal (15 u)',
       location: newLocation.trim() || 'Almacén Central',
@@ -135,6 +182,7 @@ export const ProductsView: React.FC = () => {
     setEditPrice(product.price);
     setEditStock(product.stock);
     setEditMinStock(product.minStock);
+    setEditAlmacenStock(product.almacenStock || 0);
     setEditLocation(product.location || 'Almacén Central');
   };
 
@@ -156,6 +204,7 @@ export const ProductsView: React.FC = () => {
       price: Number(editPrice) || 0,
       stock: stockNum,
       minStock: minStockNum,
+      almacenStock: Number(editAlmacenStock) || 0,
       status: newStatus,
       location: editLocation.trim(),
     });
@@ -285,7 +334,7 @@ export const ProductsView: React.FC = () => {
                     <th className="py-3 px-3 text-center">U/M</th>
                     <th className="py-3 px-4 text-right">Precio CUP</th>
                     <th className="py-3 px-4 text-center">Stock</th>
-                    <th className="py-3 px-3 text-center">Mínimo</th>
+                    <th className="py-3 px-3 text-center">Almacén</th>
                     <th className="py-3 px-4 text-center">Acciones</th>
                   </tr>
                 </thead>
@@ -319,17 +368,7 @@ export const ProductsView: React.FC = () => {
                         </td>
                         <td className="py-3 px-3">
                           <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${
-                              p.category === 'Plomería'
-                                ? 'bg-blue-100 text-blue-700'
-                                : p.category === 'Electricidad'
-                                ? 'bg-amber-100 text-amber-800'
-                                : p.category === 'Tornillería'
-                                ? 'bg-indigo-100 text-indigo-700'
-                                : p.category === 'Pinturas'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-surface-container-high text-on-surface'
-                            }`}
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${getCategoryBadgeClass(p.category)}`}
                           >
                             {p.category}
                           </span>
@@ -357,8 +396,16 @@ export const ProductsView: React.FC = () => {
                             </span>
                           )}
                         </td>
-                        <td className="py-3 px-3 text-center font-mono text-on-surface-variant">
-                          {p.minStock}
+                        <td className="py-3 px-3 text-center font-mono">
+                          <span
+                            className={`px-2 py-0.5 rounded-lg text-xs font-bold ${
+                              (p.almacenStock || 0) > 0
+                                ? 'bg-blue-50 text-blue-700'
+                                : 'text-on-surface-variant opacity-60 bg-surface neo-inset'
+                            }`}
+                          >
+                            {p.almacenStock || 0}
+                          </span>
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex items-center justify-center gap-2">
@@ -528,15 +575,15 @@ export const ProductsView: React.FC = () => {
                 </div>
 
                 <div className="p-3 rounded-xl bg-surface neo-inset flex flex-col">
-                  <span className="text-[10px] text-on-surface-variant uppercase font-medium">Umbral Mínimo</span>
-                  <span className="text-base font-headline font-bold text-on-surface font-mono">
-                    {selectedProduct.minStock} {selectedProduct.um}s
+                  <span className="text-[10px] text-on-surface-variant uppercase font-medium">En Almacén</span>
+                  <span className="text-base font-headline font-bold text-primary font-mono">
+                    {selectedProduct.almacenStock || 0} {selectedProduct.um}s
                   </span>
                 </div>
 
                 <div className="p-3 rounded-xl bg-surface neo-inset flex flex-col">
                   <span className="text-[10px] text-on-surface-variant uppercase font-medium">Rotación (30d)</span>
-                  <span className="text-base font-headline font-bold text-primary font-mono">
+                  <span className="text-base font-headline font-bold text-on-surface font-mono">
                     {selectedProduct.rotation || 'Normal (25 u)'}
                   </span>
                 </div>
@@ -635,11 +682,11 @@ export const ProductsView: React.FC = () => {
                     onChange={(e) => setNewCategory(e.target.value)}
                     className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
                   >
-                    <option>Plomería</option>
-                    <option>Electricidad</option>
-                    <option>Tornillería</option>
-                    <option>Pinturas</option>
-                    <option>Herramientas</option>
+                    {PRODUCT_CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -693,29 +740,37 @@ export const ProductsView: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Stock Inicial</label>
+                <label className="font-semibold text-on-surface">Stock Inicial (Mostrador)</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
                     type="number"
                     min="0"
                     value={newStock}
                     onChange={(e) => setNewStock(parseInt(e.target.value) || 0)}
+                    placeholder="En mostrador"
                     className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
                 </div>
+                <span className="text-[10px] text-on-surface-variant">
+                  Existencias que tendrá en ese momento en mostrador
+                </span>
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Umbral Stock Mínimo</label>
+                <label className="font-semibold text-on-surface">Almacén</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
                     type="number"
                     min="0"
-                    value={newMinStock}
-                    onChange={(e) => setNewMinStock(parseInt(e.target.value) || 0)}
+                    value={newAlmacenStock}
+                    onChange={(e) => setNewAlmacenStock(parseInt(e.target.value) || 0)}
+                    placeholder="Resto en almacén"
                     className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
                 </div>
+                <span className="text-[10px] text-on-surface-variant">
+                  Resto que aún no ha sacado al mostrador
+                </span>
               </div>
 
               <div className="col-span-2 flex flex-col gap-1.5">
@@ -796,11 +851,11 @@ export const ProductsView: React.FC = () => {
                     onChange={(e) => setEditCategory(e.target.value)}
                     className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer"
                   >
-                    <option>Plomería</option>
-                    <option>Electricidad</option>
-                    <option>Tornillería</option>
-                    <option>Pinturas</option>
-                    <option>Herramientas</option>
+                    {PRODUCT_CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -852,7 +907,7 @@ export const ProductsView: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Existencia Actual</label>
+                <label className="font-semibold text-on-surface">Mostrador</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
                     type="number"
@@ -865,13 +920,13 @@ export const ProductsView: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Umbral Stock Mínimo</label>
+                <label className="font-semibold text-on-surface">Almacén</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
                     type="number"
                     min="0"
-                    value={editMinStock}
-                    onChange={(e) => setEditMinStock(parseInt(e.target.value) || 0)}
+                    value={editAlmacenStock}
+                    onChange={(e) => setEditAlmacenStock(parseInt(e.target.value) || 0)}
                     className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
                 </div>
