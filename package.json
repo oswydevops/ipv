@@ -11,22 +11,32 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:db": "npm run prepare:sqlite && node scripts/test-db.cjs",
     "test:trial": "node electron/trial.test.cjs",
+    "test:reports": "node src/main/reports/reports.test.cjs",
     "app": "npm run build && npm run prepare:sqlite && electron .",
     "app:dev": "npm run prepare:sqlite && electron .",
     "prepare:sqlite": "node scripts/prepare-sqlite.cjs",
-    "test:reports": "node src/main/reports/reports.test.cjs"
+    "dist": "npm run build && electron-builder --win nsis portable --x64"
   },
   "dependencies": {
-    "@fontsource/plus-jakarta-sans": "^5.3.0",
-    "@tailwindcss/vite": "^4.3.3",
-    "@vitejs/plugin-react": "^6.1.1",
-    "better-sqlite3": "^8.7.0",
+    "better-sqlite3": "8.7.0",
     "exceljs": "^4.4.0",
     "handlebars": "^4.7.10",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@fontsource/plus-jakarta-sans": "^5.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.4.21",
+    "electron": "22.3.27",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.28.0",
     "lucide-react": "^0.546.0",
     "material-symbols": "^0.48.0",
     "motion": "^12.23.24",
@@ -34,18 +44,9 @@
     "react-dom": "^19.0.1",
     "react-is": "^19.3.0",
     "recharts": "^3.10.1",
-    "tweetnacl": "^1.0.3",
-    "vite": "^8.3.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "autoprefixer": "^10.4.21",
-    "electron": "22.3.27",
-    "esbuild": "^0.28.0",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
   },
   "build": {
     "appId": "com.ferrestock.ipv",
@@ -55,17 +56,14 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "!electron/*.test.cjs",
       "src/main/**/*",
+      "!src/main/**/*.test.cjs",
       "templates/**/*",
       "package.json"
     ],
     "asarUnpack": ["**/node_modules/better-sqlite3/**"],
-    "extraResources": [
-      {
-        "from": "templates",
-        "to": "templates"
-      }
-    ],
+    "extraResources": [{ "from": "templates", "to": "templates" }],
     "win": {
       "target": ["nsis", "portable"],
       "icon": "assets/icono.png"

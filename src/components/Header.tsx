@@ -235,8 +235,20 @@ export const Header: React.FC = () => {
           <div className="flex items-center gap-2">
             {/* Business / Terminal Name */}
             <div className="h-8 px-3 rounded-full bg-surface neo-raised flex items-center gap-1.5 text-xs font-semibold text-on-surface">
-              <span className="material-symbols-outlined text-[16px] text-primary">storefront</span>
-              <span>{licenseBadgeText}</span>
+              {isAppActivated ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
+              ) : isTrialActive ? (
+                <span className="material-symbols-outlined text-[16px] text-amber-500" aria-hidden="true">
+                  hourglass_top
+                </span>
+              ) : (
+                <span className="material-symbols-outlined text-[16px] text-primary" aria-hidden="true">
+                  storefront
+                </span>
+              )}
+              <span className={isAppActivated ? 'text-emerald-600' : isTrialActive ? 'text-amber-600' : ''}>
+                {licenseBadgeText}
+              </span>
             </div>
 
             {/* Date */}

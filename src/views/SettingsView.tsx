@@ -1258,7 +1258,7 @@ export const SettingsView: React.FC = () => {
                 className="w-full h-11 px-5 rounded-xl bg-rose-600 text-white hover:bg-rose-700 active:scale-95 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md shadow-rose-600/25"
               >
                 <span className="material-symbols-outlined text-[18px]">delete_forever</span>
-                <span>Restablecer y Reiniciar la App a Cero</span>
+                <span>Restablecer y Reiniciar a Cero</span>
               </button>
             </div>
           </div>
@@ -1294,7 +1294,7 @@ export const SettingsView: React.FC = () => {
                       }`}
                     >
                       {isAppActivated
-                        ? 'Copia Activada y Válida'
+                        ? 'Licencia válida'
                         : licenseStatus === 'expired'
                           ? 'Licencia vencida · Solo lectura'
                           : licenseStatus === 'clock_rollback'
@@ -1462,7 +1462,7 @@ export const SettingsView: React.FC = () => {
                   }`}
                 >
                   <span className="material-symbols-outlined text-[18px]">verified</span>
-                  <span>Validar y Aplicar Licencia</span>
+                  <span>Validar Licencia</span>
                 </button>
               </form>
 
