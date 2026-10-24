@@ -9,7 +9,7 @@ const sqliteDirectory = path.dirname(require.resolve('better-sqlite3/package.jso
 const prebuildInstall = require.resolve('prebuild-install/bin.js');
 
 function canLoadSqlite() {
-  const result = spawnSync(electronPath, ['-e', "require('better-sqlite3')"], {
+  const result = spawnSync(electronPath, ['-e', "const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.close();"], {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     stdio: 'ignore',
   });

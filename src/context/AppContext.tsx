@@ -1,6 +1,11 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
-import { ViewType, Product, IPVRow, Denomination, BackupRecord, SaleRecord, SaleItem, ReturnRecord, ReturnItem } from '../types';
-import { IpvDay, IpvDayRow, SaleInput, DayClose } from '../data/api';
+import { ViewType, Product, IPVRow, Denomination, BackupRecord, SaleRecord, SaleItem, ReturnRecord, ReturnItem, MermaItem } from '../types';
+import { IpvDay, IpvDayRow, SaleInput, DayClose, LicenseStatus } from '../data/api';
+import {
+  ACTIVATION_CODE_LENGTH,
+  formatActivationCode,
+  normalizeActivationCode,
+} from '../utils/activation';
 
 export const INITIAL_DENOMINATIONS: Denomination[] = [
   { id: 'd-20000', label: '$20,000 CUP', sublabel: 'Billete 20 Mil', badge: '', value: 20000, count: 0 },
@@ -26,6 +31,13 @@ export const ERROR_MESSAGES_ES: Record<string, string> = {
   BAD_DATE: 'Formato de fecha inválido. Se espera AAAA-MM-DD.',
   BAD_BACKUP: 'El archivo de respaldo está dañado o no tiene un formato válido.',
   INTERNAL: 'Error interno en la base de datos SQLite.',
+  INVALID_SIGNATURE: 'La firma del código es inválida.',
+  INSTALLATION_MISMATCH: 'El código pertenece a un ID de instalación distinto.',
+  LICENSE_EXPIRED: 'La licencia venció. La aplicación está en modo de solo lectura.',
+  LICENSE_ALREADY_USED: 'El código ya fue usado o no renueva la licencia actual.',
+  CLOCK_ROLLBACK: 'La fecha actual es anterior a la última fecha registrada. Corrija la hora del sistema.',
+  LICENSE_REQUIRED: 'Se necesita una licencia válida para realizar esta acción.',
+  INVALID_CODE: 'El código firmado tiene una versión o contenido no válido.',
 };
 
 export const getFriendlyErrorMessage = (err: any): string => {
@@ -134,6 +146,7 @@ interface AppContextType {
   backupRecords: BackupRecord[];
   addBackupRecord: (rec: Omit<BackupRecord, 'id'>) => void;
   restoreBackup: (backupData: any) => Promise<boolean>;
+  resetApplication: (password: string) => Promise<boolean>;
 
   // Ventas y Devoluciones
   sales: SaleRecord[];
@@ -144,12 +157,39 @@ interface AppContextType {
   returns: ReturnRecord[];
   addReturn: (returnData: any) => Promise<boolean>;
   totalDevolucionesToday: number;
+  totalDevolucionesEfectivoToday: number;
+  totalDevolucionesTransferenciaToday: number;
+  mermaItems: MermaItem[];
+  reincorporarMermaItem: (mermaId: string, newPrice: number, note?: string) => Promise<boolean>;
+  darDeBajaMermaItem: (mermaId: string, note?: string) => Promise<boolean>;
   isSaleModalOpen: boolean;
   setIsSaleModalOpen: (open: boolean) => void;
   preselectedProductForSale: Product | null;
   setPreselectedProductForSale: (p: Product | null) => void;
   openSaleModal: (productOrRow?: Product | IPVRow | null) => void;
   closeSaleModal: () => void;
+
+  // Licencia y Activación
+  isAppActivated: boolean;
+  isTrialActive: boolean;
+  trialDaysRemaining: number;
+  hasAppAccess: boolean;
+  licenseStatus: LicenseStatus['status'];
+  licenseReadOnly: boolean;
+  licenseExpiryDate: string;
+  licenseDaysRemaining: number;
+  licenseType: string;
+  installationId: string;
+  activationKey: string;
+  activatedAt: string;
+  activateApp: (code: string) => Promise<{ success: boolean; message: string }>;
+  settingsTab: 'reportes' | 'respaldos' | 'seguridad' | 'licencia';
+  setSettingsTab: (tab: 'reportes' | 'respaldos' | 'seguridad' | 'licencia') => void;
+  navigateToActivation: () => void;
+
+  // Seguridad y Contraseña de Reinicio
+  resetPasswordKey: string;
+  updateResetPassword: (currentPass: string, newPass: string) => { success: boolean; message: string };
 
   // UI Toast y recargas
   toast: ToastData | null;
@@ -181,6 +221,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [returns, setReturns] = useState<ReturnRecord[]>([]);
+  const [mermaItems, setMermaItems] = useState<MermaItem[]>(() => {
+    try {
+      const raw = localStorage.getItem('ipv_mermas_v2');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // Caja y Denominaciones
   const [denominations, setDenominations] = useState<Denomination[]>(INITIAL_DENOMINATIONS);
@@ -191,6 +239,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [backupRecords, setBackupRecords] = useState<BackupRecord[]>([]);
   const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
   const [preselectedProductForSale, setPreselectedProductForSale] = useState<Product | null>(null);
+
+  // Licencia y Activación
+  const [installationId, setInstallationId] = useState<string>('');
+  const [isAppActivated, setIsAppActivated] = useState<boolean>(false);
+  const [isTrialActive, setIsTrialActive] = useState<boolean>(false);
+  const [trialDaysRemaining, setTrialDaysRemaining] = useState<number>(0);
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatus['status']>('none');
+  const [licenseHasRecord, setLicenseHasRecord] = useState<boolean>(false);
+  const [licenseExpiryDate, setLicenseExpiryDate] = useState<string>('');
+  const [licenseDaysRemaining, setLicenseDaysRemaining] = useState<number>(0);
+  const [licenseType, setLicenseType] = useState<string>('');
+  const [activationKey, setActivationKey] = useState<string>('');
+  const [activatedAt, setActivatedAt] = useState<string>('');
+  const [settingsTab, setSettingsTab] = useState<'reportes' | 'respaldos' | 'seguridad' | 'licencia'>('reportes');
+
+  // Seguridad y Contraseña de Reinicio
+  const [resetPasswordKey, setResetPasswordKey] = useState<string>(() => {
+    return localStorage.getItem('ferrestock_reset_password') || 'adminreset';
+  });
+
   const [toast, setToast] = useState<ToastData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -199,6 +267,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTimeout(() => {
       setToast(null);
     }, 4500);
+  }, []);
+
+  const applyLicenseStatus = useCallback((status: LicenseStatus) => {
+    setLicenseStatus(status.status);
+    setLicenseHasRecord(status.hasLicense);
+    setInstallationId(status.installationId);
+    setIsAppActivated(status.status === 'valid');
+    setLicenseExpiryDate(status.expiryDate || '');
+    setLicenseDaysRemaining(status.daysRemaining);
+    setLicenseType(status.licenseType || '');
+    setActivationKey(status.activationCode ? formatActivationCode(status.activationCode) : '');
+    setActivatedAt(status.issueDate || '');
   }, []);
 
   const hideToast = useCallback(() => {
@@ -286,6 +366,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (raw) setReturns(JSON.parse(raw));
         } catch {}
       }
+
+      if (window.api && (window.api as any).mermas) {
+        try {
+          const loadedMermas = await (window.api as any).mermas.list();
+          setMermaItems(loadedMermas || []);
+        } catch {
+          // fallback
+        }
+      } else {
+        try {
+          const rawM = localStorage.getItem('ipv_mermas_v2');
+          if (rawM) setMermaItems(JSON.parse(rawM));
+        } catch {}
+      }
     } catch (err: any) {
       console.error('Error al sincronizar con SQLite:', err);
       showToast('Error de Base de Datos', getFriendlyErrorMessage(err), 'error');
@@ -298,6 +392,100 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkAccess = async () => {
+      if (!window.api?.license) {
+        setIsAppActivated(false);
+        setLicenseHasRecord(false);
+        setIsTrialActive(false);
+        setTrialDaysRemaining(0);
+        setLicenseStatus('none');
+        return;
+      }
+
+      try {
+        const trial = await window.api.license.trialStatus();
+        if (cancelled) return;
+        setIsTrialActive(trial.isActive);
+        setTrialDaysRemaining(trial.daysRemaining);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        console.error('Error al comprobar el período de prueba:', error);
+        setIsTrialActive(false);
+        setTrialDaysRemaining(0);
+        showToast('No se pudo comprobar la prueba', getFriendlyErrorMessage(error), 'error');
+      }
+
+      try {
+        const license = await window.api.license.status();
+        if (cancelled) return;
+        applyLicenseStatus(license);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        console.error('Error al verificar la licencia guardada:', error);
+        setIsAppActivated(false);
+        showToast('No se pudo verificar la licencia', getFriendlyErrorMessage(error), 'error');
+      }
+    };
+
+    void checkAccess();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyLicenseStatus, showToast]);
+
+  useEffect(() => {
+    const licenseApi = window.api?.license;
+    if (!licenseApi) return;
+
+    let cancelled = false;
+    let hasReportedRefreshError = false;
+    const refreshTrialStatus = async () => {
+      try {
+        const trial = await licenseApi.trialStatus();
+        if (cancelled) return;
+        setIsTrialActive(trial.isActive);
+        setTrialDaysRemaining(trial.daysRemaining);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        console.error('Error al actualizar el período de prueba:', error);
+        setIsTrialActive(false);
+        setTrialDaysRemaining(0);
+        if (!hasReportedRefreshError) {
+          hasReportedRefreshError = true;
+          showToast('No se pudo comprobar la prueba', getFriendlyErrorMessage(error), 'error');
+        }
+      }
+      try {
+        const status = await licenseApi.status();
+        if (cancelled) return;
+        hasReportedRefreshError = false;
+        applyLicenseStatus(status);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        console.error('Error al actualizar el estado de la licencia:', error);
+        if (!hasReportedRefreshError) {
+          hasReportedRefreshError = true;
+          showToast('No se pudo comprobar la licencia', getFriendlyErrorMessage(error), 'error');
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void refreshTrialStatus();
+    }, 60_000);
+    window.addEventListener('focus', refreshTrialStatus);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refreshTrialStatus);
+    };
+  }, [applyLicenseStatus, showToast]);
 
   // Cuando cambia la fecha del IPV seleccionada, recargar datos para esa fecha
   useEffect(() => {
@@ -610,6 +798,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .reduce((acc, r) => acc + (r.totalRefund || 0), 0);
   }, [returns, todayDate]);
 
+  const totalDevolucionesEfectivoToday = useMemo(() => {
+    return returns
+      .filter((r) => r.date === todayDate)
+      .reduce((acc, r) => {
+        if (r.refundMethod === 'efectivo' || !r.refundMethod) {
+          return acc + (r.totalRefund || 0);
+        }
+        if (r.refundMethod === 'mixto') {
+          const ef = r.efectivoAmount !== undefined
+            ? r.efectivoAmount
+            : Math.max(0, (r.totalRefund || 0) - (r.transferenciaAmount || 0));
+          return acc + ef;
+        }
+        return acc;
+      }, 0);
+  }, [returns, todayDate]);
+
+  const totalDevolucionesTransferenciaToday = useMemo(() => {
+    return returns
+      .filter((r) => r.date === todayDate)
+      .reduce((acc, r) => {
+        if (r.refundMethod === 'transferencia') {
+          return acc + (r.totalRefund || 0);
+        }
+        if (r.refundMethod === 'mixto') {
+          const tr = r.transferenciaAmount !== undefined ? r.transferenciaAmount : 0;
+          return acc + tr;
+        }
+        return acc;
+      }, 0);
+  }, [returns, todayDate]);
+
   const addReturn = async (returnData: any): Promise<boolean> => {
     if (isCurrentDayClosed) {
       showToast('Día Cerrado', 'No se pueden registrar devoluciones porque la jornada ya fue cerrada.', 'error');
@@ -622,6 +842,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const today = todayDate || new Date().toISOString().slice(0, 10);
         const now = new Date();
         const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const totalRefund = Number(returnData.totalRefund) || 0;
+        const refundMethod = returnData.refundMethod || 'efectivo';
+
+        let transferenciaAmount = 0;
+        let efectivoAmount = 0;
+        if (refundMethod === 'efectivo') {
+          efectivoAmount = totalRefund;
+          transferenciaAmount = 0;
+        } else if (refundMethod === 'transferencia') {
+          efectivoAmount = 0;
+          transferenciaAmount = totalRefund;
+        } else if (refundMethod === 'mixto') {
+          transferenciaAmount = Math.min(totalRefund, Math.max(0, Number(returnData.transferenciaAmount) || 0));
+          efectivoAmount = Math.max(0, totalRefund - transferenciaAmount);
+        }
+
         const newRecord: ReturnRecord = {
           id: `dev-${Date.now()}`,
           returnNumber: `DEV-${String(returns.length + 1).padStart(3, '0')}`,
@@ -630,19 +866,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           date: today,
           timestamp: time,
           items: returnData.items || [],
-          totalRefund: Number(returnData.totalRefund) || 0,
-          refundMethod: returnData.refundMethod || 'efectivo',
+          totalRefund,
+          refundMethod,
+          efectivoAmount,
+          transferenciaAmount,
           customerName: returnData.customerName,
           reason: returnData.reason || 'Devolución de cliente',
           hasDamagedItems: (returnData.items || []).some((it: any) => it.condition === 'mal_estado'),
           createdAt: `${today} ${time}`,
         };
-        const updated = [newRecord, ...returns];
-        setReturns(updated);
+
+        const updatedReturns = [newRecord, ...returns];
+        setReturns(updatedReturns);
         try {
-          localStorage.setItem('ipv_returns_v2', JSON.stringify(updated));
+          localStorage.setItem('ipv_returns_v2', JSON.stringify(updatedReturns));
+        } catch {}
+
+        // Gestión de inventario y merma en fallback
+        let mermas = [...mermaItems];
+        const updatedProducts = [...products];
+
+        for (const it of (returnData.items || [])) {
+          if (it.condition === 'buen_estado') {
+            // Reintegrar al stock
+            const prod = updatedProducts.find((p) => p.id === it.productId || p.code === it.code);
+            if (prod) {
+              prod.stock += Number(it.quantity) || 0;
+              prod.status = prod.stock === 0 ? 'out' : prod.stock <= prod.minStock ? 'low' : 'ok';
+            }
+          } else if (it.condition === 'mal_estado') {
+            // Almacén de merma
+            mermas.push({
+              id: `merma-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              returnId: newRecord.id,
+              returnNumber: newRecord.returnNumber,
+              date: today,
+              productId: it.productId,
+              code: it.code,
+              name: it.name,
+              um: it.um,
+              quantity: Number(it.quantity) || 1,
+              originalUnitPrice: Number(it.unitPrice) || 0,
+              damagedReason: it.damagedReason || 'Mal estado / defecto',
+              status: 'en_almacen_merma',
+            });
+          }
+        }
+
+        setProducts(updatedProducts);
+        setMermaItems(mermas);
+        try {
+          localStorage.setItem('ipv_products_v2', JSON.stringify(updatedProducts));
+          localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
         } catch {}
       }
+
       await refreshAll();
       showToast(
         'Devolución Registrada',
@@ -656,8 +934,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const reincorporarMermaItem = async (mermaId: string, newPrice: number, note?: string): Promise<boolean> => {
+    try {
+      if (window.api && (window.api as any).mermas) {
+        await (window.api as any).mermas.reincorporar(mermaId, newPrice, note);
+      } else {
+        const raw = localStorage.getItem('ipv_mermas_v2');
+        let mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
+        const idx = mermas.findIndex((m) => m.id === mermaId);
+        if (idx === -1) throw new Error('Artículo de merma no encontrado');
+
+        mermas[idx].status = 'reincorporado_con_precio';
+        mermas[idx].discountedPrice = Number(newPrice);
+        mermas[idx].resolvedAt = todayDate;
+        mermas[idx].resolutionNote = note || `Reincorporado con precio: $${Number(newPrice).toFixed(2)}`;
+        setMermaItems([...mermas]);
+        try {
+          localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
+        } catch {}
+      }
+      await refreshAll();
+      showToast(
+        'Artículo Reincorporado',
+        `El artículo fue reintegrado al almacén listo para vender con el nuevo precio de $${Number(newPrice).toFixed(2)} CUP.`,
+        'success'
+      );
+      return true;
+    } catch (err: any) {
+      showToast('Error al reincorporar merma', err?.message || 'No se pudo procesar la reincorporación', 'error');
+      return false;
+    }
+  };
+
+  const darDeBajaMermaItem = async (mermaId: string, note?: string): Promise<boolean> => {
+    try {
+      if (window.api && (window.api as any).mermas) {
+        await (window.api as any).mermas.darDeBaja(mermaId, note);
+      } else {
+        const raw = localStorage.getItem('ipv_mermas_v2');
+        let mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
+        const idx = mermas.findIndex((m) => m.id === mermaId);
+        if (idx === -1) throw new Error('Artículo de merma no encontrado');
+
+        mermas[idx].status = 'baja_definitiva';
+        mermas[idx].resolvedAt = todayDate;
+        mermas[idx].resolutionNote = note || 'Baja definitiva por daño irreparable / inutilizable';
+        setMermaItems([...mermas]);
+        try {
+          localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
+        } catch {}
+      }
+      await refreshAll();
+      showToast('Baja Definitiva Registrada', 'El artículo ha sido dado de baja en el almacén de merma.', 'info');
+      return true;
+    } catch (err: any) {
+      showToast('Error al dar de baja', err?.message || 'No se pudo dar de baja el artículo', 'error');
+      return false;
+    }
+  };
+
   // Modales de venta
   const openSaleModal = (productOrRow?: Product | IPVRow | null) => {
+    if (licenseReadOnly) {
+      showToast(
+        'Operación bloqueada',
+        licenseStatus === 'clock_rollback'
+          ? 'Corrija la fecha y hora del sistema para volver a operar.'
+          : 'La licencia venció. Renueve la licencia para registrar ventas.',
+        'error'
+      );
+      return;
+    }
+    if (!isAppActivated && !isTrialActive) {
+      navigateToActivation();
+      showToast('Aplicación Sin Activar', 'Debe activar la aplicación con su código firmado para operar el punto de venta.', 'error');
+      return;
+    }
     if (isCurrentDayClosed) {
       showToast('Jornada Cerrada', 'El día está cerrado. Para realizar ventas debe reabrir la jornada en Cierre de Caja.', 'error');
       return;
@@ -703,6 +1055,101 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const resetApplication = async (password: string): Promise<boolean> => {
+    try {
+      setIsLoading(true);
+      await window.api.backup.resetApplication(password);
+      for (const key of [
+        'ipv_products_v2',
+        'ipv_sales_v2',
+        'ipv_closes_v2',
+        'ipv_returns_v2',
+        'ipv_mermas_v2',
+        'ipv_date_v2',
+        'ipv_fallback_products_v1',
+        'ipv_fallback_sales_v1',
+        'ipv_fallback_closes_v1',
+        'ipv_fallback_date_v1',
+        'ferrestock_products',
+        'ferrestock_sales',
+        'ferrestock_last_backup_info',
+        'ferrestock_backup_history',
+      ]) {
+        localStorage.removeItem(key);
+      }
+      setProducts([]);
+      setSales([]);
+      setReturns([]);
+      setMermaItems([]);
+      setCurrentIpvDay(null);
+      setIsCurrentDayClosed(false);
+      setBackupRecords([]);
+      setMenoresAmount(0);
+      setTransferenciasAmount(0);
+      setDenominations(INITIAL_DENOMINATIONS.map((d) => ({ ...d, count: 0 })));
+      setSelectedProductId(null);
+      setSelectedIpvDate(todayDate);
+      await refreshAll();
+      showToast(
+        'Aplicación Restablecida',
+        'Todos los datos han sido borrados. La aplicación ha comenzado desde cero.',
+        'success'
+      );
+      return true;
+    } catch (err: any) {
+      showToast('Error al restablecer', getFriendlyErrorMessage(err), 'error');
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Licencia y Activación
+  const activateApp = useCallback(async (code: string) => {
+    const clean = normalizeActivationCode(code);
+    if (!clean) {
+      return { success: false, message: 'Pegue el código de activación firmado.' };
+    }
+    if (clean.length < 100 || clean.length > ACTIVATION_CODE_LENGTH) {
+      return { success: false, message: 'El código debe contener entre 100 y 124 caracteres.' };
+    }
+
+    if (!window.api?.license) {
+      return { success: false, message: 'La verificación digital solo está disponible en la aplicación de escritorio.' };
+    }
+
+    try {
+      const status = await window.api.license.activate(clean);
+      applyLicenseStatus(status);
+      showToast('¡Aplicación Activada!', 'La licencia ha sido validada y guardada en la base de datos.', 'success');
+      return { success: true, message: 'Aplicación activada con éxito.' };
+    } catch (error: unknown) {
+      return { success: false, message: getFriendlyErrorMessage(error) };
+    }
+  }, [applyLicenseStatus, showToast]);
+
+  const navigateToActivation = useCallback(() => {
+    setCurrentView('configuracion');
+    setSettingsTab('licencia');
+  }, []);
+
+  const licenseReadOnly = licenseHasRecord && licenseStatus !== 'valid';
+  const hasAppAccess = isAppActivated || isTrialActive || licenseHasRecord;
+
+  const updateResetPassword = useCallback((currentPass: string, newPass: string) => {
+    const saved = localStorage.getItem('ferrestock_reset_password') || 'adminreset';
+    if (currentPass.trim() !== saved.trim()) {
+      return { success: false, message: 'La contraseña actual de reinicio no coincide.' };
+    }
+    if (newPass.trim().length < 4) {
+      return { success: false, message: 'La nueva contraseña debe tener al menos 4 caracteres.' };
+    }
+    localStorage.setItem('ferrestock_reset_password', newPass.trim());
+    setResetPasswordKey(newPass.trim());
+    showToast('Contraseña Actualizada', 'La contraseña de seguridad para restablecimiento ha sido modificada con éxito.', 'success');
+    return { success: true, message: 'Contraseña actualizada correctamente.' };
+  }, [showToast]);
+
   return (
     <AppContext.Provider
       value={{
@@ -743,6 +1190,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         backupRecords,
         addBackupRecord,
         restoreBackup,
+        resetApplication,
         sales,
         totalVentasEfectivo,
         totalVentasTransferencia,
@@ -751,6 +1199,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         returns,
         addReturn,
         totalDevolucionesToday,
+        totalDevolucionesEfectivoToday,
+        totalDevolucionesTransferenciaToday,
+        mermaItems,
+        reincorporarMermaItem,
+        darDeBajaMermaItem,
         isSaleModalOpen,
         setIsSaleModalOpen,
         preselectedProductForSale,
@@ -766,6 +1219,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         listCloses,
         refreshAll,
         isLoading,
+        isAppActivated,
+        isTrialActive,
+        trialDaysRemaining,
+        hasAppAccess,
+        licenseStatus,
+        licenseReadOnly,
+        licenseExpiryDate,
+        licenseDaysRemaining,
+        licenseType,
+        installationId,
+        activationKey,
+        activatedAt,
+        activateApp,
+        settingsTab,
+        setSettingsTab,
+        navigateToActivation,
+        resetPasswordKey,
+        updateResetPassword,
       }}
     >
       {children}

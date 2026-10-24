@@ -2,7 +2,7 @@
 const ExcelJS = require('exceljs');
 
 /**
- * Genera un libro de Excel (.xlsx) con el resumen, ventas y devoluciones del día.
+ * Genera un libro de Excel (.xlsx) con hojas 'Resumen' y 'Detalle' usando exceljs (sin gráficos).
  *
  * @param {object} resumenDia - Objeto retornado por getResumenDia
  * @param {string} outputPath - Ruta de destino para el archivo .xlsx
@@ -102,18 +102,19 @@ async function generarExcelCierre(resumenDia, outputPath) {
   h1.height = 24;
 
   const filasTotales = [
-    ['Total Facturado (IPV)', resumenDia.totales.totalVentas, 'Importe bruto facturado'],
-    ['Ventas cobradas en efectivo', resumenDia.totales.totalEfectivo, 'Efectivo recibido por ventas'],
-    ['Ventas cobradas por transferencia', resumenDia.totales.totalTransferencia, 'Transferencias recibidas por ventas'],
-    ['Devoluciones registradas', resumenDia.totales.totalDevolucionesRegistradas || 0, `${resumenDia.totales.cantidadDevolucionesRegistradas || 0} devoluciones`],
-    ['Ventas anuladas', resumenDia.totales.totalVentasAnuladas || 0, `${resumenDia.totales.cantidadVentasAnuladas || 0} tickets anulados`],
-    ['Total devuelto / anulado', resumenDia.totales.totalDevoluciones, 'Devoluciones registradas más ventas anuladas'],
+    ['Total Facturado (Ventas Brutas)', resumenDia.totales.totalVentas, 'Importe bruto facturado'],
+    ['Total devuelto / anulado', resumenDia.totales.totalDevoluciones, `${resumenDia.totales.cantidadDevoluciones} devoluciones o ventas anuladas`],
+    ['Ventas Netas Realizadas', resumenDia.totales.ventasNetas !== undefined ? resumenDia.totales.ventasNetas : (resumenDia.totales.totalVentas - resumenDia.totales.totalDevoluciones), 'Ingreso neto tras descontar reembolsos'],
+    ['Total Efectivo Ventas', resumenDia.totales.totalEfectivo, 'Pagos recibidos en efectivo'],
+    ['Devoluciones en Efectivo', resumenDia.totales.totalDevolucionesEfectivo || 0, 'Reembolsos descontados de gaveta'],
+    ['Total Transferencias Ventas', resumenDia.totales.totalTransferencia, 'EnZona / Transfermóvil'],
+    ['Devoluciones por Transferencia', resumenDia.totales.totalDevolucionesTransferencia || 0, 'Reembolsos canal digital'],
+    ['Devoluciones Mixtas', resumenDia.totales.totalDevolucionesMixto || 0, 'Reembolsos con método mixto'],
     ['Tickets de Venta Emitidos', resumenDia.totales.cantidadTickets, 'Operaciones registradas'],
     ['Artículos Totales Vendidos', resumenDia.totales.totalArticulosVendidos, 'Unidades despachadas'],
-    ['Efectivo contado en gaveta', resumenDia.totales.efectivoContado, 'Billetes/monedas más efectivo menor'],
-    ['Transferencias contadas', resumenDia.totales.transferenciaContada, 'Importe verificado de transferencias'],
-    ['Efectivo menor', resumenDia.totales.menoresAmount, 'Importe contado fuera de denominaciones'],
-    ['Total contado (efectivo + transferencia)', resumenDia.totales.totalContado, 'Total del arqueo'],
+    ['Efectivo contado en gaveta', resumenDia.totales.efectivoContado, 'Conteo de efectivo y monedas'],
+    ['Transferencias contadas', resumenDia.totales.transferenciaContada, 'Transferencias confirmadas en el cierre'],
+    ['Total contado en caja', resumenDia.totales.totalContado, 'Efectivo más transferencias'],
     ['Diferencia de Caja', resumenDia.totales.diferencia, resumenDia.totales.diferencia === 0 ? '✓ Cuadrado Exacto' : (resumenDia.totales.diferencia > 0 ? 'Sobrante en caja' : 'Faltante en caja')],
   ];
 
@@ -191,19 +192,6 @@ async function generarExcelCierre(resumenDia, outputPath) {
       }
       row.eachCell((c) => { c.border = thinBorder; });
     });
-
-    const subtotalDenominaciones = resumenDia.denominaciones.reduce(
-      (total, denomination) => total + Number(denomination.value || 0) * Number(denomination.count || 0),
-      0
-    );
-    const totalDenominaciones = wsResumen.addRow(['TOTAL BILLETES / MONEDAS', '', '', subtotalDenominaciones]);
-    totalDenominaciones.eachCell((cell) => {
-      cell.font = boldTextFont;
-      cell.fill = accentTotalFill;
-      cell.border = thinBorder;
-    });
-    totalDenominaciones.getCell(4).numFmt = '$#,##0.00';
-    totalDenominaciones.getCell(4).alignment = { horizontal: 'right' };
   }
 
   /* ------------------------------------------------------------- */
@@ -287,93 +275,123 @@ async function generarExcelCierre(resumenDia, outputPath) {
   }
 
   /* ------------------------------------------------------------- */
-  /* HOJA 3: DEVOLUCIONES Y ANULACIONES                            */
+  /* HOJA 3: DEVOLUCIONES DE LA JORNADA                            */
   /* ------------------------------------------------------------- */
-  const wsDevoluciones = workbook.addWorksheet('Devoluciones');
+  const wsDevoluciones = workbook.addWorksheet('Devoluciones', {
+    views: [{ showGridLines: true }],
+  });
+
   wsDevoluciones.columns = [
-    { header: 'TIPO', key: 'tipo', width: 22 },
-    { header: 'NÚMERO', key: 'numero', width: 18 },
+    { header: 'FOLIO DEVOLUCIÓN', key: 'folio', width: 18 },
     { header: 'HORA', key: 'hora', width: 12 },
+    { header: 'TICKET VENTA', key: 'ticket', width: 18 },
     { header: 'CLIENTE', key: 'cliente', width: 24 },
-    { header: 'MOTIVO', key: 'motivo', width: 32 },
-    { header: 'MÉTODO DE REEMBOLSO', key: 'metodo', width: 24 },
-    { header: 'PRODUCTO', key: 'producto', width: 32 },
-    { header: 'CÓDIGO', key: 'codigo', width: 16 },
-    { header: 'CANTIDAD', key: 'cantidad', width: 14 },
+    { header: 'MOTIVO DE DEVOLUCIÓN', key: 'motivo', width: 30 },
+    { header: 'MÉTODO DE REEMBOLSO', key: 'metodo', width: 22 },
+    { header: 'ARTÍCULOS Y CANTIDADES', key: 'articulos', width: 40 },
     { header: 'CONDICIÓN', key: 'condicion', width: 18 },
-    { header: 'REINTEGRADO A STOCK', key: 'reintegrado', width: 22 },
-    { header: 'IMPORTE (CUP)', key: 'importe', width: 20 },
+    { header: 'TOTAL REEMBOLSADO (CUP)', key: 'totalRefund', width: 24 },
   ];
-  const headerDevoluciones = wsDevoluciones.getRow(1);
-  headerDevoluciones.eachCell((cell) => {
-    cell.fill = darkNavyFill;
-    cell.font = whiteHeaderFont;
-    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-  });
-  headerDevoluciones.height = 30;
-  wsDevoluciones.views = [{ state: 'frozen', ySplit: 1 }];
-  wsDevoluciones.autoFilter = {
-    from: 'A1',
-    to: `L${Math.max(1, (resumenDia.devoluciones || []).length + (resumenDia.ventasAnuladas || []).length + 1)}`,
-  };
 
-  const metodoReembolso = {
-    efectivo: 'Efectivo',
-    transferencia: 'Transferencia',
-    mixto: 'Mixto',
-  };
-  (resumenDia.devoluciones || []).forEach((devolucion) => {
-    const items = devolucion.items?.length ? devolucion.items : [{}];
-    items.forEach((item, index) => {
+  const headerRowDevoluciones = wsDevoluciones.getRow(1);
+  headerRowDevoluciones.eachCell((c) => {
+    c.fill = darkNavyFill;
+    c.font = whiteHeaderFont;
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+  headerRowDevoluciones.height = 26;
+
+  const devolucionesList = resumenDia.devoluciones || [];
+  const ventasAnuladasList = resumenDia.ventasAnuladas || [];
+  if (devolucionesList.length === 0 && ventasAnuladasList.length === 0) {
+    const emptyRow = wsDevoluciones.addRow({
+      folio: 'SIN REGISTROS',
+      hora: '--:--',
+      ticket: 'N/A',
+      cliente: 'Sin cliente registrado',
+      motivo: 'No se procesaron devoluciones en esta jornada',
+      metodo: 'N/A',
+      articulos: 'Ningún artículo devuelto',
+      condicion: 'N/A',
+      totalRefund: 0,
+    });
+    emptyRow.eachCell((c) => {
+      c.font = regularTextFont;
+      c.border = thinBorder;
+    });
+  } else {
+    devolucionesList.forEach((d, idx) => {
+      const articulosStr = (d.items || [])
+        .map((it) => `${it.name} (x${it.quantity} ${it.um || 'u.'})`)
+        .join(', ');
+      const condicionStr = d.hasDamagedItems ? 'Con merma / Dañado' : 'Buen estado';
+
       const row = wsDevoluciones.addRow({
-        tipo: 'Devolución registrada',
-        numero: devolucion.numero,
-        hora: devolucion.hora,
-        cliente: devolucion.cliente,
-        motivo: item.motivoDano || devolucion.motivo,
-        metodo: metodoReembolso[devolucion.metodo] || devolucion.metodo,
-        producto: item.producto || '',
-        codigo: item.codigo || '',
-        cantidad: item.cantidad ?? '',
-        condicion: item.condicion || '',
-        reintegrado: item.reintegrado ? 'Sí' : 'No',
-        importe: item.importe ?? (index === 0 ? devolucion.importe : 0),
+        folio: d.returnNumber || 'DEV-N/A',
+        hora: d.hora || '--:--',
+        ticket: d.ticketNumber || 'Venta Directa',
+        cliente: d.customerName || 'Cliente general',
+        motivo: d.reason || 'Sin motivo especificado',
+        metodo: (d.refundMethod || 'efectivo').toUpperCase(),
+        articulos: articulosStr || 'Artículo devuelto',
+        condicion: condicionStr,
+        totalRefund: d.totalRefund,
       });
-      row.getCell(9).numFmt = '#,##0.00';
-      row.getCell(12).numFmt = '$#,##0.00';
-      row.getCell(12).alignment = { horizontal: 'right' };
-      row.eachCell((cell) => { cell.border = thinBorder; });
-      if (wsDevoluciones.rowCount % 2 === 0) {
-        row.eachCell((cell) => { cell.fill = lightZebraFill; });
+
+      row.getCell(1).alignment = { horizontal: 'center' };
+      row.getCell(2).alignment = { horizontal: 'center' };
+      row.getCell(3).alignment = { horizontal: 'center' };
+      row.getCell(6).alignment = { horizontal: 'center' };
+      row.getCell(8).alignment = { horizontal: 'center' };
+      row.getCell(9).numFmt = '$#,##0.00';
+      row.getCell(9).font = boldTextFont;
+      row.getCell(9).alignment = { horizontal: 'right' };
+
+      if (idx % 2 === 1) {
+        row.eachCell((c) => { c.fill = lightZebraFill; });
       }
+      row.eachCell((c) => { c.border = thinBorder; });
     });
-  });
 
-  (resumenDia.ventasAnuladas || []).forEach((anulacion) => {
-    const row = wsDevoluciones.addRow({
-      tipo: 'Venta anulada',
-      numero: anulacion.ticket,
-      hora: anulacion.hora,
+    ventasAnuladasList.forEach((sale, idx) => {
+      const row = wsDevoluciones.addRow({
+        folio: 'ANULADA',
+        hora: sale.hora || '--:--',
+        ticket: sale.ticketNumber || 'N/A',
+        cliente: 'N/A',
+        motivo: 'Venta anulada',
+        metodo: (sale.paymentMethod || 'N/A').toUpperCase(),
+        articulos: 'Venta completa anulada',
+        condicion: 'Anulada',
+        totalRefund: sale.total,
+      });
+      row.getCell(9).numFmt = '$#,##0.00';
+      row.getCell(9).alignment = { horizontal: 'right' };
+      if ((devolucionesList.length + idx) % 2 === 1) {
+        row.eachCell((c) => { c.fill = lightZebraFill; });
+      }
+      row.eachCell((c) => { c.border = thinBorder; });
+    });
+
+    const totalDevRow = wsDevoluciones.addRow({
+      folio: 'TOTAL',
+      hora: '',
+      ticket: '',
       cliente: '',
-      motivo: 'Anulación de ticket',
-      metodo: metodoReembolso[anulacion.metodo] || anulacion.metodo,
-      producto: '',
-      codigo: '',
-      cantidad: '',
+      motivo: 'TOTAL DEVUELTO / ANULADO DE LA JORNADA',
+      metodo: '',
+      articulos: `${resumenDia.totales.totalUnidadesDevueltas || 0} unidades devueltas`,
       condicion: '',
-      reintegrado: '',
-      importe: anulacion.importe,
+      totalRefund: resumenDia.totales.totalDevoluciones,
     });
-    row.getCell(12).numFmt = '$#,##0.00';
-    row.getCell(12).alignment = { horizontal: 'right' };
-    row.eachCell((cell) => { cell.border = thinBorder; });
-    if (wsDevoluciones.rowCount % 2 === 0) {
-      row.eachCell((cell) => { cell.fill = lightZebraFill; });
-    }
-  });
-
-  if (wsDevoluciones.rowCount === 1) {
-    wsDevoluciones.addRow(['Sin devoluciones ni anulaciones registradas para esta fecha.']);
+    totalDevRow.eachCell((c) => {
+      c.font = boldTextFont;
+      c.fill = accentTotalFill;
+      c.border = thinBorder;
+    });
+    totalDevRow.getCell(9).numFmt = '$#,##0.00';
+    totalDevRow.getCell(9).alignment = { horizontal: 'right' };
+    totalDevRow.height = 22;
   }
 
   await workbook.xlsx.writeFile(outputPath);

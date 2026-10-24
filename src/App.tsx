@@ -11,12 +11,16 @@ import { StockAlertsView } from './views/StockAlertsView';
 import { CashCloseView } from './views/CashCloseView';
 import { ReportsView } from './views/ReportsView';
 import { ProductsView } from './views/ProductsView';
-import { BackupView } from './views/BackupView';
+import { SettingsView } from './views/SettingsView';
 import { SalesHistoryView } from './views/SalesHistoryView';
 import { ReturnsView } from './views/ReturnsView';
+import { ActivationBanner } from './components/ActivationBanner';
 
 const MainContent: React.FC = () => {
-  const { currentView } = useApp();
+  const { currentView, hasAppAccess, settingsTab } = useApp();
+  const isConfigView = currentView === 'configuracion' || currentView === 'respaldo-y-exportacion';
+  const isLocked = !hasAppAccess;
+  const showSettings = isConfigView && (hasAppAccess || settingsTab === 'licencia');
 
   return (
     <div className="bg-surface font-body text-on-surface antialiased min-h-screen">
@@ -24,15 +28,18 @@ const MainContent: React.FC = () => {
       <div className="pl-72">
         <Header />
         <main className="relative pt-20 bg-surface min-h-screen p-8">
-          {currentView === 'dashboard' && <DashboardView />}
-          {currentView === 'ipv-del-dia' && <IPVView />}
-          {currentView === 'historial-ventas' && <SalesHistoryView />}
-          {currentView === 'devoluciones' && <ReturnsView />}
-          {currentView === 'alertas-de-stock' && <StockAlertsView />}
-          {currentView === 'cierre-de-caja' && <CashCloseView />}
-          {currentView === 'reportes' && <ReportsView />}
-          {currentView === 'productos' && <ProductsView />}
-          {currentView === 'respaldo-y-exportacion' && <BackupView />}
+          <ActivationBanner />
+          <div className={isLocked ? 'pointer-events-none opacity-45 select-none transition-opacity' : ''}>
+            {currentView === 'dashboard' && <DashboardView />}
+            {currentView === 'ipv-del-dia' && <IPVView />}
+            {currentView === 'historial-ventas' && <SalesHistoryView />}
+            {currentView === 'devoluciones' && <ReturnsView />}
+            {currentView === 'alertas-de-stock' && <StockAlertsView />}
+            {currentView === 'cierre-de-caja' && <CashCloseView />}
+            {currentView === 'reportes' && <ReportsView />}
+            {currentView === 'productos' && <ProductsView />}
+          </div>
+          {showSettings && <SettingsView />}
         </main>
       </div>
       <Toast />

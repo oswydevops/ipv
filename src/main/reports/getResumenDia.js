@@ -34,7 +34,7 @@ function getResumenDia(fecha, dbInstance) {
 
   // 1. Resumen de ventas activas del día (no anuladas)
   const salesSummary = db.prepare(`
-    SELECT 
+    SELECT
       COUNT(*) AS ticketsCount,
       COALESCE(SUM(total), 0) AS totalVentas,
       COALESCE(SUM(efectivo), 0) AS totalEfectivo,
@@ -43,72 +43,32 @@ function getResumenDia(fecha, dbInstance) {
     WHERE date = ? AND voided_at IS NULL
   `).get(fecha) || { ticketsCount: 0, totalVentas: 0, totalEfectivo: 0, totalTransferencia: 0 };
 
-  const devolucionesRows = db.prepare(`
+  // 2. Ventas anuladas del día (devoluciones / reembolsos)
+  const voidedSummary = db.prepare(`
     SELECT
-      r.id, r.sale_id, r.return_number, r.timestamp, r.total_refund, r.refund_method,
-      r.customer_name, r.reason,
-      ri.product_id, ri.code, ri.name, ri.um, ri.quantity, ri.unit_price,
-      ri.refund_amount, ri.condition, ri.damaged_reason, ri.reintegrate_to_stock
-    FROM returns r
-    LEFT JOIN return_items ri ON ri.return_id = r.id
-    WHERE r.date = ?
-    ORDER BY r.created_at, ri.id
-  `).all(fecha);
-
-  const devoluciones = [];
-  for (const row of devolucionesRows) {
-    let devolucion = devoluciones.find((item) => item.id === row.id);
-    if (!devolucion) {
-      devolucion = {
-        id: row.id,
-        saleId: row.sale_id,
-        numero: row.return_number,
-        hora: row.timestamp,
-        importe: Number(row.total_refund || 0),
-        metodo: row.refund_method || 'efectivo',
-        cliente: row.customer_name || '',
-        motivo: row.reason || '',
-        items: [],
-      };
-      devoluciones.push(devolucion);
-    }
-    if (row.product_id !== null) {
-      devolucion.items.push({
-        codigo: row.code || '',
-        producto: row.name || '',
-        um: row.um || '',
-        cantidad: Number(row.quantity || 0),
-        precioUnitario: Number(row.unit_price || 0),
-        importe: Number(row.refund_amount || 0),
-        condicion: row.condition || '',
-        motivoDano: row.damaged_reason || '',
-        reintegrado: Boolean(row.reintegrate_to_stock),
-      });
-    }
-  }
-
-  const devolucionesPorMetodo = devoluciones.reduce((totals, item) => {
-    const method = item.metodo;
-    totals[method] = (totals[method] || 0) + item.importe;
-    return totals;
-  }, {});
-
-  const ventasAnuladas = db.prepare(`
-    SELECT id, ticket_number, time, payment_method, efectivo, transferencia, total, voided_at
+      COUNT(*) AS voidedCount,
+      COALESCE(SUM(total), 0) AS voidedTotal,
+      COALESCE(SUM(efectivo), 0) AS voidedCash,
+      COALESCE(SUM(transferencia), 0) AS voidedTransfer
     FROM sales
     WHERE date = ? AND voided_at IS NOT NULL
-    ORDER BY voided_at
-  `).all(fecha)
-    .filter((sale) => !devoluciones.some((devolucion) => devolucion.saleId === sale.id))
-    .map((sale) => ({
-      ticket: `TKT-${String(sale.ticket_number).padStart(5, '0')}`,
-      hora: sale.time,
-      metodo: sale.payment_method,
-      efectivo: Number(sale.efectivo || 0),
-      transferencia: Number(sale.transferencia || 0),
-      importe: Number(sale.total || 0),
-      anuladaEn: sale.voided_at,
-    }));
+  `).get(fecha) || { voidedCount: 0, voidedTotal: 0 };
+
+  const ventasAnuladasRaw = db.prepare(`
+    SELECT id, ticket_number, time, payment_method, efectivo, transferencia, total
+    FROM sales
+    WHERE date = ? AND voided_at IS NOT NULL
+    ORDER BY time ASC
+  `).all(fecha);
+  const ventasAnuladas = ventasAnuladasRaw.map((sale) => ({
+    id: sale.id,
+    ticketNumber: `TKT-${String(sale.ticket_number).padStart(5, '0')}`,
+    hora: sale.time,
+    paymentMethod: sale.payment_method,
+    efectivo: Number(sale.efectivo || 0),
+    transferencia: Number(sale.transferencia || 0),
+    total: Number(sale.total || 0),
+  }));
 
   // 3. Ventas agrupadas por producto
   const productRows = db.prepare(`
@@ -196,48 +156,99 @@ function getResumenDia(fecha, dbInstance) {
     }
   }
 
-  const efectivoContado = closeRow
-    ? denominaciones.reduce((total, item) => total + Number(item.value || 0) * Number(item.count || 0), 0)
-      + Number(closeRow.menores || 0)
-    : Number(salesSummary.totalEfectivo || 0);
-  const transferenciaContada = closeRow
-    ? Number(closeRow.transferencias || 0)
-    : Number(salesSummary.totalTransferencia || 0);
-  const totalDevolucionesRegistradas = devoluciones.reduce((total, item) => total + item.importe, 0);
-  const efectivoDevuelto = Number(devolucionesPorMetodo.efectivo || 0);
-  const transferenciaDevuelta = Number(devolucionesPorMetodo.transferencia || 0);
-  const totalAnulaciones = ventasAnuladas.reduce((total, item) => total + item.importe, 0);
+  // 6. Devoluciones registradas en la tabla returns
+  const returnRows = db.prepare(`
+      SELECT
+        id, return_number, sale_id, ticket_number, timestamp,
+        total_refund, refund_method, customer_name, reason, has_damaged_items
+      FROM returns
+      WHERE date = ?
+      ORDER BY timestamp ASC
+  `).all(fecha);
+
+  const getItemsStmt = db.prepare(`
+      SELECT product_id, code, name, um, quantity, unit_price, refund_amount, condition, damaged_reason
+      FROM return_items WHERE return_id = ?
+  `);
+
+  const devoluciones = returnRows.map((r) => ({
+      id: r.id,
+      returnNumber: r.return_number,
+      saleId: r.sale_id,
+      ticketNumber: r.ticket_number,
+      hora: r.timestamp,
+      totalRefund: Number(r.total_refund || 0),
+      refundMethod: r.refund_method,
+      customerName: r.customer_name || 'Cliente general',
+      reason: r.reason || 'Sin motivo especificado',
+      hasDamagedItems: Boolean(r.has_damaged_items),
+      items: getItemsStmt.all(r.id).map((it) => ({
+        code: it.code,
+        name: it.name,
+        um: it.um,
+        quantity: Number(it.quantity || 0),
+        unitPrice: Number(it.unit_price || 0),
+        refundAmount: Number(it.refund_amount || 0),
+        condition: it.condition,
+        damagedReason: it.damaged_reason,
+      })),
+    }));
+
+  const totalDevolucionesMonto =
+    devoluciones.reduce((acc, d) => acc + d.totalRefund, 0) +
+    Number(voidedSummary.voidedTotal || 0);
+
+  const totalDevolucionesEfectivo = devoluciones
+    .filter((d) => d.refundMethod === 'efectivo')
+    .reduce((acc, d) => acc + d.totalRefund, 0) +
+    Number(voidedSummary.voidedCash || 0);
+
+  const totalDevolucionesTransferencia = devoluciones
+    .filter((d) => d.refundMethod === 'transferencia')
+    .reduce((acc, d) => acc + d.totalRefund, 0) +
+    Number(voidedSummary.voidedTransfer || 0);
+
+  const totalDevolucionesMixto = devoluciones
+    .filter((d) => d.refundMethod === 'mixto')
+    .reduce((acc, d) => acc + d.totalRefund, 0);
+
+  const totalUnidadesDevueltas = devoluciones.reduce(
+    (acc, d) => acc + (d.items || []).reduce((s, it) => s + (it.quantity || 1), 0),
+    0
+  );
+
+  const totalVentasBrutas = Number(salesSummary.totalVentas || 0);
+  const ventasNetas = Math.max(0, totalVentasBrutas - totalDevolucionesMonto);
 
   return {
     fecha,
     fechaFormateada: fecha.split('-').reverse().join('/'),
     generadoEn: new Date().toLocaleString('es-CU'),
     totales: {
-      totalVentas: Number(salesSummary.totalVentas || 0),
+      totalVentas: totalVentasBrutas,
+      ventasNetas,
       totalEfectivo: Number(salesSummary.totalEfectivo || 0),
       totalTransferencia: Number(salesSummary.totalTransferencia || 0),
-      totalDevoluciones: totalDevolucionesRegistradas + totalAnulaciones,
-      cantidadDevoluciones: devoluciones.length + ventasAnuladas.length,
-      totalDevolucionesRegistradas,
-      cantidadDevolucionesRegistradas: devoluciones.length,
-      totalVentasAnuladas: totalAnulaciones,
-      cantidadVentasAnuladas: ventasAnuladas.length,
-      efectivoDevuelto,
-      transferenciaDevuelta,
-      otrosReembolsos: Number(devolucionesPorMetodo.mixto || 0),
+      totalDevoluciones: totalDevolucionesMonto,
+      cantidadDevoluciones: devoluciones.length || Number(voidedSummary.voidedCount || 0),
+      totalDevolucionesEfectivo,
+      totalDevolucionesTransferencia,
+      totalDevolucionesMixto,
+      totalUnidadesDevueltas,
       totalArticulosVendidos,
       cantidadTickets: Number(salesSummary.ticketsCount || 0),
       // Datos del arqueo/cierre
       estaCerrado: Boolean(closeRow),
       estadoCierre: closeRow ? 'Cerrado' : 'Abierto / En jornada',
       cerradoEn: closeRow ? closeRow.closed_at : null,
-      efectivoContado,
-      transferenciaContada,
-      menoresAmount: closeRow ? Number(closeRow.menores || 0) : 0,
-      totalContado: closeRow
-        ? Number(closeRow.total_contado || 0)
-        : Number(salesSummary.totalEfectivo || 0) + Number(salesSummary.totalTransferencia || 0),
-      totalIpv: closeRow ? Number(closeRow.total_ipv || 0) : Number(salesSummary.totalVentas || 0),
+      totalContado: closeRow ? Number(closeRow.total_contado || 0) : Number(salesSummary.totalEfectivo || 0),
+      efectivoContado: closeRow
+        ? Math.max(0, Number(closeRow.total_contado || 0) - Number(closeRow.transferencias || 0))
+        : Number(salesSummary.totalEfectivo || 0),
+      transferenciaContada: closeRow
+        ? Number(closeRow.transferencias || 0)
+        : Number(salesSummary.totalTransferencia || 0),
+      totalIpv: closeRow ? Number(closeRow.total_ipv || 0) : totalVentasBrutas,
       diferencia: closeRow ? Number(closeRow.diferencia || 0) : 0,
       notaCierre: closeRow ? closeRow.note || '' : '',
     },

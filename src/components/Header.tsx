@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { APP_NAME } from '../config';
 import { ViewType } from '../types';
 
 interface SystemNotification {
@@ -24,11 +23,24 @@ export const Header: React.FC = () => {
     ipvTotalVendido = 0,
     isCurrentDayClosed,
     backupRecords = [],
+    hasAppAccess,
+    isAppActivated,
+    isTrialActive,
+    licenseReadOnly,
+    licenseStatus,
+    navigateToActivation,
   } = useApp();
 
   const [showNotifications, setShowNotifications] = useState(false);
-  const isBackupView = currentView === 'respaldo-y-exportacion';
+  const isSettingsView = currentView === 'configuracion' || currentView === 'respaldo-y-exportacion';
   const notifRef = useRef<HTMLDivElement>(null);
+  const licenseBadgeText = isAppActivated
+    ? 'Licencia activa'
+    : licenseReadOnly
+      ? licenseStatus === 'clock_rollback' ? 'Corregir hora del sistema' : 'Licencia vencida'
+      : isTrialActive
+        ? 'Prueba gratuita 7 días'
+        : 'Activación requerida';
 
   // Lista de IDs de notificaciones descartadas por el usuario
   const [dismissedIds, setDismissedIds] = useState<string[]>(() => {
@@ -192,17 +204,25 @@ export const Header: React.FC = () => {
   return (
     <>
       <header className="fixed top-0 left-72 right-0 h-16 bg-surface/90 backdrop-blur-xl z-40 flex items-center justify-between px-8 shadow-[0_1px_8px_rgba(0,0,0,0.04)] select-none">
-        {/* Search Bar Trigger - Hidden in Respaldo y Exportación view */}
+        {/* Search Bar Trigger - Hidden in Configuración view */}
         <div className="flex items-center gap-3">
-          {!isBackupView ? (
+          {!isSettingsView ? (
             <div
-              onClick={() => setIsSearchModalOpen(true)}
+              onClick={() => {
+                if (!hasAppAccess) {
+                  navigateToActivation();
+                  return;
+                }
+                setIsSearchModalOpen(true);
+              }}
               className="h-10 px-4 rounded-xl bg-surface neo-inset flex items-center gap-2.5 text-on-surface-variant w-72 cursor-pointer hover:opacity-90 transition-opacity"
-              title="Búsqueda global"
+              title={!hasAppAccess ? 'Requiere activación de la aplicación' : 'Búsqueda global'}
             >
-              <span className="material-symbols-outlined text-[20px]">search</span>
-              <span className="text-xs text-on-surface-variant font-medium select-none">
-                Buscar productos, códigos...
+              <span className="material-symbols-outlined text-[20px]">
+                {!hasAppAccess ? 'lock' : 'search'}
+              </span>
+              <span className="text-xs text-on-surface-variant font-medium select-none truncate">
+                {!hasAppAccess ? 'Bloqueado (Requiere activación)' : 'Buscar productos, códigos...'}
               </span>
             </div>
           ) : (
@@ -216,7 +236,7 @@ export const Header: React.FC = () => {
             {/* Business / Terminal Name */}
             <div className="h-8 px-3 rounded-full bg-surface neo-raised flex items-center gap-1.5 text-xs font-semibold text-on-surface">
               <span className="material-symbols-outlined text-[16px] text-primary">storefront</span>
-              <span>{APP_NAME}</span>
+              <span>{licenseBadgeText}</span>
             </div>
 
             {/* Date */}

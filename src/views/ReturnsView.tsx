@@ -1,12 +1,15 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { ReturnRecord, ReturnItem } from '../types';
+import { ReturnRecord, ReturnItem, MermaItem } from '../types';
 
 export const ReturnsView: React.FC = () => {
   const {
     returns = [],
     sales = [],
     products = [],
+    mermaItems = [],
+    reincorporarMermaItem,
+    darDeBajaMermaItem,
     todayDate,
     addReturn,
     isCurrentDayClosed,
@@ -14,7 +17,7 @@ export const ReturnsView: React.FC = () => {
   } = useApp();
 
   // Estados de vista
-  const [activeTab, setActiveTab] = useState<'todas' | 'mal_estado' | 'buen_estado'>('todas');
+  const [activeTab, setActiveTab] = useState<'todas' | 'mal_estado' | 'buen_estado' | 'almacen_merma'>('todas');
   const [searchQuery, setSearchQuery] = useState('');
   const [periodFilter, setPeriodFilter] = useState<'hoy' | 'semana' | 'mes' | 'todos'>('hoy');
   const [page, setPage] = useState(1);
@@ -24,10 +27,18 @@ export const ReturnsView: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [refundMethod, setRefundMethod] = useState<'efectivo' | 'transferencia' | 'mixto'>('efectivo');
+  const [transferenciaRefundInput, setTransferenciaRefundInput] = useState<string>('');
   const [generalReason, setGeneralReason] = useState('Artículo defectuoso / Garantía');
   const [customReason, setCustomReason] = useState('');
   const [catalogSearch, setCatalogSearch] = useState('');
   const [selectedReturnDetail, setSelectedReturnDetail] = useState<ReturnRecord | null>(null);
+
+  // Estados para gestión de merma
+  const [mermaItemToReprice, setMermaItemToReprice] = useState<MermaItem | null>(null);
+  const [newPriceInput, setNewPriceInput] = useState<string>('');
+  const [repriceNote, setRepriceNote] = useState<string>('');
+  const [mermaItemToBaja, setMermaItemToBaja] = useState<MermaItem | null>(null);
+  const [bajaNote, setBajaNote] = useState<string>('');
 
   // Borrador de artículos a devolver en el modal
   interface ReturnDraftItem {
@@ -100,6 +111,19 @@ export const ReturnsView: React.FC = () => {
       return matchNum || matchTicket || matchClient || matchReason || matchProduct;
     });
   }, [periodFilteredReturns, activeTab, searchQuery]);
+
+  // Artículos en merma filtrados por búsqueda
+  const filteredMermaItems = useMemo(() => {
+    if (!searchQuery.trim()) return mermaItems;
+    const q = searchQuery.toLowerCase();
+    return mermaItems.filter(
+      (m) =>
+        m.name?.toLowerCase().includes(q) ||
+        m.code?.toLowerCase().includes(q) ||
+        m.returnNumber?.toLowerCase().includes(q) ||
+        m.damagedReason?.toLowerCase().includes(q)
+    );
+  }, [mermaItems, searchQuery]);
 
   // Paginación
   const totalPages = Math.max(1, Math.ceil(finalFilteredReturns.length / pageSize));
@@ -201,9 +225,23 @@ export const ReturnsView: React.FC = () => {
       ? customReason.trim()
       : generalReason;
 
+    const trAmount = refundMethod === 'mixto'
+      ? Math.min(modalCalculatedRefund, Math.max(0, parseFloat(transferenciaRefundInput) || 0))
+      : refundMethod === 'transferencia'
+      ? modalCalculatedRefund
+      : 0;
+
+    const efAmount = refundMethod === 'mixto'
+      ? Math.max(0, modalCalculatedRefund - trAmount)
+      : refundMethod === 'efectivo'
+      ? modalCalculatedRefund
+      : 0;
+
     const returnPayload = {
       customerName: customerName.trim() || undefined,
       refundMethod,
+      transferenciaAmount: trAmount,
+      efectivoAmount: efAmount,
       reason: finalReason.trim() || 'Devolución de cliente',
       totalRefund: modalCalculatedRefund,
       items: returnItems,
@@ -217,6 +255,7 @@ export const ReturnsView: React.FC = () => {
       setGeneralReason('Artículo defectuoso / Garantía');
       setCustomReason('');
       setCatalogSearch('');
+      setTransferenciaRefundInput('');
     }
   };
 
@@ -506,6 +545,22 @@ export const ReturnsView: React.FC = () => {
             <span className="material-symbols-outlined text-[16px]">verified</span>
             <span>En Buen Estado</span>
           </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('almacen_merma');
+              setPage(1);
+            }}
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'almacen_merma'
+                ? 'bg-amber-500/15 text-amber-700 font-bold border border-amber-500/20'
+                : 'text-amber-700 hover:bg-amber-500/10'
+            }`}
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[16px]">warehouse</span>
+            <span>Almacén de Mermas ({mermaItems.length})</span>
+          </button>
         </div>
 
         {/* Buscador y Filtro Temporal */}
@@ -555,9 +610,171 @@ export const ReturnsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Tabla Principal de Devoluciones y Artículos Devueltos */}
-      <div className="rounded-2xl bg-surface neo-raised p-2 overflow-hidden">
-        <div className="overflow-x-auto">
+      {/* Vista Condicional: Almacén de Mermas o Tabla Principal de Devoluciones */}
+      {activeTab === 'almacen_merma' ? (
+        <div className="rounded-2xl bg-surface neo-raised p-4 flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-700 shrink-0">
+                <span className="material-symbols-outlined text-[24px]">warehouse</span>
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-900">
+                  Gestión del Almacén de Mermas y Artículos Averiados
+                </h3>
+                <p className="text-xs text-amber-800">
+                  Los artículos devueltos en mal estado pasan aquí. Puede asignarles un nuevo precio rebajado según el defecto para reincorporarlos al stock comercial, o darles baja definitiva.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-800 font-mono">
+                {filteredMermaItems.filter((m) => m.status === 'en_almacen_merma').length} pendientes en merma
+              </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead>
+                <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant bg-surface-container-low/40">
+                  <th className="py-3 px-4">Fecha</th>
+                  <th className="py-3 px-4">Folio Dev.</th>
+                  <th className="py-3 px-4">Artículo</th>
+                  <th className="py-3 px-4 text-center">Cant.</th>
+                  <th className="py-3 px-4 text-right">Precio Original</th>
+                  <th className="py-3 px-4">Defecto / Causa</th>
+                  <th className="py-3 px-4 text-center">Estado en Almacén</th>
+                  <th className="py-3 px-4 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y-0 text-on-surface">
+                {filteredMermaItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-xs text-on-surface-variant font-medium">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <span className="material-symbols-outlined text-[36px] text-on-surface-variant/60">
+                          inventory_2
+                        </span>
+                        <span className="text-sm font-semibold text-on-surface">
+                          No hay artículos en el almacén de merma actualmente
+                        </span>
+                        <p className="text-xs text-on-surface-variant/80">
+                          Cuando registre una devolución con artículos en mal estado, se derivarán a esta sección.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredMermaItems.map((item) => (
+                    <tr
+                      key={item.id}
+                      className="group hover:bg-surface-container-high/40 transition-colors border-b border-outline-variant/10"
+                    >
+                      <td className="py-3 px-4 font-mono text-xs text-on-surface-variant">
+                        {item.date}
+                      </td>
+                      <td className="py-3 px-4 font-mono font-bold text-xs text-amber-600">
+                        {item.returnNumber}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-on-surface text-xs">{item.name}</span>
+                          <span className="text-[10px] text-on-surface-variant font-mono">
+                            Cód: {item.code}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-center font-mono font-bold text-xs">
+                        {item.quantity} {item.um}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-semibold text-xs text-on-surface-variant">
+                        ${formatCUP(item.originalUnitPrice)} CUP
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="text-xs text-red-600 font-medium inline-block max-w-xs truncate" title={item.damagedReason}>
+                          {item.damagedReason}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        {item.status === 'en_almacen_merma' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-800 border border-amber-500/30">
+                            <span className="material-symbols-outlined text-[13px]">warehouse</span>
+                            EN ALMACÉN DE MERMA
+                          </span>
+                        ) : item.status === 'reincorporado_con_precio' ? (
+                          <div className="flex flex-col items-center">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 border border-emerald-500/30">
+                              <span className="material-symbols-outlined text-[13px]">verified</span>
+                              REINCORPORADO (${formatCUP(item.discountedPrice || 0)} CUP)
+                            </span>
+                            {item.resolvedAt && (
+                              <span className="text-[9px] text-on-surface-variant font-mono mt-0.5">
+                                {item.resolvedAt}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gray-500/15 text-gray-700 border border-gray-500/30">
+                              <span className="material-symbols-outlined text-[13px]">delete_sweep</span>
+                              BAJA DEFINITIVA
+                            </span>
+                            {item.resolvedAt && (
+                              <span className="text-[9px] text-on-surface-variant font-mono mt-0.5">
+                                {item.resolvedAt}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        {item.status === 'en_almacen_merma' ? (
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                setMermaItemToReprice(item);
+                                const suggested = Math.max(1, Math.round(item.originalUnitPrice * 0.7));
+                                setNewPriceInput(String(suggested));
+                                setRepriceNote(`Reincorporado con descuento por defecto: ${item.damagedReason}`);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-surface neo-raised text-primary hover:text-primary-container text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all active:neo-inset"
+                              type="button"
+                              title="Asignar nuevo precio según el defecto y reincorporar al stock"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">price_change</span>
+                              <span>Asignar Precio</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setMermaItemToBaja(item);
+                                setBajaNote(`Baja definitiva por daño irreparable: ${item.damagedReason}`);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-surface neo-raised text-red-600 hover:text-red-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all active:neo-inset"
+                              type="button"
+                              title="Dar de baja definitiva por merma irreparable"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">delete</span>
+                              <span>Dar de Baja</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-on-surface-variant italic">
+                            {item.resolutionNote || 'Procesado'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        /* Tabla Principal de Devoluciones y Artículos Devueltos */
+        <div className="rounded-2xl bg-surface neo-raised p-2 overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead>
               <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant bg-surface-container-low/40">
@@ -750,6 +967,7 @@ export const ReturnsView: React.FC = () => {
           </div>
         )}
       </div>
+      )}
 
       {/* MODAL PARA REGISTRAR NUEVA DEVOLUCIÓN */}
       {isModalOpen && (
@@ -986,28 +1204,20 @@ export const ReturnsView: React.FC = () => {
                                     placeholder="Ej: Roto, defecto de fábrica, no enciende, dañado..."
                                     className="w-full h-8 px-2.5 rounded-lg bg-surface neo-inset text-xs text-red-700 font-medium outline-none focus:ring-1 focus:ring-red-500"
                                   />
-                                  <span className="text-[10px] text-red-600/90 block mt-0.5">
-                                    No se repondrá al mostrador (Merma / Artículo averiado)
+                                  <span className="text-[10px] text-red-600 font-semibold flex items-center gap-1 mt-1">
+                                    <span className="material-symbols-outlined text-[13px]">warehouse</span>
+                                    Pasa al almacén como artículo en merma (se le podrá asignar nuevo precio o dar de baja)
                                   </span>
                                 </div>
                               ) : (
                                 <div>
                                   <label className="text-[10px] font-bold uppercase text-emerald-700 block mb-1">
-                                    Destino de Stock:
+                                    Destino en Almacén:
                                   </label>
-                                  <label className="flex items-center gap-2 text-xs font-medium text-emerald-700 mt-1 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={item.reintegrateToStock}
-                                      onChange={(e) => {
-                                        const next = [...draftItems];
-                                        next[idx].reintegrateToStock = e.target.checked;
-                                        setDraftItems(next);
-                                      }}
-                                      className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500"
-                                    />
-                                    <span>Reincorporar existencias al mostrador</span>
-                                  </label>
+                                  <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 mt-1">
+                                    <span className="material-symbols-outlined text-emerald-600 text-[16px]">inventory_2</span>
+                                    <span>Pasa directamente al almacén listo para volver a utilizar en stock</span>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -1057,12 +1267,18 @@ export const ReturnsView: React.FC = () => {
                   </label>
                   <select
                     value={refundMethod}
-                    onChange={(e) => setRefundMethod(e.target.value as any)}
+                    onChange={(e) => {
+                      const next = e.target.value as any;
+                      setRefundMethod(next);
+                      if (next === 'mixto' && !transferenciaRefundInput) {
+                        setTransferenciaRefundInput((modalCalculatedRefund / 2).toFixed(2));
+                      }
+                    }}
                     className="w-full h-10 px-3 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface outline-none cursor-pointer focus:ring-1 focus:ring-primary"
                   >
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia</option>
-                    <option value="mixto">Mixto</option>
+                    <option value="efectivo">Efectivo (100%)</option>
+                    <option value="transferencia">Transferencia (100%)</option>
+                    <option value="mixto">Método Mixto (Efectivo + Transferencia)</option>
                   </select>
                 </div>
 
@@ -1080,6 +1296,68 @@ export const ReturnsView: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {/* Si es Método Mixto: selector de cantidad por transferencia y resto en efectivo */}
+              {refundMethod === 'mixto' && (
+                <div className="p-4 rounded-xl bg-surface neo-inset border border-outline-variant/20 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[18px] text-primary">call_split</span>
+                      Desglose del Reembolso Mixto
+                    </span>
+                    <span className="text-[10px] text-on-surface-variant font-mono">
+                      Total a devolver: ${formatCUP(modalCalculatedRefund)} CUP
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[11px] font-bold text-primary block mb-1">
+                        Cantidad a Entregar por Transferencia:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 font-mono text-xs font-bold text-primary">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max={modalCalculatedRefund}
+                          value={transferenciaRefundInput}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const num = parseFloat(val);
+                            if (num > modalCalculatedRefund) {
+                              setTransferenciaRefundInput(String(modalCalculatedRefund));
+                            } else {
+                              setTransferenciaRefundInput(val);
+                            }
+                          }}
+                          placeholder="0.00"
+                          className="w-full h-10 pl-7 pr-3 rounded-xl bg-surface neo-raised font-mono text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
+                      <span className="text-[10px] text-on-surface-variant mt-1 block">
+                        Se descontará de transferencias digitales en Cierre de Caja
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-bold text-emerald-700 block mb-1">
+                        Cantidad Restante en Efectivo (Automático):
+                      </label>
+                      <div className="h-10 px-3.5 rounded-xl bg-surface neo-raised flex items-center justify-between border border-emerald-500/20">
+                        <span className="text-xs text-on-surface-variant font-medium">Resto en efectivo:</span>
+                        <span className="font-mono text-sm font-bold text-emerald-600">
+                          ${formatCUP(Math.max(0, modalCalculatedRefund - (parseFloat(transferenciaRefundInput) || 0)))} CUP
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-on-surface-variant mt-1 block">
+                        Se descontará de la gaveta de efectivo en Cierre de Caja
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Total y Aviso de Cierre de Caja */}
               <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1226,6 +1504,193 @@ export const ReturnsView: React.FC = () => {
                 className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface cursor-pointer"
               >
                 Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para Asignar Nuevo Precio a Merma y Reincorporar al Almacén */}
+      {mermaItemToReprice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-surface neo-raised border border-outline-variant/20 shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-outline-variant/15 flex items-center justify-between bg-surface-container-low/40">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined text-[20px]">price_change</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-on-surface">Asignar Nuevo Precio</h3>
+                  <span className="text-xs text-on-surface-variant font-mono">
+                    {mermaItemToReprice.code} • {mermaItemToReprice.returnNumber}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setMermaItemToReprice(null)}
+                className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface cursor-pointer"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 flex flex-col gap-4 text-xs">
+              <div className="p-3 rounded-xl bg-surface neo-inset flex flex-col gap-1.5">
+                <span className="text-on-surface font-semibold text-xs">
+                  {mermaItemToReprice.name}
+                </span>
+                <span className="text-[11px] text-red-600 font-medium">
+                  <strong>Defecto registrado:</strong> {mermaItemToReprice.damagedReason}
+                </span>
+                <div className="flex justify-between items-center mt-1 pt-1 border-t border-outline-variant/10 text-[11px]">
+                  <span className="text-on-surface-variant">Precio original anterior:</span>
+                  <span className="font-mono font-bold text-on-surface">
+                    ${formatCUP(mermaItemToReprice.originalUnitPrice)} CUP
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-on-surface block mb-1">
+                  Nuevo Precio de Venta Asignado ($ CUP):
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 font-mono text-xs font-bold text-primary">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={newPriceInput}
+                    onChange={(e) => setNewPriceInput(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full h-10 pl-7 pr-3 rounded-xl bg-surface neo-inset font-mono text-sm font-bold text-primary outline-none focus:ring-1 focus:ring-primary"
+                    autoFocus
+                  />
+                </div>
+                {parseFloat(newPriceInput) > 0 && (
+                  <div className="flex items-center justify-between text-[11px] mt-1.5 px-1">
+                    <span className="text-on-surface-variant">Diferencia / Descuento:</span>
+                    <span className="font-mono font-semibold text-emerald-600">
+                      -${formatCUP(Math.max(0, mermaItemToReprice.originalUnitPrice - parseFloat(newPriceInput)))} CUP
+                      {mermaItemToReprice.originalUnitPrice > 0 && ` (-${Math.round(((mermaItemToReprice.originalUnitPrice - parseFloat(newPriceInput)) / mermaItemToReprice.originalUnitPrice) * 100)}%)`}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-on-surface-variant block mb-1">
+                  Nota / Justificación técnica del precio:
+                </label>
+                <input
+                  type="text"
+                  value={repriceNote}
+                  onChange={(e) => setRepriceNote(e.target.value)}
+                  placeholder="Ej: Vendido como saldo / defecto estético leve..."
+                  className="w-full h-9 px-3 rounded-xl bg-surface neo-raised text-xs text-on-surface outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-800">
+                Al confirmar, el artículo se reintegrará directamente al almacén como stock comercial listo para vender con el nuevo precio asignado.
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-outline-variant/15 flex justify-end gap-2 bg-surface-container-low/20">
+              <button
+                onClick={() => setMermaItemToReprice(null)}
+                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface-variant hover:text-on-surface cursor-pointer"
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  const np = parseFloat(newPriceInput);
+                  if (isNaN(np) || np <= 0) return;
+                  await reincorporarMermaItem(mermaItemToReprice.id, np, repriceNote.trim() || undefined);
+                  setMermaItemToReprice(null);
+                }}
+                disabled={!newPriceInput || parseFloat(newPriceInput) <= 0}
+                className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold shadow-md hover:bg-primary-container disabled:opacity-50 cursor-pointer"
+                type="button"
+              >
+                Reincorporar al Almacén
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para Confirmar Baja Definitiva de Merma */}
+      {mermaItemToBaja && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-surface neo-raised border border-outline-variant/20 shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-outline-variant/15 flex items-center justify-between bg-surface-container-low/40">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-red-500/10 flex items-center justify-center text-red-600">
+                  <span className="material-symbols-outlined text-[20px]">delete_forever</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-on-surface">Dar de Baja Definitiva</h3>
+                  <span className="text-xs text-on-surface-variant font-mono">
+                    {mermaItemToBaja.code} • {mermaItemToBaja.returnNumber}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setMermaItemToBaja(null)}
+                className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface cursor-pointer"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 flex flex-col gap-4 text-xs">
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-800 flex flex-col gap-1">
+                <span className="font-bold text-xs">{mermaItemToBaja.name}</span>
+                <span>Cantidad: {mermaItemToBaja.quantity} {mermaItemToBaja.um}</span>
+                <span>Defecto: {mermaItemToBaja.damagedReason}</span>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-on-surface-variant block mb-1">
+                  Motivo / Justificación de la Baja:
+                </label>
+                <input
+                  type="text"
+                  value={bajaNote}
+                  onChange={(e) => setBajaNote(e.target.value)}
+                  placeholder="Ej: Inutilizable, daño estructural irreparable..."
+                  className="w-full h-9 px-3 rounded-xl bg-surface neo-raised text-xs text-on-surface outline-none focus:ring-1 focus:ring-red-500"
+                  autoFocus
+                />
+              </div>
+
+              <p className="text-[11px] text-on-surface-variant">
+                Esta acción registrará la baja definitiva del artículo en el almacén de merma. No pasará al stock comercial de venta.
+              </p>
+            </div>
+
+            <div className="p-4 border-t border-outline-variant/15 flex justify-end gap-2 bg-surface-container-low/20">
+              <button
+                onClick={() => setMermaItemToBaja(null)}
+                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface-variant hover:text-on-surface cursor-pointer"
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  await darDeBajaMermaItem(mermaItemToBaja.id, bajaNote.trim() || undefined);
+                  setMermaItemToBaja(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                type="button"
+              >
+                Confirmar Baja
               </button>
             </div>
           </div>

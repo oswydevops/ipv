@@ -1,5 +1,4 @@
 import type { Product } from '../types';
-import type { ReturnRecord } from '../types';
 
 export type PaymentMethod = 'efectivo' | 'transferencia' | 'mixto';
 
@@ -84,25 +83,33 @@ export interface DayClose {
 
 export type ApiErrorCode =
   | 'INVALID' | 'NOT_FOUND' | 'CODE_EXISTS' | 'INSUFFICIENT_STOCK' | 'PAYMENT_MISMATCH'
-  | 'DAY_CLOSED' | 'ALREADY_VOIDED' | 'BAD_DATE' | 'BAD_BACKUP' | 'INTERNAL';
+  | 'DAY_CLOSED' | 'ALREADY_VOIDED' | 'BAD_DATE' | 'BAD_BACKUP' | 'INTERNAL'
+  | 'INVALID_SIGNATURE' | 'INSTALLATION_MISMATCH' | 'LICENSE_EXPIRED'
+  | 'LICENSE_ALREADY_USED' | 'CLOCK_ROLLBACK' | 'LICENSE_REQUIRED' | 'INVALID_CODE';
 
 export type ApiError = Error & { code: ApiErrorCode };
 
 type FileResult = { canceled: true } | { canceled: false; path: string };
 
-export interface IpvExcelReportInput {
-  date: string;
-  fileName: string;
-  title: string;
-  period: string;
-  columns: { header: string; key: string; width?: number }[];
-  rows: Record<string, string | number>[];
-  metrics: { label: string; value: string | number }[];
-  returns: ReturnRecord[];
+export interface LicenseStatus {
+  status: 'none' | 'valid' | 'expired' | 'clock_rollback' | 'invalid';
+  hasLicense: boolean;
+  installationId: string;
+  issueDate: string | null;
+  expiryDate: string | null;
+  daysRemaining: number;
+  licenseType: string | null;
+  activationCode: string;
+  errorCode?: string | null;
 }
 
 export interface IpvApi {
   today(): Promise<string>;
+  license?: {
+    status(): Promise<LicenseStatus>;
+    activate(code: string): Promise<LicenseStatus>;
+    trialStatus(): Promise<{ isActive: boolean; daysRemaining: number }>;
+  };
   products: {
     list(): Promise<Product[]>;
     create(input: Partial<Omit<Product, 'id' | 'status' | 'createdAt'>> & { name: string }): Promise<Product>;
@@ -131,16 +138,10 @@ export interface IpvApi {
     saveSqlite(): Promise<FileResult>;
     saveJson(): Promise<FileResult>;
     restoreJson(): Promise<{ canceled: true } | { canceled: false; restored: Record<string, number> }>;
-    resetApplication(password: string): Promise<{ cleared: Record<string, number> }>;
+    resetApplication(password: string): Promise<{ ok: boolean; cleared?: Record<string, number> }>;
   };
   reports: {
     exportarCierre(date: string): Promise<{ ok: boolean; pdfPath: string; excelPath: string; directory?: string; fecha: string }>;
-    exportarCierreExcel?(date: string): Promise<
-      { canceled: true } | { canceled: false; ok: boolean; excelPath: string; fecha: string }
-    >;
-    exportarIpvExcel?(input: IpvExcelReportInput): Promise<
-      { canceled: true } | { canceled: false; excelPath: string }
-    >;
   };
   exportarCierre?(date: string): Promise<{ ok: boolean; pdfPath: string; excelPath: string; directory?: string; fecha: string }>;
   returns?: {
@@ -148,6 +149,12 @@ export interface IpvApi {
     list(): Promise<any[]>;
     listByDate?(date: string): Promise<any[]>;
   };
+  mermas?: {
+    list(): Promise<any[]>;
+    reincorporar(mermaId: string, newPrice: number, note?: string): Promise<any>;
+    darDeBaja(mermaId: string, note?: string): Promise<any>;
+  };
+  _isElectron?: boolean;
 }
 
 declare global {

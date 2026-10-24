@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   CLOSES: 'ipv_closes_v2',
   DATE: 'ipv_date_v2',
   RETURNS: 'ipv_returns_v2',
+  MERMAS: 'ipv_mermas_v2',
 };
 
 // Limpieza automática de datos de prueba / mock anteriores
@@ -380,22 +381,6 @@ export function createFallbackApi(): IpvApi {
     },
 
     backup: {
-      async resetApplication(password: string) {
-        if (password !== 'adminreset') throw new Error('Contraseña incorrecta.');
-        const cleared = {
-          products: products.length,
-          sales: sales.length,
-          day_closes: closes.length,
-          returns: returns.length,
-        };
-        products = [];
-        sales = [];
-        closes = [];
-        returns = [];
-        persist();
-        return { cleared };
-      },
-
       async saveSqlite() {
         const today = getTodayStr();
         const fileName = `ipv-respaldo-${today}.sqlite`;
@@ -492,6 +477,39 @@ export function createFallbackApi(): IpvApi {
           input.click();
         });
       },
+
+      async resetApplication(password: string) {
+        if (typeof password !== 'string') {
+          throw new Error('Contraseña incorrecta.');
+        }
+        const configuredPassword = localStorage.getItem('ferrestock_reset_password') || 'adminreset';
+        if (password.trim() !== configuredPassword.trim()) {
+          throw new Error('Contraseña incorrecta.');
+        }
+        products = [];
+        sales = [];
+        closes = [];
+        returns = [];
+        for (const key of [
+          STORAGE_KEYS.PRODUCTS,
+          STORAGE_KEYS.SALES,
+          STORAGE_KEYS.CLOSES,
+          STORAGE_KEYS.RETURNS,
+          STORAGE_KEYS.MERMAS,
+          STORAGE_KEYS.DATE,
+          'ipv_fallback_products_v1',
+          'ipv_fallback_sales_v1',
+          'ipv_fallback_closes_v1',
+          'ipv_fallback_date_v1',
+          'ferrestock_products',
+          'ferrestock_sales',
+          'ferrestock_last_backup_info',
+          'ferrestock_backup_history',
+        ]) {
+          localStorage.removeItem(key);
+        }
+        return { ok: true };
+      },
     },
 
     reports: {
@@ -517,17 +535,51 @@ export function createFallbackApi(): IpvApi {
         const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
         const id = `dev-${Date.now()}`;
         const returnNumber = `DEV-${pad(returns.length + 1)}`;
+        const totalRefund = Number(input.totalRefund) || 0;
+        const refundMethod = input.refundMethod || 'efectivo';
 
-        // Si hay artículos en buen estado para reintegrar, se aumenta el stock del mostrador
+        let transferenciaAmount = 0;
+        let efectivoAmount = 0;
+        if (refundMethod === 'efectivo') {
+          efectivoAmount = totalRefund;
+          transferenciaAmount = 0;
+        } else if (refundMethod === 'transferencia') {
+          efectivoAmount = 0;
+          transferenciaAmount = totalRefund;
+        } else if (refundMethod === 'mixto') {
+          transferenciaAmount = Math.min(totalRefund, Math.max(0, Number(input.transferenciaAmount) || 0));
+          efectivoAmount = Math.max(0, totalRefund - transferenciaAmount);
+        }
+
+        let mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+
+        // 1. Artículos devueltos en buen estado pasan DIRECTAMENTE al almacén para volver a utilizar en stock
         for (const it of (input.items || [])) {
-          if (it.reintegrateToStock && it.condition === 'buen_estado') {
-            const prod = products.find((p) => p.id === it.productId);
+          if (it.condition === 'buen_estado') {
+            const prod = products.find((p) => p.id === it.productId || p.code === it.code);
             if (prod) {
               prod.stock += Number(it.quantity) || 0;
               prod.status = prod.stock === 0 ? 'out' : prod.stock <= prod.minStock ? 'low' : 'ok';
             }
+          } else if (it.condition === 'mal_estado') {
+            // 2. Artículos devueltos en mal estado van al almacén como artículos en merma
+            mermas.push({
+              id: `merma-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              returnId: id,
+              returnNumber,
+              date: today,
+              productId: it.productId,
+              code: it.code,
+              name: it.name,
+              um: it.um,
+              quantity: Number(it.quantity) || 1,
+              originalUnitPrice: Number(it.unitPrice) || 0,
+              damagedReason: it.damagedReason || 'Mal estado / defecto',
+              status: 'en_almacen_merma',
+            });
           }
         }
+        setStored(STORAGE_KEYS.MERMAS, mermas);
 
         const hasDamagedItems = (input.items || []).some((it: any) => it.condition === 'mal_estado');
 
@@ -539,8 +591,10 @@ export function createFallbackApi(): IpvApi {
           date: today,
           timestamp: time,
           items: input.items || [],
-          totalRefund: Number(input.totalRefund) || 0,
-          refundMethod: input.refundMethod || 'efectivo',
+          totalRefund,
+          refundMethod,
+          efectivoAmount,
+          transferenciaAmount,
           customerName: input.customerName || undefined,
           reason: input.reason || 'Devolución de cliente',
           hasDamagedItems,
@@ -560,6 +614,72 @@ export function createFallbackApi(): IpvApi {
         return returns.filter((r) => r.date === date);
       },
     },
+
+    mermas: {
+      async list() {
+        return getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+      },
+
+      async reincorporar(mermaId: string, newPrice: number, note?: string) {
+        let mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+        const itemIndex = mermas.findIndex((m) => m.id === mermaId);
+        if (itemIndex === -1) throw new Error('Artículo de merma no encontrado');
+        const item = mermas[itemIndex];
+        item.status = 'reincorporado_con_precio';
+        item.discountedPrice = Number(newPrice);
+        item.resolvedAt = getTodayStr();
+        item.resolutionNote = note || `Reincorporado al almacén con precio de oferta/descuento: $${Number(newPrice).toFixed(2)}`;
+        setStored(STORAGE_KEYS.MERMAS, mermas);
+
+        // Reincorporar al inventario de productos
+        const existing = products.find((p) => p.id === item.productId || p.code === item.code);
+        if (existing) {
+          if (Math.abs(existing.price - newPrice) < 0.01) {
+            existing.stock += Number(item.quantity) || 1;
+            existing.status = existing.stock === 0 ? 'out' : existing.stock <= existing.minStock ? 'low' : 'ok';
+          } else {
+            const saldoCode = `${item.code}-SALDO`;
+            const existingSaldo = products.find((p) => p.code === saldoCode);
+            if (existingSaldo) {
+              existingSaldo.stock += Number(item.quantity) || 1;
+              existingSaldo.price = Number(newPrice);
+              existingSaldo.status = existingSaldo.stock === 0 ? 'out' : existingSaldo.stock <= existingSaldo.minStock ? 'low' : 'ok';
+            } else {
+              const newSaldoProduct: Product = {
+                id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                code: saldoCode,
+                name: `${item.name} (Saldo / Defecto)`,
+                detail: `Artículo reincorporado de merma: ${item.damagedReason}`,
+                category: existing.category,
+                um: item.um,
+                price: Number(newPrice),
+                stock: Number(item.quantity) || 1,
+                minStock: 1,
+                status: 'ok',
+              };
+              products.push(newSaldoProduct);
+            }
+          }
+        }
+        persist();
+        return item;
+      },
+
+      async darDeBaja(mermaId: string, note?: string) {
+        let mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+        const itemIndex = mermas.findIndex((m) => m.id === mermaId);
+        if (itemIndex === -1) throw new Error('Artículo de merma no encontrado');
+        const item = mermas[itemIndex];
+        item.status = 'baja_definitiva';
+        item.resolvedAt = getTodayStr();
+        item.resolutionNote = note || 'Baja definitiva por daño o merma irreparable';
+        setStored(STORAGE_KEYS.MERMAS, mermas);
+        persist();
+        return item;
+      },
+    },
+
+    _isElectron: false,
   };
 }
 

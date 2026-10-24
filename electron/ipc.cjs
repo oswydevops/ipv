@@ -6,10 +6,122 @@ const { generarPdfCierre } = require('../src/main/reports/pdf.js');
 const { generarExcelCierre } = require('../src/main/reports/excel.js');
 const { generarExcelIpv } = require('../src/main/reports/ipvExcel.js');
 const path = require('path');
+const { getTrialStatus } = require('./trial.cjs');
+const {
+  activationCodeFromPayload,
+  normalizeActivationCode,
+  validateActivationCode,
+  validatePayload,
+} = require('./license.cjs');
 
 // Cada canal es "espacio:función". El renderer solo puede llamar a lo que esté aquí.
-function buildHandlers(repo, { dialog, getWindow, fs, db }) {
-  return {
+function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, trialStatePath }) {
+  const getLicenseStatus = () => {
+    const clock = repo.observeLicenseDate();
+    const record = repo.getLicenseRecord();
+    if (!record || !record.payload) {
+      return {
+        status: 'none',
+        hasLicense: false,
+        installationId: record?.installation_id || '',
+        issueDate: null,
+        expiryDate: null,
+        daysRemaining: 0,
+        licenseType: null,
+        activationCode: '',
+      };
+    }
+
+    const result = validatePayload(
+      Buffer.from(record.payload),
+      Buffer.from(record.signature || []),
+      record.installation_id,
+      clock.currentDate
+    );
+    const code = activationCodeFromPayload(record.payload, record.signature || []);
+    if (!result.ok && result.code !== 'LICENSE_EXPIRED') {
+      return {
+        status: 'invalid',
+        hasLicense: true,
+        errorCode: result.code,
+        installationId: record.installation_id,
+        issueDate: null,
+        expiryDate: null,
+        daysRemaining: 0,
+        licenseType: null,
+        activationCode: code,
+      };
+    }
+
+    const status = clock.clockRollback
+      ? 'clock_rollback'
+      : result.code === 'LICENSE_EXPIRED'
+        ? 'expired'
+        : 'valid';
+    return {
+      status,
+      hasLicense: true,
+      errorCode: clock.clockRollback ? 'CLOCK_ROLLBACK' : result.code || null,
+      installationId: record.installation_id,
+      issueDate: result.issueDate,
+      expiryDate: result.expiryDate,
+      daysRemaining: result.daysRemaining,
+      licenseType: result.licenseTypeName,
+      activationCode: code,
+    };
+  };
+
+  const assertCanWrite = () => {
+    const status = getLicenseStatus();
+    if (status.status === 'valid') return;
+    if (status.hasLicense) {
+      if (status.status === 'clock_rollback') {
+        throw new DomainError('CLOCK_ROLLBACK', 'La fecha del sistema es anterior a la última fecha registrada. Corrija la hora del sistema para continuar.');
+      }
+      if (status.status === 'expired') {
+        throw new DomainError('LICENSE_EXPIRED', 'La licencia venció. FerreStock permanece en modo de solo lectura hasta renovar la licencia.');
+      }
+      throw new DomainError('INVALID_SIGNATURE', 'La licencia guardada no es válida. Active una licencia firmada correctamente.');
+    }
+
+    if (trialStatePath && getTrialStatus(trialStatePath).isActive) return;
+    throw new DomainError('LICENSE_REQUIRED', 'Se requiere una licencia válida para realizar cambios.');
+  };
+
+  const handlers = {
+    'license:status': () => getLicenseStatus(),
+    'license:trialStatus': () => {
+      if (!trialStatePath) throw new Error('No se configuró el almacenamiento de la prueba gratuita.');
+      return getTrialStatus(trialStatePath);
+    },
+    'license:activate': (code) => {
+      const record = repo.getLicenseRecord();
+      const currentStatus = getLicenseStatus();
+      if (currentStatus.status === 'clock_rollback') {
+        throw new DomainError('CLOCK_ROLLBACK', 'La fecha del sistema es anterior a la última fecha registrada. Corrija la hora antes de activar.');
+      }
+
+      const result = validateActivationCode(
+        normalizeActivationCode(code),
+        record.installation_id,
+        repo.today()
+      );
+      if (!result.ok) {
+        const messages = {
+          INVALID_SIGNATURE: 'La firma del código es inválida.',
+          INSTALLATION_MISMATCH: 'El código pertenece a un ID de instalación distinto.',
+          LICENSE_EXPIRED: 'El código de licencia está vencido.',
+          INVALID_CODE: 'El código firmado tiene una versión o contenido no válido.',
+        };
+        throw new DomainError(result.code, messages[result.code] || 'El código de activación no es válido.');
+      }
+
+      if (currentStatus.hasLicense && currentStatus.issueDate && result.issueDate <= currentStatus.issueDate) {
+        throw new DomainError('LICENSE_ALREADY_USED', 'El código ya fue usado o su fecha de emisión no es posterior a la licencia actual.');
+      }
+      repo.saveLicense(result.payload, result.signature, result.issueDate);
+      return getLicenseStatus();
+    },
     'products:list': () => repo.listProducts(),
     'products:create': (input) => repo.createProduct(input),
     'products:update': (id, patch) => repo.updateProduct(id, patch),
@@ -69,8 +181,17 @@ function buildHandlers(repo, { dialog, getWindow, fs, db }) {
       }
       return { canceled: false, ...repo.restoreAll(data) };
     },
-    'backup:resetApplication': (password) => {
-      if (typeof password !== 'string' || password !== 'adminreset') {
+    'backup:resetApplication': async (password, event) => {
+      const configuredPassword = event?.sender?.executeJavaScript
+        ? await event.sender.executeJavaScript(
+            `window.localStorage.getItem('ferrestock_reset_password') || 'adminreset'`
+          )
+        : 'adminreset';
+      if (
+        typeof password !== 'string' ||
+        typeof configuredPassword !== 'string' ||
+        password.trim() !== configuredPassword.trim()
+      ) {
         throw new DomainError('INVALID', 'Contraseña incorrecta.');
       }
       return repo.resetAll();
@@ -137,6 +258,32 @@ function buildHandlers(repo, { dialog, getWindow, fs, db }) {
       return { canceled: false, excelPath };
     },
   };
+
+  const writeChannels = new Set([
+    'products:create',
+    'products:update',
+    'products:archive',
+    'products:addStock',
+    'products:reponerStock',
+    'sales:record',
+    'sales:void',
+    'returns:record',
+    'cash:closeDay',
+    'cash:reopenDay',
+    'backup:restoreJson',
+    'backup:resetApplication',
+  ]);
+  return Object.fromEntries(
+    Object.entries(handlers).map(([channel, handler]) => [
+      channel,
+      writeChannels.has(channel)
+        ? (...args) => {
+            assertCanWrite();
+            return handler(...args);
+          }
+        : handler,
+    ])
+  );
 }
 
 // Respuesta uniforme {ok,data} | {ok:false,error:{code,message}}:
@@ -144,9 +291,9 @@ function buildHandlers(repo, { dialog, getWindow, fs, db }) {
 // el código de error viaja en el sobre.
 function register(ipcMain, handlers) {
   for (const [channel, fn] of Object.entries(handlers)) {
-    ipcMain.handle(channel, async (_event, ...args) => {
+    ipcMain.handle(channel, async (event, ...args) => {
       try {
-        return { ok: true, data: await fn(...args) };
+        return { ok: true, data: await fn(...args, event) };
       } catch (e) {
         if (e instanceof DomainError) return { ok: false, error: { code: e.code, message: e.message } };
         console.error(`[ipc ${channel}]`, e);

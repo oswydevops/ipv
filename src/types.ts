@@ -7,6 +7,7 @@ export type ViewType =
   | 'cierre-de-caja'
   | 'reportes'
   | 'productos'
+  | 'configuracion'
   | 'respaldo-y-exportacion';
 
 export interface Product {
@@ -129,8 +130,29 @@ export interface ReturnRecord {
   items: ReturnItem[];
   totalRefund: number;
   refundMethod: 'efectivo' | 'transferencia' | 'mixto';
+  efectivoAmount?: number;
+  transferenciaAmount?: number;
   customerName?: string;
   reason: string;
   hasDamagedItems: boolean;
   createdAt: string;
 }
+
+export interface MermaItem {
+  id: string;
+  returnId: string;
+  returnNumber: string;
+  date: string;
+  productId: string;
+  code: string;
+  name: string;
+  um: string;
+  quantity: number;
+  originalUnitPrice: number;
+  damagedReason: string;
+  status: 'en_almacen_merma' | 'reincorporado_con_precio' | 'baja_definitiva';
+  discountedPrice?: number;
+  resolvedAt?: string;
+  resolutionNote?: string;
+}
+

@@ -11,6 +11,11 @@ const call = async (channel, ...args) => {
 
 contextBridge.exposeInMainWorld('api', {
   today: () => call('app:today'),
+  license: {
+    status: () => call('license:status'),
+    activate: (code) => call('license:activate', code),
+    trialStatus: () => call('license:trialStatus'),
+  },
   products: {
     list: () => call('products:list'),
     create: (input) => call('products:create', input),

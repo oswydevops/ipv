@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { IPVRow } from '../types';
+import { IPVRow, ReturnRecord } from '../types';
 
 interface BarItem {
   label: string;
@@ -44,14 +44,16 @@ const WEEKS_DEF: { key: WeekKey; label: string; startDay: number; endDay: number
 ];
 
 export const ReportsView: React.FC = () => {
-  const { showToast, sales = [], returns = [], ipvRows = [], products = [], todayDate } = useApp();
+  const { showToast, sales = [], ipvRows = [], products = [], returns = [], todayDate } = useApp();
 
   const [periodTab, setPeriodTab] = useState<'semanal' | 'mensual' | 'trimestral'>('semanal');
+  const [tableTab, setTableTab] = useState<'productos' | 'devoluciones'>('productos');
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
   const [isWeekDropdownOpen, setIsWeekDropdownOpen] = useState(false);
   const [filterSort, setFilterSort] = useState<'recaudacion' | 'volumen'>('recaudacion');
   const [page, setPage] = useState(1);
-  const [isExporting, setIsExporting] = useState(false);
+  const [returnsPage, setReturnsPage] = useState(1);
+  const [returnsSearch, setReturnsSearch] = useState('');
 
   // Fecha de referencia actual
   const refDate = useMemo(() => {
@@ -64,7 +66,7 @@ export const ReportsView: React.FC = () => {
     return new Date();
   }, [todayDate]);
 
-  // Lista de meses disponibles (mes actual y 2 anteriores, más cualquier mes con ventas reales)
+  // Lista de meses disponibles (mes actual y 2 anteriores, más cualquier mes con ventas o devoluciones)
   const availableMonths: MonthOption[] = useMemo(() => {
     const monthsMap = new Map<string, MonthOption>();
 
@@ -83,10 +85,31 @@ export const ReportsView: React.FC = () => {
       });
     }
 
-    // Agregar otros meses con ventas o devoluciones históricas
-    [...sales, ...returns].forEach((record) => {
-      if (record.date && record.date.length >= 7) {
-        const ym = record.date.slice(0, 7);
+    // Agregar cualquier otro mes de ventas históricas
+    sales.forEach((s) => {
+      if (s.date && s.date.length >= 7) {
+        const ym = s.date.slice(0, 7);
+        if (!monthsMap.has(ym)) {
+          const parts = ym.split('-');
+          const y = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10) - 1;
+          if (!isNaN(y) && !isNaN(m) && m >= 0 && m < 12) {
+            monthsMap.set(ym, {
+              key: ym,
+              name: `${MONTH_NAMES[m]} ${y}`,
+              shortName: SHORT_MONTH_NAMES[m],
+              year: y,
+              month: m,
+            });
+          }
+        }
+      }
+    });
+
+    // Agregar cualquier otro mes de devoluciones históricas
+    returns.forEach((r) => {
+      if (r.date && r.date.length >= 7) {
+        const ym = r.date.slice(0, 7);
         if (!monthsMap.has(ym)) {
           const parts = ym.split('-');
           const y = parseInt(parts[0], 10);
@@ -138,7 +161,6 @@ export const ReportsView: React.FC = () => {
   // Filtrar ventas reales para el periodo seleccionado
   const periodFilteredSales = useMemo(() => {
     if (periodTab === 'trimestral') {
-      // Últimos 3 meses disponibles
       const allowedKeys = new Set(availableMonths.slice(0, 3).map((m) => m.key));
       return sales.filter((s) => s.date && allowedKeys.has(s.date.slice(0, 7)));
     }
@@ -155,57 +177,91 @@ export const ReportsView: React.FC = () => {
     });
   }, [sales, periodTab, availableMonths, currentMonthOption.key, weekStartDay, weekEndDay]);
 
+  // Filtrar devoluciones para el periodo seleccionado
   const periodFilteredReturns = useMemo(() => {
     if (periodTab === 'trimestral') {
-      const allowedKeys = new Set(availableMonths.slice(0, 3).map((month) => month.key));
-      return returns.filter((record) => record.date && allowedKeys.has(record.date.slice(0, 7)));
+      const allowedKeys = new Set(availableMonths.slice(0, 3).map((m) => m.key));
+      return returns.filter((r) => r.date && allowedKeys.has(r.date.slice(0, 7)));
     }
+
     if (periodTab === 'mensual') {
-      return returns.filter((record) => record.date?.startsWith(currentMonthOption.key));
+      return returns.filter((r) => r.date && r.date.startsWith(currentMonthOption.key));
     }
-    return returns.filter((record) => {
-      if (!record.date?.startsWith(currentMonthOption.key)) return false;
-      const day = Number(record.date.split('-')[2]);
-      return day >= weekStartDay && day <= weekEndDay;
+
+    // Semanal
+    return returns.filter((r) => {
+      if (!r.date || !r.date.startsWith(currentMonthOption.key)) return false;
+      const dayNum = parseInt(r.date.split('-')[2], 10);
+      return dayNum >= weekStartDay && dayNum <= weekEndDay;
     });
   }, [returns, periodTab, availableMonths, currentMonthOption.key, weekStartDay, weekEndDay]);
-
-  const periodReturnTotals = useMemo(() => {
-    const byMethod = periodFilteredReturns.reduce(
-      (totals, record) => {
-        totals[record.refundMethod] += Number(record.totalRefund || 0);
-        return totals;
-      },
-      { efectivo: 0, transferencia: 0, mixto: 0 }
-    );
-    return {
-      count: periodFilteredReturns.length,
-      total: byMethod.efectivo + byMethod.transferencia + byMethod.mixto,
-      ...byMethod,
-    };
-  }, [periodFilteredReturns]);
 
   // Si no hay ventas registradas en sales pero hay datos en el IPV del día actual, respaldar con el IPV
   const isCurrentSelectionToday = currentMonthOption.key === defaultMonthKey;
   const ipvTotalVendidoToday = (ipvRows || []).reduce((acc, r) => acc + (r.importe || 0), 0);
 
-  // Total de ingresos del periodo
+  // Total de ingresos brutos del periodo
   const periodTotalRevenue = useMemo(() => {
     const fromSales = periodFilteredSales.reduce((acc, s) => acc + (s.total || 0), 0);
     if (fromSales > 0) return fromSales;
-    // Si aún no hay tickets de venta guardados pero el IPV tiene ventas del día
     if (isCurrentSelectionToday && periodTab === 'semanal' && ipvTotalVendidoToday > 0) {
       return ipvTotalVendidoToday;
     }
     return 0;
   }, [periodFilteredSales, isCurrentSelectionToday, periodTab, ipvTotalVendidoToday]);
 
+  // Estadísticas consolidadas de devoluciones en el periodo
+  const returnsStats = useMemo(() => {
+    const totalRefund = periodFilteredReturns.reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+    const count = periodFilteredReturns.length;
+    let returnedUnits = 0;
+    let damagedUnits = 0;
+    let goodUnits = 0;
+    let cashRefund = 0;
+    let transferRefund = 0;
+    let mixedRefund = 0;
+
+    periodFilteredReturns.forEach((r) => {
+      if (r.refundMethod === 'efectivo') cashRefund += r.totalRefund || 0;
+      else if (r.refundMethod === 'transferencia') transferRefund += r.totalRefund || 0;
+      else mixedRefund += r.totalRefund || 0;
+
+      (r.items || []).forEach((it) => {
+        const q = it.quantity || 1;
+        returnedUnits += q;
+        if (it.condition === 'mal_estado') {
+          damagedUnits += q;
+        } else {
+          goodUnits += q;
+        }
+      });
+    });
+
+    const refundPercentageOfRevenue = periodTotalRevenue > 0
+      ? ((totalRefund / periodTotalRevenue) * 100).toFixed(1)
+      : '0.0';
+
+    return {
+      totalRefund,
+      count,
+      returnedUnits,
+      damagedUnits,
+      goodUnits,
+      cashRefund,
+      transferRefund,
+      mixedRefund,
+      refundPercentageOfRevenue,
+    };
+  }, [periodFilteredReturns, periodTotalRevenue]);
+
+  // Ingreso neto real (Ventas Brutas - Devoluciones Totales)
+  const periodNetRevenue = Math.max(0, periodTotalRevenue - returnsStats.totalRefund);
+
   // Costo total de lo vendido para cálculo de margen
   const periodCost = useMemo(() => {
     let totalC = 0;
     periodFilteredSales.forEach((s) => {
       (s.items || []).forEach((it) => {
-        // Estimación de costo al 65% del precio de venta (margen del 35%)
         const itemCost = it.unitPrice * 0.65;
         totalC += itemCost * (it.quantity || 1);
       });
@@ -217,8 +273,20 @@ export const ReportsView: React.FC = () => {
     return totalC;
   }, [periodFilteredSales, periodTotalRevenue]);
 
-  const netProfit = Math.max(0, periodTotalRevenue - periodCost);
-  const marginPct = periodTotalRevenue > 0 ? ((netProfit / periodTotalRevenue) * 100).toFixed(1) : '0.0';
+  const netProfit = Math.max(0, periodNetRevenue - periodCost);
+  const marginPct = periodNetRevenue > 0 ? ((netProfit / periodNetRevenue) * 100).toFixed(1) : (periodTotalRevenue > 0 ? ((netProfit / periodTotalRevenue) * 100).toFixed(1) : '0.0');
+
+  // Mapa de unidades devueltas por producto
+  const returnedUnitsByProduct = useMemo(() => {
+    const map = new Map<string, number>();
+    periodFilteredReturns.forEach((r) => {
+      (r.items || []).forEach((it) => {
+        const key = it.code || it.productId || it.name;
+        map.set(key, (map.get(key) || 0) + (it.quantity || 1));
+      });
+    });
+    return map;
+  }, [periodFilteredReturns]);
 
   // Desglose de barras dinámico
   const barData: { title: string; subtitle: string; badge: string; items: BarItem[]; footerNote: string; footerTotal: string } = useMemo(() => {
@@ -251,13 +319,12 @@ export const ReportsView: React.FC = () => {
         subtitle: `Consolidado de los últimos ${top3.length} meses evaluados`,
         badge: `${top3.length} meses`,
         items,
-        footerNote: peakMonth ? `Mes con mayor facturación: ${peakMonth.m.name}` : 'Sin ventas registradas en el trimestre',
+        footerNote: peakMonth ? `Mes pico: ${peakMonth.m.name}` : 'Sin ventas registradas en el trimestre',
         footerTotal: `${periodTotalRevenue.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`,
       };
     }
 
     if (periodTab === 'mensual') {
-      // 4 semanas del mes
       const weekTotals = WEEKS_DEF.map((w) => {
         const wStart = Math.min(w.startDay, daysInSelectedMonth);
         const wEnd = Math.min(w.endDay, daysInSelectedMonth);
@@ -292,25 +359,22 @@ export const ReportsView: React.FC = () => {
         subtitle: `Desglose de las 4 semanas de ${currentMonthOption.name}`,
         badge: '4 semanas',
         items,
-        footerNote: peakWeek ? `Semana de mayor facturación: ${peakWeek.w.label}` : 'Sin ventas registradas en el mes',
+        footerNote: peakWeek ? `Semana pico: ${peakWeek.w.label}` : 'Sin ventas registradas en el mes',
         footerTotal: `${periodTotalRevenue.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`,
       };
     }
 
     // Semanal: Desglose por los 7 días de la semana
     const dayNames = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-    const daysCount = Math.max(1, weekEndDay - weekStartDay + 1);
     const dayItems: { dayNum: number; dateStr: string; label: string; val: number }[] = [];
 
     for (let d = weekStartDay; d <= weekEndDay; d++) {
       const dateObj = new Date(currentMonthOption.year, currentMonthOption.month, d);
-      // JS getDay(): 0 es Dom, 1 es Lun...
       const dayIdx = (dateObj.getDay() + 6) % 7; // Lun=0, Dom=6
       const dateStr = `${currentMonthOption.key}-${String(d).padStart(2, '0')}`;
       const daySales = sales.filter((s) => s.date === dateStr);
       let val = daySales.reduce((acc, s) => acc + (s.total || 0), 0);
 
-      // Si es hoy y no hay tickets pero hay IPV
       if (dateStr === todayDate && val === 0 && ipvTotalVendidoToday > 0) {
         val = ipvTotalVendidoToday;
       }
@@ -363,7 +427,7 @@ export const ReportsView: React.FC = () => {
     periodTotalRevenue,
   ]);
 
-  // Curva de tendencia dinámica (SVG paths calculados a partir de los datos reales)
+  // Curva de tendencia dinámica (SVG paths)
   const curveData = useMemo(() => {
     const rawPoints: TrendPoint[] = barData.items.map((b) => ({
       label: b.label,
@@ -373,21 +437,19 @@ export const ReportsView: React.FC = () => {
     const maxVal = Math.max(...rawPoints.map((p) => p.value), 0);
     const count = rawPoints.length;
     const width = 700;
-    const height = 240;
     const paddingX = 40;
     const baseY = 210;
     const peakY = 50;
 
     if (maxVal === 0 || count < 2) {
-      // Línea plana de base limpia cuando no hay ventas
-      const flatDots = rawPoints.map((p, idx) => ({
+      const flatDots = rawPoints.map((_, idx) => ({
         cx: paddingX + (idx / Math.max(1, count - 1)) * (width - 2 * paddingX),
         cy: baseY,
       }));
 
       return {
         title: `Curva de Tendencia - ${periodTab === 'trimestral' ? 'Trimestre' : periodTab === 'mensual' ? currentMonthOption.name : selectedWeekDef.label}`,
-        subtitle: 'Evolución real del volumen de facturación por transacciones',
+        subtitle: 'Evolución de facturación y devoluciones del periodo seleccionado',
         labels: rawPoints.map((p) => p.label),
         peakText: '0.00 CUP',
         peakCoord: { x: width / 2, y: baseY },
@@ -400,14 +462,12 @@ export const ReportsView: React.FC = () => {
       };
     }
 
-    // Calcular coordenadas escaladas
     const dots = rawPoints.map((p, idx) => {
       const cx = paddingX + (idx / (count - 1)) * (width - 2 * paddingX);
       const cy = baseY - (p.value / maxVal) * (baseY - peakY);
       return { cx, cy };
     });
 
-    // Construir paths SVG
     let linePath = `M ${dots[0].cx} ${dots[0].cy}`;
     for (let i = 1; i < dots.length; i++) {
       const prev = dots[i - 1];
@@ -418,7 +478,6 @@ export const ReportsView: React.FC = () => {
 
     const areaPath = `${linePath} L ${dots[dots.length - 1].cx} 225 L ${dots[0].cx} 225 Z`;
 
-    // Moving average sencilla
     const movingDots = dots.map((d, i) => {
       const prevVal = i > 0 ? dots[i - 1].cy : d.cy;
       const nextVal = i < dots.length - 1 ? dots[i + 1].cy : d.cy;
@@ -430,7 +489,6 @@ export const ReportsView: React.FC = () => {
       movingAvgPath += ` L ${movingDots[i].cx} ${movingDots[i].cy}`;
     }
 
-    // Coordenada del pico máximo
     let peakIdx = 0;
     rawPoints.forEach((p, idx) => {
       if (p.value > rawPoints[peakIdx].value) peakIdx = idx;
@@ -438,7 +496,7 @@ export const ReportsView: React.FC = () => {
 
     return {
       title: `Curva de Tendencia - ${periodTab === 'trimestral' ? 'Trimestre' : periodTab === 'mensual' ? currentMonthOption.name : selectedWeekDef.label}`,
-      subtitle: 'Evolución real del volumen de facturación por transacciones',
+      subtitle: 'Evolución de facturación y transacciones operativas',
       labels: rawPoints.map((p) => p.label),
       peakText: `Pico: ${maxVal.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`,
       peakCoord: { x: dots[peakIdx].cx, y: dots[peakIdx].cy },
@@ -446,8 +504,8 @@ export const ReportsView: React.FC = () => {
       linePath,
       movingAvgPath,
       dots,
-      varianceText: `Facturación registrada: ${periodFilteredSales.length} transacciones`,
-      avgTrans: `Promedio: ${(periodTotalRevenue / Math.max(1, count)).toFixed(2)} CUP / unidad temporal`,
+      varianceText: `Facturación registrada: ${periodFilteredSales.length} ventas`,
+      avgTrans: `Promedio: ${(periodTotalRevenue / Math.max(1, count)).toFixed(2)} CUP / unidad`,
     };
   }, [
     barData.items,
@@ -458,60 +516,52 @@ export const ReportsView: React.FC = () => {
     periodTotalRevenue,
   ]);
 
-  // KPIs dinámicos calculados
+  // KPIs dinámicos calculados incluyendo devoluciones
   const kpis = useMemo(() => {
-    const totalFormatted = periodTotalRevenue.toLocaleString('es-CU', {
+    const grossTotalFormatted = periodTotalRevenue.toLocaleString('es-CU', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
 
-    // Promedio diario o por venta
-    const activeUnits = Math.max(1, barData.items.filter((b) => b.value > 0).length);
-    const avgDailyVal = periodTotalRevenue > 0 ? periodTotalRevenue / activeUnits : 0;
-    const avgDailyFormatted = avgDailyVal.toLocaleString('es-CU', {
+    const netTotalFormatted = periodNetRevenue.toLocaleString('es-CU', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
 
-    // Pico
-    const peakItem = barData.items.find((b) => b.isPeak && b.value > 0);
-    const peakTitle = periodTab === 'semanal' ? 'Mejor Día' : periodTab === 'mensual' ? 'Mejor Semana' : 'Mejor Mes';
-    const peakValue = peakItem ? peakItem.label : 'Sin registros';
-    const peakAmount = peakItem ? `${peakItem.value.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP` : '0.00 CUP';
-    const peakBadge = peakItem ? 'Pico del Periodo' : 'En Espera';
+    const returnsTotalFormatted = returnsStats.totalRefund.toLocaleString('es-CU', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
 
     const netProfitFormatted = `${netProfit.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`;
 
     return {
-      total: totalFormatted,
-      totalLabel: periodTab === 'semanal' ? `Ventas ${selectedWeekDef.label} (${currentMonthOption.shortName})` : periodTab === 'mensual' ? `Ventas Totales de ${currentMonthOption.name}` : 'Ventas del Trimestre Activo',
-      diff: periodTotalRevenue > 0 ? 'Activo' : '0.0%',
-      diffText: periodTotalRevenue > 0 ? `${periodFilteredSales.length} ventas procesadas` : 'Sin transacciones aún',
-      avgLabel: 'Promedio Operativo',
-      avgDaily: avgDailyFormatted,
-      avgDailyNote: periodTotalRevenue > 0 ? `Calculado en ${activeUnits} periodos con actividad` : 'En espera de ventas',
-      peakTitle,
-      peakValue,
-      peakAmount,
-      peakBadge,
+      grossTotal: grossTotalFormatted,
+      netTotal: netTotalFormatted,
+      returnsTotal: returnsTotalFormatted,
+      returnsCount: returnsStats.count,
+      returnsUnits: returnsStats.returnedUnits,
+      returnsDamaged: returnsStats.damagedUnits,
+      returnsRate: `${returnsStats.refundPercentageOfRevenue}%`,
       margin: `${marginPct}%`,
       netProfit: netProfitFormatted,
+      grossLabel: periodTab === 'semanal' ? `Ventas Brutas (${selectedWeekDef.label})` : periodTab === 'mensual' ? `Ventas Brutas (${currentMonthOption.name})` : 'Ventas Brutas (Trimestre)',
+      diffText: periodTotalRevenue > 0 ? `${periodFilteredSales.length} tickets emitidos` : 'Sin transacciones aún',
     };
   }, [
     periodTotalRevenue,
-    barData.items,
+    periodNetRevenue,
+    returnsStats,
     periodTab,
     selectedWeekDef.label,
-    currentMonthOption.shortName,
     currentMonthOption.name,
     periodFilteredSales.length,
     netProfit,
     marginPct,
   ]);
 
-  // Lista de Productos más vendidos derivada de las ventas reales del periodo (o del IPV si aún no hay tickets)
+  // Lista de Productos más vendidos derivada de las ventas reales
   const sortedProducts = useMemo(() => {
-    // 1. Intentar construir a partir de periodFilteredSales
     const productStatsMap = new Map<string, { code: string; name: string; category: string; soldUnits: number; unitPrice: number; totalIncome: number }>();
 
     periodFilteredSales.forEach((s) => {
@@ -534,7 +584,6 @@ export const ReportsView: React.FC = () => {
       });
     });
 
-    // 2. Si las ventas del periodo están vacías pero ipvRows tiene ventas del día
     if (productStatsMap.size === 0 && isCurrentSelectionToday) {
       (ipvRows || []).filter((r: IPVRow) => (r.vendido || 0) > 0).forEach((r: IPVRow) => {
         productStatsMap.set(r.code, {
@@ -556,17 +605,21 @@ export const ReportsView: React.FC = () => {
     const totalIncomeAll = items.reduce((acc, it) => acc + it.totalIncome, 0);
 
     return items
-      .map((item, idx) => ({
-        rank: idx + 1,
-        code: item.code,
-        name: item.name,
-        category: item.category,
-        icon: 'inventory_2',
-        soldUnits: item.soldUnits,
-        unitPrice: item.unitPrice,
-        totalIncome: item.totalIncome,
-        percentage: totalIncomeAll > 0 ? Number(((item.totalIncome / totalIncomeAll) * 100).toFixed(1)) : 0,
-      }))
+      .map((item, idx) => {
+        const returnedQty = returnedUnitsByProduct.get(item.code) || 0;
+        return {
+          rank: idx + 1,
+          code: item.code,
+          name: item.name,
+          category: item.category,
+          icon: 'inventory_2',
+          soldUnits: item.soldUnits,
+          returnedUnits: returnedQty,
+          unitPrice: item.unitPrice,
+          totalIncome: item.totalIncome,
+          percentage: totalIncomeAll > 0 ? Number(((item.totalIncome / totalIncomeAll) * 100).toFixed(1)) : 0,
+        };
+      })
       .sort((a, b) => {
         if (filterSort === 'volumen') {
           return b.soldUnits - a.soldUnits;
@@ -574,75 +627,122 @@ export const ReportsView: React.FC = () => {
         return b.totalIncome - a.totalIncome;
       })
       .map((p, idx) => ({ ...p, rank: idx + 1 }));
-  }, [periodFilteredSales, isCurrentSelectionToday, ipvRows, filterSort]);
+  }, [periodFilteredSales, isCurrentSelectionToday, ipvRows, filterSort, returnedUnitsByProduct]);
 
-  const pageSize = 5;
+  // Paginación para productos más vendidos
+  const pageSize = 6;
   const totalPages = Math.max(1, Math.ceil(sortedProducts.length / pageSize));
   const validPage = Math.min(page, totalPages);
   const paginatedReports = sortedProducts.slice((validPage - 1) * pageSize, validPage * pageSize);
   const startIdx = sortedProducts.length === 0 ? 0 : (validPage - 1) * pageSize + 1;
   const endIdx = Math.min(validPage * pageSize, sortedProducts.length);
 
-  // Exportar productos y devoluciones del periodo a un libro de Excel
-  const handleExport = async () => {
+  // Filtrado y paginación para lista de Devoluciones en reportes
+  const filteredReturnsForReport = useMemo(() => {
+    if (!returnsSearch.trim()) return periodFilteredReturns;
+    const q = returnsSearch.toLowerCase();
+    return periodFilteredReturns.filter((r) => {
+      const matchNum = r.returnNumber?.toLowerCase().includes(q);
+      const matchTicket = r.ticketNumber?.toLowerCase().includes(q);
+      const matchClient = r.customerName?.toLowerCase().includes(q);
+      const matchReason = r.reason?.toLowerCase().includes(q);
+      const matchProduct = (r.items || []).some(
+        (it) => it.name.toLowerCase().includes(q) || it.code.toLowerCase().includes(q)
+      );
+      return matchNum || matchTicket || matchClient || matchReason || matchProduct;
+    });
+  }, [periodFilteredReturns, returnsSearch]);
+
+  const returnsPageSize = 6;
+  const returnsTotalPages = Math.max(1, Math.ceil(filteredReturnsForReport.length / returnsPageSize));
+  const validReturnsPage = Math.min(returnsPage, returnsTotalPages);
+  const paginatedReturns = filteredReturnsForReport.slice(
+    (validReturnsPage - 1) * returnsPageSize,
+    validReturnsPage * returnsPageSize
+  );
+  const returnsStartIdx = filteredReturnsForReport.length === 0 ? 0 : (validReturnsPage - 1) * returnsPageSize + 1;
+  const returnsEndIdx = Math.min(validReturnsPage * returnsPageSize, filteredReturnsForReport.length);
+
+  // Exportar datos reales consolidados (Ventas + Devoluciones)
+  const handleExport = () => {
     const filename =
       periodTab === 'trimestral'
-        ? `Reporte_IPV_Trimestral_${currentMonthOption.year}.xlsx`
+        ? `Reporte_Comercial_Trimestral_${currentMonthOption.year}.csv`
         : periodTab === 'mensual'
-        ? `Reporte_IPV_${currentMonthOption.key}.xlsx`
-        : `Reporte_IPV_${currentMonthOption.key}_${selectedWeekKey.toUpperCase()}.xlsx`;
-    const periodLabel = periodTab === 'trimestral'
-      ? `Trimestre hasta ${currentMonthOption.name}`
-      : periodTab === 'mensual'
-      ? currentMonthOption.name
-      : `${selectedWeekDef.label} de ${currentMonthOption.name}`;
+        ? `Reporte_Comercial_${currentMonthOption.name.replace(' ', '_')}.csv`
+        : `Reporte_Comercial_${currentMonthOption.name.replace(' ', '_')}_${selectedWeekKey.toUpperCase()}.csv`;
 
-    setIsExporting(true);
-    try {
-      if (!window.api?.reports?.exportarIpvExcel) {
-        throw new Error('La exportación IPV a Excel no está disponible en esta versión de la aplicación.');
-      }
-      const result = await window.api.reports.exportarIpvExcel({
-        date: `${currentMonthOption.key}-01`,
-        fileName: filename,
-        title: 'Reporte IPV y ventas',
-        period: periodLabel,
-        columns: [
-          { header: 'Posición', key: 'rank', width: 12 },
-          { header: 'Código', key: 'code', width: 16 },
-          { header: 'Producto', key: 'name', width: 32 },
-          { header: 'Categoría', key: 'category', width: 20 },
-          { header: 'Unidades vendidas', key: 'soldUnits', width: 20 },
-          { header: 'Precio unitario (CUP)', key: 'unitPrice', width: 22 },
-          { header: 'Ingresos (CUP)', key: 'totalIncome', width: 20 },
-          { header: 'Participación', key: 'percentage', width: 16 },
-        ],
-        rows: sortedProducts.map((product) => ({
-          rank: product.rank,
-          code: product.code,
-          name: product.name,
-          category: product.category,
-          soldUnits: product.soldUnits,
-          unitPrice: product.unitPrice,
-          totalIncome: product.totalIncome,
-          percentage: `${product.percentage}%`,
-        })),
-        metrics: [
-          { label: 'Ingresos del periodo (CUP)', value: periodTotalRevenue },
-          { label: 'Ventas registradas', value: periodFilteredSales.length },
-          { label: 'Devoluciones registradas', value: periodReturnTotals.count },
-        ],
-        returns: periodFilteredReturns,
-      });
-      if (!result.canceled) {
-        showToast('Reporte IPV exportado', result.excelPath, 'success');
-      }
-    } catch (error: any) {
-      console.error('Error al exportar reporte IPV:', error);
-      showToast('Error al exportar reporte', error?.message || 'No se pudo generar el archivo Excel.', 'error');
-    } finally {
-      setIsExporting(false);
-    }
+    const summaryLines = [
+      '--- RESUMEN EJECUTIVO DEL PERIODO ---',
+      `Periodo,${periodTab === 'semanal' ? `${selectedWeekDef.label} (${weekDateRangeLabel})` : periodTab === 'mensual' ? currentMonthOption.name : 'Trimestre Activo'}`,
+      `Ventas Brutas Totales (CUP),${periodTotalRevenue.toFixed(2)}`,
+      `Total Devoluciones / Reembolsos (CUP),${returnsStats.totalRefund.toFixed(2)}`,
+      `Ventas Netas Realizadas (CUP),${periodNetRevenue.toFixed(2)}`,
+      `Cantidad de Devoluciones Procesadas,${returnsStats.count}`,
+      `Unidades Devueltas Totales,${returnsStats.returnedUnits}`,
+      `Unidades en Mal Estado (Merma),${returnsStats.damagedUnits}`,
+      `Margen Bruto Estimado,${marginPct}%`,
+      `Rentabilidad Neta Estimada (CUP),${netProfit.toFixed(2)}`,
+      '',
+      '--- PRODUCTOS MÁS VENDIDOS ---',
+      'Rank,Codigo,Producto,Categoria,Uds_Vendidas,Uds_Devueltas,Precio_Unitario_CUP,Total_Ingresos_CUP,Porcentaje_Ventas',
+    ];
+
+    const productRows = sortedProducts.map((p) =>
+      [
+        p.rank,
+        `"${p.code}"`,
+        `"${p.name.replace(/"/g, '""')}"`,
+        `"${p.category}"`,
+        p.soldUnits,
+        p.returnedUnits,
+        p.unitPrice.toFixed(2),
+        p.totalIncome.toFixed(2),
+        `${p.percentage}%`,
+      ].join(',')
+    );
+
+    const returnHeader = [
+      '',
+      '--- REGISTRO DETALLADO DE DEVOLUCIONES DEL PERIODO ---',
+      'Folio_Devolucion,Fecha,Hora,Ticket_Origen,Cliente,Metodo_Reembolso,Motivo,Uds_Totales,Total_Reembolsado_CUP',
+    ];
+
+    const returnRows = periodFilteredReturns.map((r) => {
+      const units = (r.items || []).reduce((s, it) => s + (it.quantity || 1), 0);
+      const timePart = r.timestamp ? r.timestamp.split('T')[1]?.slice(0, 5) || '' : '';
+      return [
+        `"${r.returnNumber || ''}"`,
+        `"${r.date || ''}"`,
+        `"${timePart}"`,
+        `"${r.ticketNumber || 'Venta Directa'}"`,
+        `"${(r.customerName || 'Cliente').replace(/"/g, '""')}"`,
+        `"${r.refundMethod}"`,
+        `"${(r.reason || '').replace(/"/g, '""')}"`,
+        units,
+        (r.totalRefund || 0).toFixed(2),
+      ].join(',');
+    });
+
+    const fullContent = [
+      ...summaryLines,
+      ...productRows,
+      ...returnHeader,
+      ...returnRows,
+    ].join('\n');
+
+    const csvContent = '\uFEFF' + fullContent;
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast('Reporte Completo Exportado', `Se ha generado "${filename}" con el balance de ventas y devoluciones.`);
   };
 
   const handlePeriodTabChange = (tab: 'semanal' | 'mensual' | 'trimestral') => {
@@ -650,18 +750,16 @@ export const ReportsView: React.FC = () => {
     setIsMonthDropdownOpen(false);
     setIsWeekDropdownOpen(false);
     setPage(1);
+    setReturnsPage(1);
     const label = tab === 'semanal' ? 'Semanal' : tab === 'mensual' ? 'Mensual' : 'Trimestral';
     showToast('Periodo Actualizado', `Mostrando análisis para vista ${label}.`);
   };
 
-  const getTableTitle = () => {
-    if (periodTab === 'trimestral') {
-      return 'Productos Más Vendidos del Trimestre Activo';
-    }
-    if (periodTab === 'mensual') {
-      return `Productos Más Vendidos de ${currentMonthOption.name}`;
-    }
-    return `Productos Más Vendidos (${selectedWeekDef.label} de ${currentMonthOption.name})`;
+  const formatCUP = (val: number) => {
+    return Number(val || 0).toLocaleString('es-CU', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   };
 
   return (
@@ -669,11 +767,14 @@ export const ReportsView: React.FC = () => {
       {/* Header section */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-2xl lg:text-3xl font-headline font-bold text-on-surface tracking-tight">
-            Reportes y Analítica de Ventas
+          <h1 className="text-2xl lg:text-3xl font-headline font-bold text-on-surface tracking-tight flex items-center gap-2.5">
+            <span>Reportes y Analítica Comercial</span>
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-surface neo-inset text-primary font-mono font-bold">
+              Ventas + Devoluciones
+            </span>
           </h1>
           <p className="text-sm text-on-surface-variant max-w-2xl font-normal leading-relaxed">
-            Rendimiento comercial calculado a partir de las ventas en tiempo real, desglose semanal y consolidado mensual en CUP.
+            Consolidación integral de facturación bruta, reembolsos procesados por devoluciones y recaudación neta en CUP.
           </p>
         </div>
 
@@ -717,7 +818,6 @@ export const ReportsView: React.FC = () => {
 
           {/* Timeframe Selectors */}
           {periodTab === 'trimestral' ? (
-            /* Trimestral Badge Pill */
             <div className="h-11 px-4 rounded-xl bg-surface neo-inset flex items-center gap-2 text-xs font-semibold text-primary">
               <span className="material-symbols-outlined text-[19px]">history_edu</span>
               <span>Trimestre Activo ({availableMonths.slice(0, 3).map((m) => m.shortName).join(' - ')})</span>
@@ -755,6 +855,7 @@ export const ReportsView: React.FC = () => {
                             setSelectedMonthKey(m.key);
                             setIsMonthDropdownOpen(false);
                             setPage(1);
+                            setReturnsPage(1);
                             showToast('Mes Seleccionado', `Visualizando datos para ${m.name}`);
                           }}
                           className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center justify-between cursor-pointer ${
@@ -817,6 +918,7 @@ export const ReportsView: React.FC = () => {
                               setSelectedWeekKey(w.key);
                               setIsWeekDropdownOpen(false);
                               setPage(1);
+                              setReturnsPage(1);
                               showToast('Semana Seleccionada', `${w.label} (${rangeStr}) de ${currentMonthOption.name}`);
                             }}
                             className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center justify-between cursor-pointer ${
@@ -847,33 +949,32 @@ export const ReportsView: React.FC = () => {
             </div>
           )}
 
-          {/* Export to Excel */}
+          {/* Export to Excel / CSV */}
           <button
             onClick={handleExport}
-            disabled={isExporting}
-            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700 active:neo-inset transition-all group cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700 active:neo-inset transition-all group cursor-pointer"
             type="button"
           >
             <span className="material-symbols-outlined text-[19px] transition-transform group-hover:-translate-y-0.5">
-              {isExporting ? 'hourglass_top' : 'table_view'}
+              table_view
             </span>
-            <span>{isExporting ? 'Exportando...' : 'Exportar [.xlsx]'}</span>
+            <span>Exportar Reporte Completo [.csv]</span>
           </button>
         </div>
       </div>
 
-      {/* 4 Bento Metric Cards dynamically driven by period & real sales */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5">
-        {/* Card 1: Total Ventas del Periodo */}
+      {/* 4 Bento Metric Cards with Returns Integrated */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+        {/* Card 1: Total Ventas Brutas */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative overflow-hidden group">
           <div className="flex items-start justify-between">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-                {kpis.totalLabel}
+                {kpis.grossLabel}
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-on-surface tracking-tight font-mono">
-                  {kpis.total}
+                  {kpis.grossTotal}
                 </span>
                 <span className="text-xs font-semibold text-primary font-mono">CUP</span>
               </div>
@@ -893,7 +994,7 @@ export const ReportsView: React.FC = () => {
               <span className="material-symbols-outlined text-[15px]">
                 {periodTotalRevenue > 0 ? 'trending_up' : 'info'}
               </span>
-              {kpis.diff}
+              Ventas
             </span>
             <span className="text-[11px] text-on-surface-variant font-medium truncate">
               {kpis.diffText}
@@ -901,62 +1002,71 @@ export const ReportsView: React.FC = () => {
           </div>
         </div>
 
-        {/* Card 2: Promedio */}
+        {/* Card 2: Devoluciones y Reembolsos del Periodo */}
+        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative overflow-hidden group">
+          <div className="flex items-start justify-between">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold tracking-wide text-rose-600 uppercase flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                Devoluciones del Periodo
+              </span>
+              <div className="flex items-baseline gap-1.5 mt-0.5">
+                <span className="text-2xl font-headline font-bold text-rose-600 tracking-tight font-mono">
+                  -${kpis.returnsTotal}
+                </span>
+                <span className="text-xs font-semibold text-rose-500 font-mono">CUP</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-rose-500">
+              <span className="material-symbols-outlined text-[22px]">assignment_return</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15">
+            <span className="text-[11px] text-on-surface-variant font-medium truncate">
+              {kpis.returnsCount} devoluciones ({kpis.returnsUnits} uds devueltas)
+            </span>
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono ${
+                returnsStats.totalRefund > 0
+                  ? 'text-rose-600 bg-rose-500/10'
+                  : 'text-on-surface-variant bg-surface-container-high'
+              }`}
+            >
+              {kpis.returnsRate} de ventas
+            </span>
+          </div>
+        </div>
+
+        {/* Card 3: Ventas Netas Efectivas */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
           <div className="flex items-start justify-between">
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-                {kpis.avgLabel}
+              <span className="text-xs font-semibold tracking-wide text-emerald-600 uppercase flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                Ventas Netas Realizadas
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-2xl font-headline font-bold text-on-surface tracking-tight font-mono">
-                  {kpis.avgDaily}
+                <span className="text-2xl font-headline font-bold text-emerald-700 tracking-tight font-mono">
+                  {kpis.netTotal}
                 </span>
-                <span className="text-xs font-semibold text-primary font-mono">CUP</span>
+                <span className="text-xs font-semibold text-emerald-600 font-mono">CUP</span>
               </div>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-tertiary">
-              <span className="material-symbols-outlined text-[22px]">speed</span>
+            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-emerald-600">
+              <span className="material-symbols-outlined text-[22px]">account_balance_wallet</span>
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15">
             <span className="text-[11px] text-on-surface-variant font-medium">
-              {kpis.avgDailyNote}
+              Ingresos reales descontando reembolsos
             </span>
-            <span className={`w-2 h-2 rounded-full ${periodTotalRevenue > 0 ? 'bg-primary' : 'bg-outline-variant'}`}></span>
-          </div>
-        </div>
-
-        {/* Card 3: Pico / Mejor Periodo */}
-        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
-          <div className="flex items-start justify-between">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-                {kpis.peakTitle}
-              </span>
-              <span className="text-xl font-headline font-bold text-on-surface tracking-tight mt-0.5 truncate">
-                {kpis.peakValue}
-              </span>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-indigo-500">
-              <span className="material-symbols-outlined text-[22px]">workspace_premium</span>
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15">
-            <span className="text-xs font-semibold text-on-surface font-mono">{kpis.peakAmount}</span>
-            <span
-              className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
-                periodTotalRevenue > 0
-                  ? 'text-emerald-600 bg-emerald-500/10'
-                  : 'text-on-surface-variant bg-surface-container-high'
-              }`}
-            >
-              {kpis.peakBadge}
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-emerald-600 bg-emerald-500/10 font-mono">
+              Neto
             </span>
           </div>
         </div>
 
-        {/* Card 4: Margen Bruto */}
+        {/* Card 4: Margen Bruto y Rentabilidad */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
           <div className="flex items-start justify-between">
             <div className="flex flex-col gap-1">
@@ -984,38 +1094,9 @@ export const ReportsView: React.FC = () => {
             </div>
           </div>
         </div>
-
-        {/* Card 5: Devoluciones del periodo */}
-        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
-          <div className="flex items-start justify-between">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-                Devoluciones del periodo
-              </span>
-              <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-2xl font-headline font-bold text-amber-700 tracking-tight font-mono">
-                  {periodReturnTotals.total.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-                <span className="text-xs font-semibold text-amber-700 font-mono">CUP</span>
-              </div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-600">
-              <span className="material-symbols-outlined text-[22px]">assignment_return</span>
-            </div>
-          </div>
-          <div className="flex flex-col gap-1 mt-4 pt-3 border-t border-outline-variant/15 text-[10px] text-on-surface-variant">
-            <span>{periodReturnTotals.count} devoluciones registradas</span>
-            <span>
-              Efectivo {periodReturnTotals.efectivo.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Transferencia {periodReturnTotals.transferencia.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <span>
-              Mixto {periodReturnTotals.mixto.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-        </div>
       </div>
 
-      {/* Visual Analytics Grid dynamically responsive to periodTab and selection */}
+      {/* Visual Analytics Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Bar Chart breakdown */}
         <div className="lg:col-span-5 p-6 rounded-2xl bg-surface neo-raised flex flex-col justify-between">
@@ -1079,7 +1160,7 @@ export const ReportsView: React.FC = () => {
               {barData.footerNote}
             </span>
             <span className="font-medium text-on-surface font-mono">
-              Total: {barData.footerTotal}
+              Bruto: {barData.footerTotal}
             </span>
           </div>
         </div>
@@ -1098,7 +1179,11 @@ export const ReportsView: React.FC = () => {
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5 text-xs text-on-surface-variant">
                 <span className="w-2.5 h-2.5 rounded-full bg-primary"></span>
-                <span>Ventas Periodo</span>
+                <span>Facturación Bruta</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-rose-500 font-medium">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                <span>{returnsStats.count} devoluciones</span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-on-surface-variant">
                 <span className="w-2.5 h-2.5 rounded-full bg-tertiary"></span>
@@ -1210,202 +1295,496 @@ export const ReportsView: React.FC = () => {
               ))}
             </div>
           </div>
-
-          <div className="flex items-center justify-between text-xs text-on-surface-variant pt-3 border-t border-outline-variant/15">
-            <span className="flex items-center gap-1">
-              <span className={`material-symbols-outlined text-[16px] ${periodTotalRevenue > 0 ? 'text-emerald-500' : 'text-on-surface-variant'}`}>
-                {periodTotalRevenue > 0 ? 'check_circle' : 'hourglass_empty'}
-              </span>
-              {curveData.varianceText}
-            </span>
-            <span className="font-medium text-on-surface">
-              {curveData.avgTrans}
-            </span>
-          </div>
         </div>
       </div>
 
-      {/* Top Best Sellers Table */}
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-surface neo-raised flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-[22px]">leaderboard</span>
-            </div>
-            <div className="flex flex-col">
-              <h2 className="text-lg font-headline font-bold text-on-surface">
-                {getTableTitle()}
-              </h2>
-              <span className="text-xs text-on-surface-variant">
-                Líderes de volumen comercial, facturación agregada e impacto relativo calculados de ventas reales
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-on-surface-variant">Filtrar por:</span>
+      {/* Main Reporting Tabs: Productos Más Vendidos vs Devoluciones del Periodo */}
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/20 pb-2">
+          {/* Tabs Switcher */}
+          <div className="flex items-center gap-2 p-1 rounded-xl bg-surface neo-inset">
             <button
-              onClick={() =>
-                setFilterSort(filterSort === 'recaudacion' ? 'volumen' : 'recaudacion')
-              }
-              className="h-9 px-3 rounded-xl bg-surface neo-raised text-xs font-semibold text-primary flex items-center gap-1.5 active:neo-inset cursor-pointer"
+              onClick={() => {
+                setTableTab('productos');
+                setPage(1);
+              }}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                tableTab === 'productos'
+                  ? 'bg-surface neo-raised text-primary shadow-sm'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
               type="button"
             >
-              <span>{filterSort === 'recaudacion' ? 'Mayor Recaudación' : 'Mayor Volumen'}</span>
-              <span className="material-symbols-outlined text-[16px]">swap_vert</span>
+              <span className="material-symbols-outlined text-[18px]">leaderboard</span>
+              <span>Productos Más Vendidos</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-primary/10 text-primary">
+                {sortedProducts.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setTableTab('devoluciones');
+                setReturnsPage(1);
+              }}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                tableTab === 'devoluciones'
+                  ? 'bg-surface neo-raised text-rose-600 shadow-sm'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[18px]">assignment_return</span>
+              <span>Devoluciones del Periodo</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  periodFilteredReturns.length > 0
+                    ? 'bg-rose-500/15 text-rose-600 font-bold'
+                    : 'bg-surface-container-high text-on-surface-variant'
+                }`}
+              >
+                {periodFilteredReturns.length}
+              </span>
             </button>
           </div>
+
+          {/* Contextual Action for Current Tab */}
+          {tableTab === 'productos' ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-on-surface-variant">Filtrar por:</span>
+              <button
+                onClick={() =>
+                  setFilterSort(filterSort === 'recaudacion' ? 'volumen' : 'recaudacion')
+                }
+                className="h-9 px-3 rounded-xl bg-surface neo-raised text-xs font-semibold text-primary flex items-center gap-1.5 active:neo-inset cursor-pointer"
+                type="button"
+              >
+                <span>{filterSort === 'recaudacion' ? 'Mayor Recaudación' : 'Mayor Volumen'}</span>
+                <span className="material-symbols-outlined text-[16px]">swap_vert</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={returnsSearch}
+                  onChange={(e) => {
+                    setReturnsSearch(e.target.value);
+                    setReturnsPage(1);
+                  }}
+                  placeholder="Buscar en devoluciones..."
+                  className="h-9 pl-8 pr-3 text-xs rounded-xl bg-surface neo-inset text-on-surface placeholder:text-on-surface-variant/60 focus:outline-none focus:ring-1 focus:ring-primary w-52 sm:w-64"
+                />
+                <span className="material-symbols-outlined text-[16px] absolute left-2.5 top-2.5 text-on-surface-variant">
+                  search
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="rounded-2xl bg-surface neo-raised p-2 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead>
-                <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                  <th className="py-3 px-4 text-center w-12" scope="col">
-                    # Rank
-                  </th>
-                  <th className="py-3 px-4" scope="col">
-                    Producto &amp; Especificación
-                  </th>
-                  <th className="py-3 px-4" scope="col">
-                    Categoría
-                  </th>
-                  <th className="py-3 px-4 text-right" scope="col">
-                    Uds. Vendidas
-                  </th>
-                  <th className="py-3 px-4 text-right" scope="col">
-                    Precio Unitario
-                  </th>
-                  <th className="py-3 px-4 text-right" scope="col">
-                    Total Ingresos (CUP)
-                  </th>
-                  <th className="py-3 px-4 text-center w-48" scope="col">
-                    % Ventas Periodo
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y-0 text-on-surface">
-                {paginatedReports.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-12 text-center text-xs text-on-surface-variant font-medium">
-                      <div className="flex flex-col items-center justify-center gap-2">
-                        <span className="material-symbols-outlined text-[32px] text-on-surface-variant/70">receipt_long</span>
-                        <span>No hay registros de ventas para el periodo seleccionado</span>
-                        <p className="text-[11px] text-on-surface-variant/70 max-w-sm">
-                          A medida que se registren ventas en la caja o en el IPV, los datos y estadísticas se calcularán automáticamente aquí.
-                        </p>
-                      </div>
-                    </td>
+        {/* TAB 1: PRODUCTOS MÁS VENDIDOS */}
+        {tableTab === 'productos' && (
+          <div className="rounded-2xl bg-surface neo-raised p-2 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                    <th className="py-3 px-4 text-center w-12" scope="col">
+                      # Rank
+                    </th>
+                    <th className="py-3 px-4" scope="col">
+                      Producto &amp; Especificación
+                    </th>
+                    <th className="py-3 px-4" scope="col">
+                      Categoría
+                    </th>
+                    <th className="py-3 px-4 text-right" scope="col">
+                      Uds. Vendidas
+                    </th>
+                    <th className="py-3 px-4 text-center" scope="col">
+                      Devueltas
+                    </th>
+                    <th className="py-3 px-4 text-right" scope="col">
+                      Precio Unitario
+                    </th>
+                    <th className="py-3 px-4 text-right" scope="col">
+                      Total Ingresos (CUP)
+                    </th>
+                    <th className="py-3 px-4 text-center w-48" scope="col">
+                      % Ventas Periodo
+                    </th>
                   </tr>
-                ) : (
-                  paginatedReports.map((p) => (
-                    <tr key={p.rank} className="group hover:bg-surface-container-high/40 transition-colors">
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-surface neo-inset text-primary font-bold text-xs font-mono">
-                          {p.rank}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant">
-                            <span className="material-symbols-outlined text-[18px]">{p.icon}</span>
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="font-semibold text-on-surface group-hover:text-primary transition-colors">
-                              {p.name}
-                            </span>
-                            <span className="text-[11px] text-on-surface-variant font-mono">COD: {p.code}</span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-surface neo-inset text-on-surface-variant">
-                          {p.category}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-medium font-mono">{p.soldUnits} u.</td>
-                      <td className="py-3.5 px-4 text-right text-on-surface-variant font-mono">
-                        {p.unitPrice.toFixed(2)} CUP
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-bold text-on-surface font-mono">
-                        {p.totalIncome.toLocaleString('es-CU', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{' '}
-                        CUP
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <div className="flex-1 h-2 rounded-full bg-surface neo-inset overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-primary"
-                              style={{ width: `${Math.min(100, p.percentage)}%` }}
-                            ></div>
-                          </div>
-                          <span className="text-xs font-bold text-on-surface w-10 text-right font-mono">
-                            {p.percentage}%
-                          </span>
+                </thead>
+                <tbody className="divide-y-0 text-on-surface">
+                  {paginatedReports.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-xs text-on-surface-variant font-medium">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <span className="material-symbols-outlined text-[32px] text-on-surface-variant/70">receipt_long</span>
+                          <span>No hay registros de ventas para el periodo seleccionado</span>
+                          <p className="text-[11px] text-on-surface-variant/70 max-w-sm">
+                            A medida que se registren ventas en la caja o en el IPV, los datos y estadísticas se calcularán automáticamente aquí.
+                          </p>
                         </div>
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ) : (
+                    paginatedReports.map((p) => (
+                      <tr key={p.rank} className="group hover:bg-surface-container-high/40 transition-colors">
+                        <td className="py-3.5 px-4 text-center">
+                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-surface neo-inset text-primary font-bold text-xs font-mono">
+                            {p.rank}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant">
+                              <span className="material-symbols-outlined text-[18px]">{p.icon}</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="font-semibold text-on-surface group-hover:text-primary transition-colors">
+                                {p.name}
+                              </span>
+                              <span className="text-[11px] text-on-surface-variant font-mono">COD: {p.code}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-surface neo-inset text-on-surface-variant">
+                            {p.category}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-medium font-mono">{p.soldUnits} u.</td>
+                        <td className="py-3.5 px-4 text-center">
+                          {p.returnedUnits > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-mono">
+                              <span className="material-symbols-outlined text-[13px]">assignment_return</span>
+                              -{p.returnedUnits} u.
+                            </span>
+                          ) : (
+                            <span className="text-on-surface-variant/40 font-mono text-xs">-</span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right text-on-surface-variant font-mono">
+                          {p.unitPrice.toFixed(2)} CUP
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-bold text-on-surface font-mono">
+                          {p.totalIncome.toLocaleString('es-CU', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          CUP
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex-1 h-2 rounded-full bg-surface neo-inset overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-primary"
+                                style={{ width: `${Math.min(100, p.percentage)}%` }}
+                              ></div>
+                            </div>
+                            <span className="text-xs font-bold text-on-surface w-10 text-right font-mono">
+                              {p.percentage}%
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-          <div className="p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-on-surface-variant bg-surface rounded-xl mt-2 neo-inset">
-            <span className="font-medium">
-              Mostrando <strong className="text-on-surface">{startIdx} a {endIdx}</strong> de{' '}
-              <strong className="text-on-surface">{sortedProducts.length}</strong> productos líderes
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={validPage === 1}
-                className={`w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center transition-all ${
-                  validPage === 1
-                    ? 'opacity-40 cursor-not-allowed text-on-surface-variant'
-                    : 'hover:text-primary active:neo-inset cursor-pointer text-on-surface'
-                }`}
-                type="button"
-                title="Página anterior"
-              >
-                <span className="material-symbols-outlined text-[16px]">chevron_left</span>
-              </button>
-
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+            <div className="p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-on-surface-variant bg-surface rounded-xl mt-2 neo-inset">
+              <span className="font-medium">
+                Mostrando <strong className="text-on-surface">{startIdx} a {endIdx}</strong> de{' '}
+                <strong className="text-on-surface">{sortedProducts.length}</strong> productos analizados
+              </span>
+              <div className="flex items-center gap-2">
                 <button
-                  key={pageNum}
-                  onClick={() => setPage(pageNum)}
-                  className={`w-8 h-8 rounded-lg text-xs font-semibold flex items-center justify-center transition-all cursor-pointer ${
-                    validPage === pageNum
-                      ? 'bg-surface neo-inset text-primary font-bold shadow-inner'
-                      : 'bg-surface neo-raised text-on-surface-variant hover:text-on-surface active:neo-inset'
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={validPage === 1}
+                  className={`w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center transition-all ${
+                    validPage === 1
+                      ? 'opacity-40 cursor-not-allowed text-on-surface-variant'
+                      : 'hover:text-primary active:neo-inset cursor-pointer text-on-surface'
                   }`}
                   type="button"
+                  title="Página anterior"
                 >
-                  {pageNum}
+                  <span className="material-symbols-outlined text-[16px]">chevron_left</span>
                 </button>
-              ))}
 
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={validPage === totalPages}
-                className={`w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center transition-all ${
-                  validPage === totalPages
-                    ? 'opacity-40 cursor-not-allowed text-on-surface-variant'
-                    : 'hover:text-primary active:neo-inset cursor-pointer text-on-surface'
-                }`}
-                type="button"
-                title="Página siguiente"
-              >
-                <span className="material-symbols-outlined text-[16px]">chevron_right</span>
-              </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                  <button
+                    key={pageNum}
+                    onClick={() => setPage(pageNum)}
+                    className={`w-8 h-8 rounded-lg text-xs font-semibold flex items-center justify-center transition-all cursor-pointer ${
+                      validPage === pageNum
+                        ? 'bg-surface neo-inset text-primary font-bold shadow-inner'
+                        : 'bg-surface neo-raised text-on-surface-variant hover:text-on-surface active:neo-inset'
+                    }`}
+                    type="button"
+                  >
+                    {pageNum}
+                  </button>
+                ))}
+
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={validPage === totalPages}
+                  className={`w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center transition-all ${
+                    validPage === totalPages
+                      ? 'opacity-40 cursor-not-allowed text-on-surface-variant'
+                      : 'hover:text-primary active:neo-inset cursor-pointer text-on-surface'
+                  }`}
+                  type="button"
+                  title="Página siguiente"
+                >
+                  <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* TAB 2: DETALLE DE DEVOLUCIONES DEL PERIODO */}
+        {tableTab === 'devoluciones' && (
+          <div className="flex flex-col gap-5">
+            {/* 4 Mini Cards de Resumen de Devoluciones */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-on-surface-variant uppercase">
+                    Reembolso en Efectivo
+                  </span>
+                  <span className="text-lg font-bold text-on-surface font-mono mt-0.5">
+                    ${formatCUP(returnsStats.cashRefund)} CUP
+                  </span>
+                </div>
+                <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined text-[18px]">payments</span>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-on-surface-variant uppercase">
+                    Reembolso Transferencia
+                  </span>
+                  <span className="text-lg font-bold text-on-surface font-mono mt-0.5">
+                    ${formatCUP(returnsStats.transferRefund)} CUP
+                  </span>
+                </div>
+                <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined text-[18px]">account_balance</span>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-emerald-700 uppercase">
+                    Reintegrados a Stock
+                  </span>
+                  <span className="text-lg font-bold text-emerald-700 font-mono mt-0.5">
+                    {returnsStats.goodUnits} unidades
+                  </span>
+                </div>
+                <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-emerald-600">
+                  <span className="material-symbols-outlined text-[18px]">inventory_2</span>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-rose-600 uppercase">
+                    Baja / Dañado (Merma)
+                  </span>
+                  <span className="text-lg font-bold text-rose-600 font-mono mt-0.5">
+                    {returnsStats.damagedUnits} unidades
+                  </span>
+                </div>
+                <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-rose-500">
+                  <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Tabla Detallada de Devoluciones */}
+            <div className="rounded-2xl bg-surface neo-raised p-2 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm whitespace-nowrap">
+                  <thead>
+                    <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                      <th className="py-3 px-4" scope="col">
+                        Folio &amp; Fecha
+                      </th>
+                      <th className="py-3 px-4" scope="col">
+                        Ticket Origen
+                      </th>
+                      <th className="py-3 px-4" scope="col">
+                        Cliente / Motivo
+                      </th>
+                      <th className="py-3 px-4" scope="col">
+                        Artículos Devueltos
+                      </th>
+                      <th className="py-3 px-4 text-center" scope="col">
+                        Método Reembolso
+                      </th>
+                      <th className="py-3 px-4 text-right" scope="col">
+                        Monto Reembolsado (CUP)
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y-0 text-on-surface">
+                    {paginatedReturns.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-12 text-center text-xs text-on-surface-variant font-medium">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <span className="material-symbols-outlined text-[32px] text-on-surface-variant/70">
+                              assignment_return
+                            </span>
+                            <span>No hay devoluciones registradas en este periodo</span>
+                            <p className="text-[11px] text-on-surface-variant/70 max-w-sm">
+                              Cualquier devolución registrada para esta semana, mes o trimestre aparecerá clasificada aquí automáticamente.
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedReturns.map((r: ReturnRecord) => {
+                        const totalUnits = (r.items || []).reduce((acc, it) => acc + (it.quantity || 1), 0);
+                        const hasDamaged = r.hasDamagedItems || (r.items || []).some((it) => it.condition === 'mal_estado');
+
+                        return (
+                          <tr key={r.id} className="group hover:bg-surface-container-high/40 transition-colors">
+                            <td className="py-3.5 px-4">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-on-surface font-mono group-hover:text-primary transition-colors">
+                                  {r.returnNumber || 'DEV-N/A'}
+                                </span>
+                                <span className="text-[11px] text-on-surface-variant font-mono">
+                                  {r.date} {r.timestamp ? r.timestamp.split('T')[1]?.slice(0, 5) : ''}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <span className="px-2.5 py-1 rounded-md text-xs font-mono font-medium bg-surface neo-inset text-on-surface-variant">
+                                {r.ticketNumber || 'Venta directa'}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <div className="flex flex-col max-w-xs">
+                                <span className="font-semibold text-on-surface text-xs truncate">
+                                  {r.customerName || 'Cliente general'}
+                                </span>
+                                <span className="text-[11px] text-on-surface-variant truncate">
+                                  {r.reason || 'Sin motivo especificado'}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <div className="flex flex-col gap-1 max-w-sm">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-medium text-on-surface font-mono">
+                                    {totalUnits} {totalUnits === 1 ? 'artículo' : 'artículos'}
+                                  </span>
+                                  {hasDamaged ? (
+                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-500/10 text-rose-600">
+                                      Con merma
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600">
+                                      Reintegrable
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-on-surface-variant truncate">
+                                  {(r.items || []).map((it) => `${it.name} (x${it.quantity})`).join(', ')}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4 text-center">
+                              <span
+                                className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${
+                                  r.refundMethod === 'efectivo'
+                                    ? 'bg-emerald-500/10 text-emerald-700'
+                                    : r.refundMethod === 'transferencia'
+                                    ? 'bg-blue-500/10 text-blue-700'
+                                    : 'bg-purple-500/10 text-purple-700'
+                                }`}
+                              >
+                                {r.refundMethod}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-right">
+                              <span className="font-bold text-rose-600 font-mono text-sm">
+                                -{formatCUP(r.totalRefund)} CUP
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-on-surface-variant bg-surface rounded-xl mt-2 neo-inset">
+                <span className="font-medium">
+                  Mostrando <strong className="text-on-surface">{returnsStartIdx} a {returnsEndIdx}</strong> de{' '}
+                  <strong className="text-on-surface">{filteredReturnsForReport.length}</strong> devoluciones registradas
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setReturnsPage((p) => Math.max(1, p - 1))}
+                    disabled={validReturnsPage === 1}
+                    className={`w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center transition-all ${
+                      validReturnsPage === 1
+                        ? 'opacity-40 cursor-not-allowed text-on-surface-variant'
+                        : 'hover:text-primary active:neo-inset cursor-pointer text-on-surface'
+                    }`}
+                    type="button"
+                    title="Página anterior"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">chevron_left</span>
+                  </button>
+
+                  {Array.from({ length: returnsTotalPages }, (_, i) => i + 1).map((pageNum) => (
+                    <button
+                      key={pageNum}
+                      onClick={() => setReturnsPage(pageNum)}
+                      className={`w-8 h-8 rounded-lg text-xs font-semibold flex items-center justify-center transition-all cursor-pointer ${
+                        validReturnsPage === pageNum
+                          ? 'bg-surface neo-inset text-rose-600 font-bold shadow-inner'
+                          : 'bg-surface neo-raised text-on-surface-variant hover:text-on-surface active:neo-inset'
+                      }`}
+                      type="button"
+                    >
+                      {pageNum}
+                    </button>
+                  ))}
+
+                  <button
+                    onClick={() => setReturnsPage((p) => Math.min(returnsTotalPages, p + 1))}
+                    disabled={validReturnsPage === returnsTotalPages}
+                    className={`w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center transition-all ${
+                      validReturnsPage === returnsTotalPages
+                        ? 'opacity-40 cursor-not-allowed text-on-surface-variant'
+                        : 'hover:text-primary active:neo-inset cursor-pointer text-on-surface'
+                    }`}
+                    type="button"
+                    title="Página siguiente"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

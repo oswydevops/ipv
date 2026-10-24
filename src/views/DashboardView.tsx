@@ -7,8 +7,8 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  BarChart,
-  Bar,
+  PieChart,
+  Pie,
   Cell,
 } from 'recharts';
 import { useApp } from '../context/AppContext';
@@ -17,7 +17,6 @@ interface TrendDataPoint {
   label: string;
   ventas: number;
   transacciones: number;
-  meta?: number;
 }
 
 interface CustomTooltipProps {
@@ -62,7 +61,69 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label })
   return null;
 };
 
-const CATEGORY_COLORS = ['#6366f1', '#7c3aed', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#14b8a6'];
+interface CategoryPieTooltipProps {
+  active?: boolean;
+  payload?: Array<{
+    payload: {
+      category: string;
+      total: number;
+      units: number;
+      porcentaje: number;
+      color: string;
+    };
+  }>;
+}
+
+const CategoryPieTooltip: React.FC<CategoryPieTooltipProps> = ({ active, payload }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div className="rounded-xl bg-surface neo-raised p-3 border border-outline-variant/30 shadow-xl text-xs flex flex-col gap-1.5 min-w-[170px] z-50">
+        <div className="flex items-center gap-2 pb-1.5 border-b border-outline-variant/20">
+          <span
+            className="w-3 h-3 rounded-md shrink-0 shadow-sm"
+            style={{ backgroundColor: data.color }}
+          />
+          <span className="font-bold text-on-surface text-xs truncate">{data.category}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-[11px]">
+          <span className="text-on-surface-variant font-medium">Recaudación:</span>
+          <span className="font-mono font-bold text-on-surface">
+            ${Number(data.total).toLocaleString('es-CU', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })} CUP
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-[11px]">
+          <span className="text-on-surface-variant font-medium">Unidades:</span>
+          <span className="font-mono font-semibold text-on-surface">{data.units} uds</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-[11px] pt-1 border-t border-outline-variant/10">
+          <span className="text-on-surface-variant font-medium">Participación:</span>
+          <span
+            className="font-mono font-bold px-1.5 py-0.5 rounded-md text-[11px]"
+            style={{ backgroundColor: `${data.color}20`, color: data.color }}
+          >
+            {data.porcentaje}%
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+const CATEGORY_COLORS = [
+  '#6366f1', // Indigo
+  '#06b6d4', // Cyan
+  '#8b5cf6', // Violet
+  '#10b981', // Emerald
+  '#f59e0b', // Amber
+  '#ec4899', // Pink
+  '#3b82f6', // Blue
+  '#14b8a6', // Teal
+];
 
 export const DashboardView: React.FC = () => {
   const {
@@ -81,6 +142,7 @@ export const DashboardView: React.FC = () => {
   } = useApp();
 
   const [trendView, setTrendView] = useState<'hourly' | 'weekly'>('hourly');
+  const [hoveredCategoryIndex, setHoveredCategoryIndex] = useState<number | null>(null);
 
   const zeroStockCount = products.filter((p) => p.stock === 0).length;
   const lowStockCount = products.filter((p) => p.stock > 0 && p.stock <= p.minStock).length;
@@ -200,14 +262,54 @@ export const DashboardView: React.FC = () => {
     const entries = Array.from(catMap.entries()).sort((a, b) => b[1].total - a[1].total);
     const totalSum = entries.reduce((acc, curr) => acc + curr[1].total, 0) || 1;
 
-    return entries.slice(0, 5).map(([category, data], idx) => ({
-      category,
-      total: data.total,
-      units: data.units,
-      porcentaje: Number(((data.total / totalSum) * 100).toFixed(1)),
+    // Mostrar hasta 6 categorías principales y agrupar el resto en "Otras" para cobertura total del 100%
+    const maxVisibleCategories = 6;
+    let finalCategories: { category: string; total: number; units: number }[] = [];
+
+    if (entries.length <= maxVisibleCategories) {
+      finalCategories = entries.map(([category, data]) => ({
+        category,
+        total: data.total,
+        units: data.units,
+      }));
+    } else {
+      const topEntries = entries.slice(0, maxVisibleCategories - 1);
+      const otherEntries = entries.slice(maxVisibleCategories - 1);
+      const otherTotal = otherEntries.reduce((acc, [, d]) => acc + d.total, 0);
+      const otherUnits = otherEntries.reduce((acc, [, d]) => acc + d.units, 0);
+
+      finalCategories = [
+        ...topEntries.map(([category, data]) => ({
+          category,
+          total: data.total,
+          units: data.units,
+        })),
+        {
+          category: 'Otras',
+          total: otherTotal,
+          units: otherUnits,
+        },
+      ];
+    }
+
+    return finalCategories.map((item, idx) => ({
+      category: item.category,
+      total: item.total,
+      units: item.units,
+      porcentaje: Number(((item.total / totalSum) * 100).toFixed(1)),
       color: CATEGORY_COLORS[idx % CATEGORY_COLORS.length],
     }));
   }, [sales, ipvRows, products, ipvTotalVendido]);
+
+  const categoryTotalSum = useMemo(() => {
+    return categoryDistribution.reduce((acc, curr) => acc + curr.total, 0);
+  }, [categoryDistribution]);
+
+  const categoryTotalUnits = useMemo(() => {
+    return categoryDistribution.reduce((acc, curr) => acc + curr.units, 0);
+  }, [categoryDistribution]);
+
+  const hoveredCategory = hoveredCategoryIndex !== null ? categoryDistribution[hoveredCategoryIndex] : null;
 
   // Curva horaria calculada a partir de los tickets reales de hoy
   const hourlyData = useMemo<TrendDataPoint[]>(() => {
@@ -236,7 +338,6 @@ export const DashboardView: React.FC = () => {
         label: slot,
         ventas: data.ventas,
         transacciones: data.transacciones,
-        meta: 5000,
       };
     });
   }, [sales]);
@@ -279,7 +380,7 @@ export const DashboardView: React.FC = () => {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl lg:text-3xl font-headline font-bold text-on-surface tracking-tight">
-            Dashboard de Rendimiento Diario
+            Dashboard de Rendimiento
           </h1>
           <p className="text-xs lg:text-sm text-on-surface-variant">
             Resumen en vivo de ventas del día, recaudación en efectivo, productos líderes y curvas de tendencia.
@@ -549,81 +650,178 @@ export const DashboardView: React.FC = () => {
         <div className="lg:col-span-4 p-6 rounded-2xl bg-surface neo-raised flex flex-col justify-between gap-4">
           <div className="flex items-center justify-between">
             <div className="flex flex-col">
-              <h2 className="text-base font-headline font-bold text-on-surface">
-                Ventas por Categoría
-              </h2>
-              <span className="text-xs text-on-surface-variant">Distribución del flujo de caja</span>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-headline font-bold text-on-surface">
+                  Ventas por Categoría
+                </h2>
+                {categoryDistribution.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold font-mono">
+                    {categoryDistribution.length} {categoryDistribution.length === 1 ? 'cat.' : 'cats.'}
+                  </span>
+                )}
+              </div>
+              <span className="text-xs text-on-surface-variant">
+                Distribución porcentual de recaudación
+              </span>
             </div>
-            <span className="material-symbols-outlined text-primary text-[20px]">category</span>
+            <div className="w-8 h-8 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
+              <span className="material-symbols-outlined text-[19px]">pie_chart</span>
+            </div>
           </div>
 
           {categoryDistribution.length === 0 ? (
-            <div className="h-56 flex flex-col items-center justify-center text-center p-4 gap-2.5 text-on-surface-variant">
-              <div className="w-12 h-12 rounded-2xl bg-surface neo-inset flex items-center justify-center text-primary/60">
-                <span className="material-symbols-outlined text-[26px]">pie_chart</span>
+            <div className="h-64 flex flex-col items-center justify-center text-center p-4 gap-2.5 text-on-surface-variant">
+              <div className="w-14 h-14 rounded-2xl bg-surface neo-inset flex items-center justify-center text-primary/60">
+                <span className="material-symbols-outlined text-[30px]">donut_small</span>
               </div>
               <p className="text-xs font-semibold text-on-surface">Sin ventas por categoría aún</p>
               <p className="text-[11px] text-on-surface-variant max-w-[240px] leading-relaxed">
-                Este gráfico se ordenará automáticamente según las categorías que más se vendan a medida que se registren operaciones.
+                Este gráfico de pastel se generará automáticamente mostrando la proporción de ventas por categoría a medida que se registren operaciones.
               </p>
             </div>
           ) : (
-            <>
-              {/* Recharts Horizontal Bar Chart */}
-              <div className="w-full h-52">
+            <div className="flex flex-col gap-4">
+              {/* Donut / Pie Chart Container */}
+              <div className="relative w-full h-48 flex items-center justify-center">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={categoryDistribution}
-                    layout="vertical"
-                    margin={{ top: 5, right: 10, left: 15, bottom: 5 }}
-                  >
-                    <XAxis type="number" hide />
-                    <YAxis
-                      dataKey="category"
-                      type="category"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: '#2e3040', fontSize: 11, fontWeight: 600 }}
-                      width={80}
-                    />
-                    <Tooltip
-                      formatter={(value) => [`$${formatCUP(Number(value) || 0)} CUP`, 'Total']}
-                      contentStyle={{
-                        backgroundColor: '#e8eaf0',
-                        borderRadius: '0.75rem',
-                        boxShadow: '4px 4px 10px rgba(0,0,0,0.08), -4px -4px 10px rgba(255,255,255,0.7)',
-                        border: 'none',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                      }}
-                    />
-                    <Bar dataKey="total" radius={[0, 8, 8, 0]}>
+                  <PieChart>
+                    <Tooltip content={<CategoryPieTooltip />} />
+                    <Pie
+                      data={categoryDistribution}
+                      dataKey="total"
+                      nameKey="category"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={46}
+                      outerRadius={72}
+                      paddingAngle={3}
+                      stroke="#e8eaf0"
+                      strokeWidth={2}
+                      onMouseEnter={(_, index) => setHoveredCategoryIndex(index)}
+                      onMouseLeave={() => setHoveredCategoryIndex(null)}
+                    >
                       {categoryDistribution.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={entry.color}
+                          opacity={hoveredCategoryIndex === null || hoveredCategoryIndex === index ? 1 : 0.35}
+                          className="transition-all duration-200 cursor-pointer outline-none"
+                        />
                       ))}
-                    </Bar>
-                  </BarChart>
+                    </Pie>
+                  </PieChart>
                 </ResponsiveContainer>
-              </div>
 
-              {/* Category detail list */}
-              <div className="flex flex-col gap-2 pt-2 border-t border-outline-variant/20">
-                {categoryDistribution.slice(0, 3).map((cat) => (
-                  <div key={cat.category} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color }}></span>
-                      <span className="font-medium text-on-surface">{cat.category}</span>
-                    </div>
-                    <div className="flex items-center gap-2 font-mono">
-                      <span className="font-bold text-on-surface">${formatCUP(cat.total)}</span>
-                      <span className="text-[10px] text-on-surface-variant font-semibold">
-                        ({cat.porcentaje}%)
+                {/* Donut Center Display */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+                  {hoveredCategory ? (
+                    <div className="flex flex-col items-center justify-center text-center px-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant max-w-[85px] truncate">
+                        {hoveredCategory.category}
+                      </span>
+                      <span className="text-base font-extrabold font-mono text-on-surface leading-tight">
+                        {hoveredCategory.porcentaje}%
+                      </span>
+                      <span className="text-[9px] font-mono text-on-surface-variant font-medium">
+                        ${formatCUP(hoveredCategory.total)}
                       </span>
                     </div>
-                  </div>
-                ))}
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-center px-2">
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-on-surface-variant">
+                        Total
+                      </span>
+                      <span className="text-sm font-extrabold font-mono text-on-surface leading-tight">
+                        100%
+                      </span>
+                      <span className="text-[9px] font-mono text-on-surface-variant font-medium">
+                        {categoryDistribution.length} cats.
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
-            </>
+
+              {/* Categorized Legend List */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-on-surface-variant px-1">
+                  <span>Leyenda por categoría</span>
+                  <span>Monto / Cuota</span>
+                </div>
+
+                <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-1">
+                  {categoryDistribution.map((cat, idx) => {
+                    const isHovered = hoveredCategoryIndex === idx;
+                    const isAnyHovered = hoveredCategoryIndex !== null;
+                    return (
+                      <div
+                        key={cat.category}
+                        onMouseEnter={() => setHoveredCategoryIndex(idx)}
+                        onMouseLeave={() => setHoveredCategoryIndex(null)}
+                        className={`p-2 rounded-xl transition-all cursor-pointer flex flex-col gap-1.5 border ${
+                          isHovered
+                            ? 'bg-surface neo-inset border-primary/30 scale-[1.01]'
+                            : isAnyHovered
+                            ? 'bg-surface/40 border-transparent opacity-40 hover:opacity-100'
+                            : 'bg-surface-container/50 border-transparent hover:bg-surface neo-raised-sm'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-3 h-3 rounded-md shrink-0 shadow-sm"
+                              style={{ backgroundColor: cat.color }}
+                            />
+                            <span className="font-semibold text-on-surface truncate text-xs">
+                              {cat.category}
+                            </span>
+                            <span className="text-[10px] text-on-surface-variant px-1.5 py-0.5 rounded-md bg-surface font-medium shrink-0 font-mono">
+                              {cat.units} {cat.units === 1 ? 'ud' : 'uds'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 font-mono shrink-0 ml-2">
+                            <span className="font-bold text-on-surface text-xs">
+                              ${formatCUP(cat.total)}
+                            </span>
+                            <span
+                              className="text-[11px] font-bold px-1.5 py-0.5 rounded-md font-mono"
+                              style={{
+                                backgroundColor: `${cat.color}20`,
+                                color: cat.color,
+                              }}
+                            >
+                              {cat.porcentaje}%
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Visual Proportion Bar */}
+                        <div className="w-full h-1.5 rounded-full bg-surface-container overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-300"
+                            style={{
+                              width: `${cat.porcentaje}%`,
+                              backgroundColor: cat.color,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Bottom Summary Strip */}
+              <div className="flex items-center justify-between text-xs pt-3 border-t border-outline-variant/20 text-on-surface-variant">
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-primary">analytics</span>
+                  <span>Total comercializado:</span>
+                </span>
+                <span className="font-mono font-bold text-on-surface">
+                  ${formatCUP(categoryTotalSum)} CUP
+                </span>
+              </div>
+            </div>
           )}
         </div>
       </div>

@@ -15,6 +15,9 @@ const fakeDb = {
   prepare(query) {
     return {
       get() {
+        if (query.includes('voided_at IS NOT NULL')) {
+          return { voidedCount: 1, voidedTotal: 15, voidedCash: 0, voidedTransfer: 15 };
+        }
         if (query.includes('SUM(efectivo)')) {
           return { ticketsCount: 8, totalVentas: 500, totalEfectivo: 400, totalTransferencia: 100 };
         }
@@ -33,7 +36,20 @@ const fakeDb = {
         return null;
       },
       all() {
-        if (query.includes('r.id, r.sale_id, r.return_number')) {
+        if (query.includes('FROM return_items')) {
+          return [{
+            product_id: 'product-1',
+            code: 'P-001',
+            name: 'Artículo de prueba',
+            um: 'Unidad',
+            quantity: 1,
+            unit_price: 45,
+            refund_amount: 45,
+            condition: 'mal_estado',
+            damaged_reason: 'No funciona',
+          }];
+        }
+        if (query.includes('return_number') && query.includes('total_refund')) {
           return [{
             id: 'return-1',
             sale_id: null,
@@ -112,7 +128,7 @@ async function run() {
     returnSheet.eachRow((row) => returnValues.push(...row.values));
     assert.ok(returnValues.includes('DEV-001'));
     assert.ok(returnValues.includes('TKT-00123'));
-    assert.ok(returnValues.includes('Artículo de prueba'));
+    assert.ok(returnValues.some((value) => typeof value === 'string' && value.includes('Artículo de prueba')));
     assert.ok(returnValues.includes('Venta anulada'));
 
     const ipvOutput = path.join(directory, 'reporte-ipv.xlsx');
@@ -182,11 +198,16 @@ async function run() {
 
       let resetCalled = false;
       const resetHandlers = buildHandlers(
-        { resetAll: () => { resetCalled = true; return { cleared: { products: 1 } }; } },
-        {}
+        {
+          today: () => fecha,
+          observeLicenseDate: () => ({ clockRollback: false, currentDate: fecha }),
+          getLicenseRecord: () => ({ installation_id: 'ABC234', payload: null }),
+          resetAll: () => { resetCalled = true; return { cleared: { products: 1 } }; },
+        },
+        { trialStatePath: path.join(directory, 'trial.json') }
       );
-      assert.throws(
-        () => resetHandlers['backup:resetApplication']('incorrecta'),
+      await assert.rejects(
+        resetHandlers['backup:resetApplication']('incorrecta'),
         /Contraseña incorrecta/
       );
       assert.strictEqual(resetCalled, false);

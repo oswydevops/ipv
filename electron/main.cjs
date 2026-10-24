@@ -27,6 +27,7 @@ if (!app.requestSingleInstanceLock()) {
       minWidth: 1024,
       minHeight: 640,
       show: false,
+      icon: path.join(__dirname, '..', 'assets', 'icono.png'),
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
@@ -46,12 +47,20 @@ if (!app.requestSingleInstanceLock()) {
     const dbFile = path.join(app.getPath('userData'), 'ipv.sqlite');
     try {
       store = openDatabase(dbFile);
+      store.repo.observeLicenseDate();
     } catch (e) {
       dialog.showErrorBox('No se pudo abrir la base de datos', `${dbFile}\n\n${e && e.message}`);
       app.quit();
       return;
     }
-    register(ipcMain, buildHandlers(store.repo, { dialog, getWindow: () => win, fs, db: store.db }));
+    register(ipcMain, buildHandlers(store.repo, {
+      dialog,
+      getWindow: () => win,
+      fs,
+      db: store.db,
+      isPackaged: app.isPackaged,
+      trialStatePath: path.join(app.getPath('userData'), 'trial.json'),
+    }));
     createWindow();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });

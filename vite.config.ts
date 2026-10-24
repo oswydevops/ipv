@@ -3,21 +3,28 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
   return {
-    base: './',
+    base: command === 'build' ? './' : '/',
     plugins: [react(), tailwindcss()],
     build: {
       target: 'chrome108',
     },
     resolve: {
       alias: {
-        '@': path.resolve(import.meta.dirname, '.'),
+        '@': path.resolve(__dirname, '.'),
       },
+    },
+    optimizeDeps: {
+      include: ['react', 'react-dom', 'recharts', 'lucide-react', 'motion'],
+      exclude: ['better-sqlite3', 'electron'],
     },
     server: {
       port: 3000,
       host: '0.0.0.0',
+      strictPort: true,
+      allowedHosts: true,
+      cors: true,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

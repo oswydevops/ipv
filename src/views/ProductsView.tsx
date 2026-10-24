@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Product } from '../types';
 
-const PRODUCT_CATEGORIES = [
+export const PRODUCT_CATEGORIES = [
   'Herramientas manuales',
   'Herramientas eléctricas',
   'Tornillería y fijaciones',
@@ -16,33 +16,20 @@ const PRODUCT_CATEGORIES = [
   'Seguridad y protección (EPIs)',
 ] as const;
 
-const getCategoryBadgeClass = (category: string) => {
-  switch (category) {
-    case 'Herramientas manuales':
-      return 'bg-amber-100 text-amber-800';
-    case 'Herramientas eléctricas':
-      return 'bg-orange-100 text-orange-800';
-    case 'Tornillería y fijaciones':
-      return 'bg-indigo-100 text-indigo-700';
-    case 'Electricidad e iluminación':
-      return 'bg-yellow-100 text-yellow-800';
-    case 'Plomería y gasfitería':
-      return 'bg-blue-100 text-blue-700';
-    case 'Pinturas y accesorios':
-      return 'bg-emerald-100 text-emerald-800';
-    case 'Adhesivos y selladores':
-      return 'bg-violet-100 text-violet-700';
-    case 'Cerrajería y herrajes':
-      return 'bg-stone-100 text-stone-700';
-    case 'Construcción y obra':
-      return 'bg-red-100 text-red-700';
-    case 'Jardinería y exteriores':
-      return 'bg-green-100 text-green-700';
-    case 'Seguridad y protección (EPIs)':
-      return 'bg-cyan-100 text-cyan-700';
-    default:
-      return 'bg-surface-container-high text-on-surface';
-  }
+export const getCategoryBadgeClass = (category: string) => {
+  const cat = (category || '').toLowerCase();
+  if (cat.includes('eléctrica') || cat.includes('electrica')) return 'bg-amber-100 text-amber-800';
+  if (cat.includes('herramientas manual')) return 'bg-orange-100 text-orange-800';
+  if (cat.includes('tornill') || cat.includes('fijaci')) return 'bg-slate-200 text-slate-800';
+  if (cat.includes('electricidad') || cat.includes('ilumina')) return 'bg-yellow-100 text-yellow-800';
+  if (cat.includes('plomer') || cat.includes('gasfiter')) return 'bg-sky-100 text-sky-800';
+  if (cat.includes('pintura')) return 'bg-purple-100 text-purple-800';
+  if (cat.includes('adhesivo') || cat.includes('sellador')) return 'bg-teal-100 text-teal-800';
+  if (cat.includes('cerrajer') || cat.includes('herraje')) return 'bg-zinc-200 text-zinc-800';
+  if (cat.includes('construc') || cat.includes('obra')) return 'bg-stone-200 text-stone-800';
+  if (cat.includes('jard') || cat.includes('exterior')) return 'bg-lime-100 text-lime-800';
+  if (cat.includes('seguridad') || cat.includes('epi')) return 'bg-rose-100 text-rose-800';
+  return 'bg-surface-container-high text-on-surface';
 };
 
 export const ProductsView: React.FC = () => {
@@ -67,7 +54,7 @@ export const ProductsView: React.FC = () => {
   // New product form state
   const [newCode, setNewCode] = useState('');
   const [newName, setNewName] = useState('');
-  const [newCategory, setNewCategory] = useState<string>(PRODUCT_CATEGORIES[0]);
+  const [newCategory, setNewCategory] = useState<string>('Herramientas manuales');
   const [newUM, setNewUM] = useState('Unidad');
   const [newPrice, setNewPrice] = useState<number>(0);
   const [newStock, setNewStock] = useState<number>(10);
@@ -78,7 +65,7 @@ export const ProductsView: React.FC = () => {
   // Edit product form state
   const [editCode, setEditCode] = useState('');
   const [editName, setEditName] = useState('');
-  const [editCategory, setEditCategory] = useState<string>(PRODUCT_CATEGORIES[0]);
+  const [editCategory, setEditCategory] = useState<string>('Herramientas manuales');
   const [editUM, setEditUM] = useState('Unidad');
   const [editPrice, setEditPrice] = useState<number>(0);
   const [editStock, setEditStock] = useState<number>(0);
@@ -126,7 +113,7 @@ export const ProductsView: React.FC = () => {
     const autoCode = generateNextProductCode(products);
     setNewCode(autoCode);
     setNewName('');
-    setNewCategory(PRODUCT_CATEGORIES[0]);
+    setNewCategory('Herramientas manuales');
     setNewUM('Unidad');
     setNewPrice(0);
     setNewStock(10);
@@ -368,7 +355,9 @@ export const ProductsView: React.FC = () => {
                         </td>
                         <td className="py-3 px-3">
                           <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${getCategoryBadgeClass(p.category)}`}
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${getCategoryBadgeClass(
+                              p.category
+                            )}`}
                           >
                             {p.category}
                           </span>
@@ -682,9 +671,9 @@ export const ProductsView: React.FC = () => {
                     onChange={(e) => setNewCategory(e.target.value)}
                     className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
                   >
-                    {PRODUCT_CATEGORIES.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
+                    {PRODUCT_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
                       </option>
                     ))}
                   </select>
@@ -849,11 +838,11 @@ export const ProductsView: React.FC = () => {
                   <select
                     value={editCategory}
                     onChange={(e) => setEditCategory(e.target.value)}
-                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer"
+                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
                   >
-                    {PRODUCT_CATEGORIES.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
+                    {PRODUCT_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
                       </option>
                     ))}
                   </select>

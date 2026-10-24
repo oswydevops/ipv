@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { DayClose } from '../data/api';
 import { APP_NAME } from '../config';
+import { saveFileWithPicker } from '../utils/fileSaver';
 
 export const CashCloseView: React.FC = () => {
   const {
@@ -10,6 +11,7 @@ export const CashCloseView: React.FC = () => {
     currentIpvDay,
     denominations,
     updateDenominationCount,
+    menoresAmount,
     transferenciasAmount,
     setTransferenciasAmount,
     totalCashFisico,
@@ -37,6 +39,11 @@ export const CashCloseView: React.FC = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportCloseModalOpen, setIsExportCloseModalOpen] = useState(false);
+  const [exportDestinationPath, setExportDestinationPath] = useState(() => {
+    const [year, month] = (todayDate || new Date().toISOString().slice(0, 10)).split('-');
+    return `Documentos/IPV/Reportes/${year}/${month}`;
+  });
 
   // Set real current time and update every minute
   useEffect(() => {
@@ -123,16 +130,40 @@ export const CashCloseView: React.FC = () => {
     setDevolucionesAmount(autoDevolucionesTotal);
   }, [autoDevolucionesTotal]);
 
-  // Reembolsos en efectivo deducidos de la caja física esperada
+  // Reembolsos en efectivo deducidos de la caja física esperada (efectivo + porción de mixto)
   const efectivoDevueltoToday = useMemo(() => {
-    return devolucionesToday
-      .filter((r) => r.refundMethod === 'efectivo' || !r.refundMethod)
-      .reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+    return devolucionesToday.reduce((acc, r) => {
+      if (r.refundMethod === 'efectivo' || !r.refundMethod) {
+        return acc + (r.totalRefund || 0);
+      }
+      if (r.refundMethod === 'mixto') {
+        const ef = r.efectivoAmount !== undefined
+          ? r.efectivoAmount
+          : Math.max(0, (r.totalRefund || 0) - (r.transferenciaAmount || 0));
+        return acc + ef;
+      }
+      return acc;
+    }, 0);
+  }, [devolucionesToday]);
+
+  // Reembolsos por transferencia deducidos del canal digital esperado (transferencia + porción de mixto)
+  const transferenciaDevueltaToday = useMemo(() => {
+    return devolucionesToday.reduce((acc, r) => {
+      if (r.refundMethod === 'transferencia') {
+        return acc + (r.totalRefund || 0);
+      }
+      if (r.refundMethod === 'mixto') {
+        const tr = r.transferenciaAmount !== undefined ? r.transferenciaAmount : 0;
+        return acc + tr;
+      }
+      return acc;
+    }, 0);
   }, [devolucionesToday]);
 
   const expectedCashInDrawer = Math.max(0, totalVentasEfectivo - efectivoDevueltoToday);
+  const expectedTransfers = Math.max(0, totalVentasTransferencia - transferenciaDevueltaToday);
   const cashDifference = totalCashFisico - expectedCashInDrawer;
-  const transferDifference = transferenciasAmount - totalVentasTransferencia;
+  const transferDifference = transferenciasAmount - expectedTransfers;
   const netIpvExpected = Math.max(0, ipvTotalVendido - devolucionesAmount);
   const netDifference = totalGeneralContado - netIpvExpected;
   const handlePerformClose = async () => {
@@ -164,18 +195,120 @@ export const CashCloseView: React.FC = () => {
     }
   };
 
-  // Exportar cierre diario a Excel
-  const handleExportClose = async () => {
+  // Abrir modal de exportación para preguntar ruta antes de guardar
+  const handleExportClose = () => {
+    setIsExportCloseModalOpen(true);
+  };
+
+  // Generar y guardar planilla Excel / CSV completa con arqueo, ventas y devoluciones preguntando la ruta
+  const generateWebCloseExportExcel = async () => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+    const headersResumen = [
+      'REPORTE OFICIAL DE CIERRE DE CAJA DIARIO - IPV',
+      `Fecha de Cierre: ${todayDate} | Generado: ${now.toLocaleTimeString('es-CU')}`,
+      `Responsable: ${responsibleName} | Estado: ${isCurrentDayClosed ? 'Cerrado' : 'Abierto / En Arqueo'}`,
+      '',
+      '--- RESUMEN GENERAL DE OPERACIONES ---',
+      'Concepto;Monto ($);Detalle / Observación',
+      `Total Facturado (Ventas Brutas);${ipvTotalVendido.toFixed(2)};Importe bruto según IPV`,
+      `Total Devoluciones / Reembolsos;-${totalDevolucionesRefundToday.toFixed(2)};${devolucionesToday.length} devoluciones procesadas`,
+      `Ventas Netas Realizadas;${Math.max(0, ipvTotalVendido - totalDevolucionesRefundToday).toFixed(2)};Ingreso neto efectivo tras reembolsos`,
+      `Total Ventas Efectivo;${totalVentasEfectivo.toFixed(2)};Cobros en efectivo`,
+      `Total Transferencias;${totalVentasTransferencia.toFixed(2)};EnZona / Transfermóvil`,
+      `Efectivo Físico en Gaveta;${totalGeneralContado.toFixed(2)};Total del arqueo físico`,
+      `Diferencia de Caja;${diferenciaCaja.toFixed(2)};${diferenciaCaja === 0 ? 'Cuadrado Exacto' : diferenciaCaja > 0 ? 'Sobrante en caja' : 'Faltante en caja'}`,
+      '',
+      '--- CONTEO DE BILLETES Y EFECTIVO FÍSICO ---',
+      'Denominación;Valor Unitario ($);Cantidad de Piezas;Importe Total ($)',
+      ...denominations.map((d) => `"${d.label}";${d.value.toFixed(2)};${d.count};${(d.value * d.count).toFixed(2)}`),
+      `"Fondo de Menores / Monedas";0.00;1;${(menoresAmount || 0).toFixed(2)}`,
+      `"Total Efectivo Contado";0.00;${totalPieces};${totalGeneralContado.toFixed(2)}`,
+      '',
+      '--- REGISTRO DETALLADO DE DEVOLUCIONES DE LA JORNADA ---',
+      'Folio;Hora;Ticket Origen;Cliente;Motivo de Devolución;Método de Reembolso;Artículos Devueltos;Uds;Condición;Monto Reembolsado ($)',
+    ];
+
+    if (devolucionesToday.length === 0) {
+      headersResumen.push('Sin devoluciones registradas en esta jornada;;;;;;;;;');
+    } else {
+      devolucionesToday.forEach((r) => {
+        const totalUnits = (r.items || []).reduce((acc, it) => acc + (it.quantity || 1), 0);
+        const itemsStr = (r.items || []).map((it) => `${it.name} (x${it.quantity} ${it.um || 'u.'})`).join(', ');
+        const conditionStr = r.hasDamagedItems ? 'Con merma / Dañado' : 'Buen estado / Reintegrado';
+        headersResumen.push([
+          `"${r.returnNumber || 'DEV-N/A'}"`,
+          `"${r.timestamp || '--:--'}"`,
+          `"${r.ticketNumber || 'Venta directa'}"`,
+          `"${(r.customerName || 'Cliente general').replace(/"/g, '""')}"`,
+          `"${(r.reason || 'Sin motivo especificado').replace(/"/g, '""')}"`,
+          `"${(r.refundMethod || 'efectivo').toUpperCase()}"`,
+          `"${itemsStr.replace(/"/g, '""')}"`,
+          totalUnits,
+          `"${conditionStr}"`,
+          `-${(r.totalRefund || 0).toFixed(2)}`,
+        ].join(';'));
+      });
+    }
+
+    const totalRefundToday = devolucionesToday.reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+    const refundCashToday = devolucionesToday.filter((r) => r.refundMethod === 'efectivo').reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+    const refundTransferToday = devolucionesToday.filter((r) => r.refundMethod === 'transferencia').reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+    const refundMixtoToday = devolucionesToday.filter((r) => r.refundMethod === 'mixto').reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+
+    headersResumen.push(
+      '',
+      `"--- RESUMEN DETALLADO DE REEMBOLSOS POR CANAL DE PAGO ---";;;`,
+      `"Canal / Método";"Monto Reembolsado ($)";"Operaciones";`,
+      `"Efectivo";-${refundCashToday.toFixed(2)};${devolucionesToday.filter((r) => r.refundMethod === 'efectivo').length};`,
+      `"Transferencia";-${refundTransferToday.toFixed(2)};${devolucionesToday.filter((r) => r.refundMethod === 'transferencia').length};`,
+      `"Mixto";-${refundMixtoToday.toFixed(2)};${devolucionesToday.filter((r) => r.refundMethod === 'mixto').length};`,
+      `"Total Reembolsos del Día ($)";-${totalRefundToday.toFixed(2)};${devolucionesToday.length};`,
+      `"Ventas Netas Efectivas del Día ($)";${Math.max(0, ipvTotalVendido - totalRefundToday).toFixed(2)};;`
+    );
+
+    const csvContent = '\uFEFF' + headersResumen.join('\r\n');
+    return await saveFileWithPicker(csvContent, {
+      suggestedName: `Cierre_Caja_${todayDate || dateFormatted}.csv`,
+      mimeType: 'text/csv;charset=utf-8;',
+      extension: 'csv',
+      description: 'Reporte Oficial de Cierre de Caja con Devoluciones (.csv / Excel)',
+    });
+  };
+
+  // Ejecutar exportación tras confirmar y seleccionar carpeta
+  const handlePerformExportClose = async () => {
     setIsExporting(true);
     try {
-      if (!window.api?.reports?.exportarCierreExcel) {
-        throw new Error('La exportación a Excel no está disponible en esta versión de la aplicación.');
+      const isNativeElectron = typeof window !== 'undefined' && Boolean((window as any).api?._isElectron);
+
+      if (isNativeElectron && window.api?.reports?.exportarCierre) {
+        const res = await window.api.reports.exportarCierre(todayDate);
+        if (res && (res as any).canceled) {
+          showToast('Operación Cancelada', 'No se seleccionó ninguna carpeta para guardar.', 'info');
+          return;
+        }
+        setIsExportCloseModalOpen(false);
+        showToast(
+          'Cierre Exportado con Éxito',
+          `Archivos guardados en: ${res.directory || res.excelPath || 'la carpeta seleccionada'}`,
+          'success'
+        );
+      } else {
+        const res = await generateWebCloseExportExcel();
+        if (res.canceled) {
+          showToast('Operación Cancelada', 'No se seleccionó ninguna ruta para guardar el archivo.', 'info');
+          return;
+        }
+        setIsExportCloseModalOpen(false);
+        showToast(
+          'Cierre Exportado con Éxito',
+          `Se guardó la planilla de cierre con arqueo y devoluciones (${devolucionesToday.length} devoluciones incluidas) en: ${res.fileName || res.fullPath || 'su equipo'}.`,
+          'success'
+        );
       }
-      const res = await window.api.reports.exportarCierreExcel(todayDate);
-      if (res.canceled) {
-        return;
-      }
-      showToast('Cierre exportado a Excel', res.excelPath, 'success');
     } catch (err: any) {
       showToast('Error al exportar cierre', err?.message || 'No se pudo generar el reporte de cierre.', 'error');
     } finally {
@@ -264,7 +397,7 @@ export const CashCloseView: React.FC = () => {
             )}
           </div>
           <p className="text-xs sm:text-sm text-on-surface-variant font-medium">
-            Conciliación de efectivo y transferencias bancarias (EnZona / Transfermóvil).
+            Cuadre de efectivo y transferencias (EnZona / Transfermóvil).
           </p>
         </div>
 
@@ -340,7 +473,7 @@ export const CashCloseView: React.FC = () => {
                 </div>
                 <div>
                   <h2 className="font-headline font-semibold text-base text-on-surface leading-tight">
-                    Desglose Físico de Billetes y Monedas
+                    Desglose Físico de Billetes
                   </h2>
                   <p className="text-xs text-on-surface-variant font-medium mt-0.5">
                     Cálculo instantáneo por valor facial en Pesos Cubanos (CUP)
@@ -357,7 +490,7 @@ export const CashCloseView: React.FC = () => {
               {/* Table Header */}
               <div className="grid grid-cols-12 items-center px-4 py-2 text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider">
                 <div className="col-span-4">Denominación</div>
-                <div className="col-span-2 text-right">Facial</div>
+                <div className="col-span-2 text-right">Valor</div>
                 <div className="col-span-3 text-center">Cantidad Física</div>
                 <div className="col-span-3 text-right">Subtotal</div>
               </div>
@@ -432,14 +565,19 @@ export const CashCloseView: React.FC = () => {
               </div>
               <div className="flex flex-col">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
-                  Total Efectivo Físico Contado
+                  Total Efectivo Contado
                 </span>
                 <span className="text-xs text-on-surface-variant mt-0.5">
-                  Suma de todas las denominaciones de efectivo físico contadas en gaveta
+                  Suma de todas las denominaciones de efectivo contadas en gaveta
                 </span>
                 <div className="flex flex-wrap items-center gap-2 mt-2">
                   <span className="text-[11px] text-on-surface-variant font-medium">
-                    Esperado en ventas: <strong className="font-mono text-on-surface">${formatCUP(totalVentasEfectivo)} CUP</strong>
+                    Esperado en gaveta: <strong className="font-mono text-on-surface">${formatCUP(expectedCashInDrawer)} CUP</strong>
+                    {efectivoDevueltoToday > 0 && (
+                      <span className="text-[10px] text-amber-600 font-mono ml-1.5 font-normal">
+                        (Ventas: ${formatCUP(totalVentasEfectivo)} - Devoluciones: ${formatCUP(efectivoDevueltoToday)})
+                      </span>
+                    )}
                   </span>
                   <span
                     className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
@@ -484,7 +622,7 @@ export const CashCloseView: React.FC = () => {
                   <span className="material-symbols-outlined text-[18px]">balance</span>
                 </div>
                 <h3 className="font-headline font-semibold text-sm text-on-surface">
-                  Resumen de Conciliación
+                  Resumen de Cierre
                 </h3>
               </div>
               <span className="text-[10px] font-mono text-primary font-bold px-2 py-0.5 rounded bg-surface neo-inset">
@@ -542,7 +680,7 @@ export const CashCloseView: React.FC = () => {
                       Efectivo Contado Total
                     </span>
                     <span className="text-[10px] text-on-surface-variant">
-                      Billetes y monedas en gaveta
+                      Billetes en gaveta
                     </span>
                   </div>
                 </div>
@@ -565,15 +703,16 @@ export const CashCloseView: React.FC = () => {
                       Monto Total de Transferencias
                     </span>
                     <span className="text-[10px] text-on-surface-variant font-medium">
-                      EnZona / Transfermóvil (Propuesto del IPV: ${formatCUP(totalVentasTransferencia)})
+                      EnZona / Transfermóvil (Neto esperado: ${formatCUP(expectedTransfers)} CUP
+                      {transferenciaDevueltaToday > 0 && ` [Ventas: $${formatCUP(totalVentasTransferencia)} - Devs: $${formatCUP(transferenciaDevueltaToday)}]`})
                     </span>
                     {transferDifference !== 0 && !isCurrentDayClosed && (
                       <button
-                        onClick={() => setTransferenciasAmount(totalVentasTransferencia)}
+                        onClick={() => setTransferenciasAmount(expectedTransfers)}
                         className="text-[10px] text-primary underline text-left font-semibold mt-0.5 cursor-pointer"
                         type="button"
                       >
-                        Sincronizar con ventas (${formatCUP(totalVentasTransferencia)} CUP)
+                        Sincronizar con neto esperado (${formatCUP(expectedTransfers)} CUP)
                       </button>
                     )}
                   </div>
@@ -649,7 +788,7 @@ export const CashCloseView: React.FC = () => {
                         Total Recaudado
                       </span>
                       <span className="text-[10px] text-on-surface-variant">
-                        Efectivo Contado + Transferencias
+                        Efectivo + Transferencias
                       </span>
                     </div>
                   </div>
@@ -794,7 +933,7 @@ export const CashCloseView: React.FC = () => {
               disabled={isExporting}
               className="w-full py-3 px-5 rounded-2xl bg-surface neo-raised hover:text-primary active:neo-inset text-xs font-bold text-on-surface transition-all flex items-center justify-between border border-outline-variant/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm group"
               type="button"
-              title="Genera el reporte Excel del cierre en Documentos/IPV/Reportes/AAAA/MM"
+              title="Genera reporte en PDF y Excel en Documentos/IPV/Reportes/AAAA/MM"
             >
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0 group-hover:bg-emerald-500/20 transition-colors">
@@ -807,12 +946,12 @@ export const CashCloseView: React.FC = () => {
                     {isExporting ? 'Exportando cierre...' : 'Exportar cierre'}
                   </span>
                   <span className="text-[10px] text-on-surface-variant font-normal">
-                    Exporta el cierre detallado en Excel (.xlsx)
+                    Genera PDF oficial y Excel (.xlsx)
                   </span>
                 </div>
               </div>
               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-surface neo-inset text-emerald-700">
-                XLSX
+                PDF + XLSX
               </span>
             </button>
           </div>
@@ -1115,6 +1254,99 @@ export const CashCloseView: React.FC = () => {
                 type="button"
               >
                 Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Exportar Cierre de Caja del Día (Preguntar ruta y mostrar detalle) */}
+      {isExportCloseModalOpen && (
+        <div className="fixed inset-0 z-50 bg-inverse-surface/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-5 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary shrink-0">
+                <span className="material-symbols-outlined text-[26px]">file_download</span>
+              </div>
+              <div className="flex flex-col flex-1">
+                <h3 className="text-base font-bold text-on-surface">Exportar Cierre de Caja del Día</h3>
+                <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
+                  Se generará el reporte oficial en Excel (.xlsx) y PDF. Al presionar continuar, se le solicitará elegir la carpeta en su computadora donde desea guardarlos.
+                </p>
+              </div>
+            </div>
+
+            {/* Campo editable de ruta donde desea guardar */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold text-on-surface flex items-center justify-between">
+                <span>Ruta y carpeta donde desea guardar:</span>
+                <span className="text-[10px] text-primary font-mono font-semibold">Selector de Sistema</span>
+              </label>
+              <div className="flex items-center gap-2 p-2.5 rounded-xl bg-surface neo-inset">
+                <span className="material-symbols-outlined text-primary text-[20px] shrink-0">folder_open</span>
+                <input
+                  type="text"
+                  value={exportDestinationPath}
+                  onChange={(e) => setExportDestinationPath(e.target.value)}
+                  placeholder="Documentos/IPV/Reportes/..."
+                  className="bg-transparent border-none text-xs font-mono text-on-surface focus:outline-none w-full"
+                />
+              </div>
+              <span className="text-[10px] text-on-surface-variant">
+                Al presionar "Seleccionar Carpeta y Guardar" se abrirá la ventana de su sistema para confirmar la carpeta y nombre final.
+              </span>
+            </div>
+
+            {/* Resumen del Contenido que incluirá el Excel */}
+            <div className="flex flex-col gap-2 p-3.5 rounded-xl bg-surface neo-inset text-xs">
+              <span className="font-bold text-on-surface text-[11px] uppercase tracking-wider text-primary">
+                Contenido que incluirá la exportación:
+              </span>
+              <div className="grid grid-cols-2 gap-2 mt-1 text-[11px]">
+                <div className="flex items-center gap-1.5 text-on-surface">
+                  <span className="material-symbols-outlined text-primary text-[15px]">check_circle</span>
+                  <span>Arqueo y efectivo físico ({formatCUP(totalGeneralContado)} CUP)</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-on-surface">
+                  <span className="material-symbols-outlined text-primary text-[15px]">check_circle</span>
+                  <span>Ventas brutas IPV ({formatCUP(ipvTotalVendido)} CUP)</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-on-surface col-span-2">
+                  <span className="material-symbols-outlined text-rose-600 text-[15px]">assignment_return</span>
+                  <span className="font-semibold text-rose-700">
+                    Registro de Devoluciones del Día: {devolucionesToday.length} devoluciones (-${formatCUP(totalDevolucionesRefundToday)} CUP) con motivo, cliente y método de reembolso
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-on-surface col-span-2">
+                  <span className="material-symbols-outlined text-emerald-600 text-[15px]">account_balance_wallet</span>
+                  <span className="font-semibold text-emerald-700">
+                    Ventas Netas Efectivas: ${formatCUP(Math.max(0, ipvTotalVendido - totalDevolucionesRefundToday))} CUP
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-outline-variant/20">
+              <button
+                onClick={() => {
+                  if (!isExporting) setIsExportCloseModalOpen(false);
+                }}
+                disabled={isExporting}
+                className="px-4 py-2.5 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface active:neo-inset disabled:opacity-50 cursor-pointer"
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handlePerformExportClose}
+                disabled={isExporting}
+                className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-container transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-md shadow-primary/25"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[17px]">
+                  {isExporting ? 'hourglass_top' : 'folder_open'}
+                </span>
+                <span>{isExporting ? 'Exportando...' : 'Seleccionar Carpeta y Guardar'}</span>
               </button>
             </div>
           </div>

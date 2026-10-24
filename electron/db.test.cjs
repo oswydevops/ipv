@@ -235,7 +235,7 @@ test('restablecimiento elimina todos los datos comerciales y reinicia las secuen
   }
   assert.strictEqual(store.db.prepare("SELECT value FROM meta WHERE key = 'ticket_seq'").get().value, '100');
 
-  const product = repo.createProduct({ name: 'Producto después del reset' });
+  const product = repo.createProduct({ name: 'Producto después del reset', stock: 1 });
   const sale = repo.recordSale({ items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'efectivo' });
   assert.strictEqual(sale.ticketNumber, 'TKT-00101');
   const returnRecord = repo.recordReturn({ items: [], totalRefund: 0, refundMethod: 'efectivo' });

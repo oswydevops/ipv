@@ -5,7 +5,7 @@ import { SaleRecord, SaleItem } from '../types';
 type PeriodFilter = 'diarias' | 'semanales' | 'mensual';
 
 export const SalesHistoryView: React.FC = () => {
-  const { sales = [], cancelSale, products = [], showToast, todayDate } = useApp();
+  const { sales = [], products = [], showToast, todayDate } = useApp();
 
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('diarias');
   const [searchQuery, setSearchQuery] = useState('');
@@ -15,9 +15,8 @@ export const SalesHistoryView: React.FC = () => {
   const [selectedWeekIdx, setSelectedWeekIdx] = useState<number>(0); // 0 = Esta semana, 1 = Sem 1, etc.
   const [page, setPage] = useState(1);
 
-  // Modal de Detalle de Ticket
+  // Modal de Detalle de Ticket (solo visualización de detalles)
   const [selectedSaleForDetail, setSelectedSaleForDetail] = useState<SaleRecord | null>(null);
-  const [saleToVoid, setSaleToVoid] = useState<SaleRecord | null>(null);
 
   // Fecha límite de 1 mes (31 días hacia atrás)
   const oneMonthCutoffStr = useMemo(() => {
@@ -143,19 +142,6 @@ export const SalesHistoryView: React.FC = () => {
   const paginatedSales = finalFilteredSales.slice((validPage - 1) * pageSize, validPage * pageSize);
   const startIdx = finalFilteredSales.length === 0 ? 0 : (validPage - 1) * pageSize + 1;
   const endIdx = Math.min(validPage * pageSize, finalFilteredSales.length);
-
-  // Manejo de anulación de venta
-  const handleConfirmVoid = async () => {
-    if (!saleToVoid) return;
-    const success = await cancelSale(saleToVoid.id);
-    if (success) {
-      if (selectedSaleForDetail?.id === saleToVoid.id) {
-        setSelectedSaleForDetail({ ...selectedSaleForDetail, ...({ voided: true } as any) });
-      }
-      setSaleToVoid(null);
-    }
-  };
-
 
   // Impresión de ticket térmico
   const handlePrintSale = (sale: SaleRecord) => {
@@ -820,18 +806,6 @@ export const SalesHistoryView: React.FC = () => {
                           >
                             <span className="material-symbols-outlined text-[17px]">print</span>
                           </button>
-
-                          {/* Anular Venta */}
-                          {!isVoided && (
-                            <button
-                              onClick={() => setSaleToVoid(sale)}
-                              className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-red-500 active:neo-inset transition-all cursor-pointer"
-                              type="button"
-                              title="Anular venta y reponer existencias"
-                            >
-                              <span className="material-symbols-outlined text-[17px]">cancel</span>
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -1056,23 +1030,9 @@ export const SalesHistoryView: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
-
-                {!(selectedSaleForDetail as any).voided && (
-                  <button
-                    onClick={() => {
-                      setSaleToVoid(selectedSaleForDetail);
-                    }}
-                    className="px-3 py-2 rounded-xl bg-red-500/10 text-red-600 hover:bg-red-500/20 font-semibold text-xs flex items-center gap-1 transition-all cursor-pointer"
-                    type="button"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">cancel</span>
-                    <span>Anular Venta</span>
-                  </button>
-                )}
-
                 <button
                   onClick={() => setSelectedSaleForDetail(null)}
-                  className="px-4 py-2 rounded-xl bg-surface neo-raised text-on-surface font-semibold text-xs hover:text-primary transition-all cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-primary text-white font-semibold text-xs hover:bg-primary-container shadow-md shadow-primary/25 transition-all cursor-pointer"
                   type="button"
                 >
                   Cerrar
@@ -1082,51 +1042,6 @@ export const SalesHistoryView: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* DIÁLOGO DE CONFIRMACIÓN PARA ANULAR VENTA */}
-      {saleToVoid && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-md rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-4 border border-outline-variant/20 shadow-2xl">
-            <div className="flex items-center gap-3 text-red-500">
-              <div className="w-11 h-11 rounded-xl bg-red-500/10 flex items-center justify-center">
-                <span className="material-symbols-outlined text-[24px]">warning</span>
-              </div>
-              <div>
-                <h3 className="text-base font-headline font-bold text-on-surface">
-                  ¿Anular Venta {saleToVoid.ticketNumber}?
-                </h3>
-                <span className="text-xs text-on-surface-variant font-mono">
-                  Monto: ${saleToVoid.total.toFixed(2)} CUP
-                </span>
-              </div>
-            </div>
-
-            <p className="text-xs text-on-surface-variant leading-relaxed">
-              Esta acción marcará el ticket como <strong>ANULADO</strong>, restará el importe recaudado de la caja del día y <strong>repondrá automáticamente todas las unidades vendidas</strong> al inventario.
-            </p>
-
-            <div className="flex items-center justify-end gap-3 mt-2">
-              <button
-                onClick={() => setSaleToVoid(null)}
-                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface hover:text-primary transition-all cursor-pointer"
-                type="button"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleConfirmVoid}
-                className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-headline font-bold shadow-md hover:bg-red-700 active:scale-[0.99] transition-all cursor-pointer"
-                type="button"
-              >
-                Confirmar Anulación
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-
     </div>
   );
 };

@@ -12,7 +12,19 @@ interface NavItem {
 }
 
 export const Sidebar: React.FC = () => {
-  const { currentView, setCurrentView, products, sales = [], returns = [], todayDate, ipvTotalVendido = 0, isCurrentDayClosed, openSaleModal } = useApp();
+  const {
+    currentView,
+    setCurrentView,
+    products,
+    sales = [],
+    returns = [],
+    todayDate,
+    ipvTotalVendido = 0,
+    isCurrentDayClosed,
+    openSaleModal,
+    hasAppAccess,
+    navigateToActivation,
+  } = useApp();
 
   const lowStockCount = products.filter((p) => p.status === 'low' || p.status === 'out').length;
   const isClosePending = (sales.length > 0 || ipvTotalVendido > 0) && !isCurrentDayClosed;
@@ -27,7 +39,7 @@ export const Sidebar: React.FC = () => {
     { id: 'cierre-de-caja', label: 'Cierre de caja', icon: 'lock_clock', badge: isClosePending ? 1 : undefined, badgeVariant: 'warning' },
     { id: 'reportes', label: 'Reportes', icon: 'analytics' },
     { id: 'productos', label: 'Productos', icon: 'inventory_2' },
-    { id: 'respaldo-y-exportacion', label: 'Respaldo y exportación', icon: 'cloud_sync' },
+    { id: 'configuracion', label: 'Configuración', icon: 'settings', badge: !hasAppAccess ? 1 : undefined, badgeVariant: 'warning' },
   ];
 
   return (
@@ -188,12 +200,24 @@ export const Sidebar: React.FC = () => {
         <div className="px-3">
           {/* Quick Sale POS Action */}
           <button
-            onClick={() => openSaleModal()}
-            className="w-full py-2.5 px-3.5 mb-3.5 rounded-xl bg-primary text-white flex items-center justify-center gap-2 text-xs font-bold shadow-md shadow-primary/25 hover:bg-primary-container active:scale-[0.98] transition-all cursor-pointer"
+            onClick={() => {
+              if (!hasAppAccess) {
+                navigateToActivation();
+                return;
+              }
+              openSaleModal();
+            }}
+            className={`w-full py-2.5 px-3.5 mb-3.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
+              !hasAppAccess
+                ? 'bg-surface-container text-on-surface-variant neo-inset opacity-80'
+                : 'bg-primary text-white shadow-md shadow-primary/25 hover:bg-primary-container active:scale-[0.98]'
+            }`}
             type="button"
           >
-            <span className="material-symbols-outlined text-[19px]">point_of_sale</span>
-            <span>⚡ Nueva Venta</span>
+            <span className="material-symbols-outlined text-[19px]">
+              {!hasAppAccess ? 'lock' : 'point_of_sale'}
+            </span>
+            <span>{!hasAppAccess ? '🔒 Venta Bloqueada' : '⚡ Nueva Venta'}</span>
           </button>
 
           <div className="text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant/80 mb-2">
@@ -202,34 +226,45 @@ export const Sidebar: React.FC = () => {
           <nav className="flex flex-col gap-1.5">
             {navItems.map((item) => {
               const isActive = currentView === item.id;
+              const isLocked = !hasAppAccess && item.id !== 'configuracion';
               return (
                 <button
                   key={item.id}
-                  onClick={() => setCurrentView(item.id)}
+                  onClick={() => {
+                    if (isLocked) {
+                      navigateToActivation();
+                      return;
+                    }
+                    setCurrentView(item.id);
+                  }}
                   type="button"
                   className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm transition-all text-left ${
                     isActive
                       ? 'bg-surface text-primary font-semibold neo-inset'
+                      : isLocked
+                      ? 'text-on-surface-variant/60 hover:text-on-surface-variant hover:bg-surface-container-low/50'
                       : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
-                    <span>{item.label}</span>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="material-symbols-outlined text-[20px] shrink-0">{item.icon}</span>
+                    <span className="truncate">{item.label}</span>
                   </div>
-                  {item.badge !== undefined && item.badge > 0 && (
-                    <span
-                      className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
-                        isActive
-                          ? 'bg-primary text-white shadow-sm'
-                          : item.badgeVariant === 'warning'
-                          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold'
-                          : 'bg-error-container text-on-error-container font-bold'
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">                   
+                    {item.badge !== undefined && item.badge > 0 && (
+                      <span
+                        className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
+                          isActive
+                            ? 'bg-primary text-white shadow-sm'
+                            : item.badgeVariant === 'warning'
+                            ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold'
+                            : 'bg-error-container text-on-error-container font-bold'
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
+                  </div>
                 </button>
               );
             })}
@@ -243,7 +278,7 @@ export const Sidebar: React.FC = () => {
           <span className="material-symbols-outlined text-[18px]">copyright</span>
         </div>
         <div className="flex flex-col">
-          <span className="text-xs font-semibold text-on-surface leading-tight">Copyright 2026</span>
+          <span className="text-xs font-semibold text-on-surface leading-tight">La Sociedad Inc 2026</span>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
             <span className="text-[10px] text-on-surface-variant leading-none">{APP_VERSION}</span>

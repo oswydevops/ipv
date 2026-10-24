@@ -32,6 +32,7 @@ export const SaleModal: React.FC = () => {
   const [transferAmountInput, setTransferAmountInput] = useState<string>('');
   const [saleNote, setSaleNote] = useState('');
   const [lastCompletedSale, setLastCompletedSale] = useState<any | null>(null);
+  const [selectedSaleForDetail, setSelectedSaleForDetail] = useState<any | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -754,7 +755,7 @@ export const SaleModal: React.FC = () => {
                       <th className="py-2.5 px-3">Artículos</th>
                       <th className="py-2.5 px-3 text-center">Método de Pago</th>
                       <th className="py-2.5 px-3 text-right">Monto Total</th>
-                      <th className="py-2.5 px-3 text-center">Acción</th>
+                      <th className="py-2.5 px-3 text-center">Detalle</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline-variant/10">
@@ -807,30 +808,13 @@ export const SaleModal: React.FC = () => {
                           </td>
                           <td className="py-3 px-3 text-center">
                             <button
-                              onClick={() => {
-                                if (isCurrentDayClosed || isViewingPastDate) return;
-                                if (
-                                  window.confirm(
-                                    `¿Está seguro de anular la venta ${sale.ticketNumber}? Se restaurará el stock y el saldo en IPV.`
-                                  )
-                                ) {
-                                  cancelSale(sale.id);
-                                }
-                              }}
-                              disabled={isCurrentDayClosed || isViewingPastDate}
-                              className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${
-                                isCurrentDayClosed || isViewingPastDate
-                                  ? 'bg-surface text-on-surface-variant opacity-40 cursor-not-allowed'
-                                  : 'bg-surface neo-raised text-on-surface-variant hover:text-error active:neo-inset cursor-pointer'
-                              }`}
-                              title={
-                                isCurrentDayClosed || isViewingPastDate
-                                  ? 'No se puede anular porque el día está cerrado'
-                                  : 'Anular venta y restaurar stock'
-                              }
+                              onClick={() => setSelectedSaleForDetail(sale)}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-surface neo-raised text-on-surface hover:text-primary active:neo-inset cursor-pointer inline-flex items-center gap-1 transition-all"
+                              title="Ver detalles de la venta"
                               type="button"
                             >
-                              Anular
+                              <span className="material-symbols-outlined text-[15px]">visibility</span>
+                              <span>Detalles</span>
                             </button>
                           </td>
                         </tr>
@@ -838,6 +822,107 @@ export const SaleModal: React.FC = () => {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Detalle de Ticket / Venta */}
+        {selectedSaleForDetail && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+            <div className="w-full max-w-lg rounded-2xl bg-surface neo-raised border border-outline-variant/20 shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-4 border-b border-outline-variant/15 flex items-center justify-between bg-surface-container-low/40">
+                <div className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-primary text-[22px]">receipt_long</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-on-surface">
+                      Detalle de Ticket #{selectedSaleForDetail.ticketNumber}
+                    </h3>
+                    <span className="text-[11px] text-on-surface-variant font-mono">
+                      {selectedSaleForDetail.date} · {selectedSaleForDetail.timestamp}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedSaleForDetail(null)}
+                  className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface cursor-pointer"
+                  type="button"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-5 flex flex-col gap-4 text-xs overflow-y-auto max-h-[70vh]">
+                <div className="p-3 rounded-xl bg-surface neo-inset flex justify-between items-center">
+                  <span className="text-on-surface-variant font-medium">Método de Pago:</span>
+                  <span className="font-bold uppercase text-primary font-mono">
+                    {selectedSaleForDetail.paymentMethod === 'mixto'
+                      ? `Mixto (Ef: $${formatCUP(selectedSaleForDetail.efectivoAmount || 0)} / Tr: $${formatCUP(selectedSaleForDetail.transferenciaAmount || 0)})`
+                      : selectedSaleForDetail.paymentMethod}
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <span className="font-bold text-on-surface-variant uppercase text-[10px] tracking-wider">
+                    Artículos Vendidos:
+                  </span>
+                  <div className="rounded-xl border border-outline-variant/15 overflow-hidden">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-surface-container-low/40 text-[10px] uppercase text-on-surface-variant border-b border-outline-variant/15">
+                        <tr>
+                          <th className="p-2.5">Producto</th>
+                          <th className="p-2.5 text-center">Cant.</th>
+                          <th className="p-2.5 text-right">Precio</th>
+                          <th className="p-2.5 text-right">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-outline-variant/10">
+                        {(selectedSaleForDetail.items || []).map((it: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-surface-container-low/20">
+                            <td className="p-2.5 font-medium text-on-surface">
+                              {it.name || it.productName}
+                              <span className="text-[10px] text-on-surface-variant block font-mono">
+                                {it.code || it.productCode}
+                              </span>
+                            </td>
+                            <td className="p-2.5 text-center font-mono">
+                              {it.quantity} {it.um}
+                            </td>
+                            <td className="p-2.5 text-right font-mono text-on-surface-variant">
+                              ${formatCUP(it.unitPrice)}
+                            </td>
+                            <td className="p-2.5 text-right font-mono font-bold text-on-surface">
+                              ${formatCUP(it.subtotal || it.quantity * it.unitPrice)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {selectedSaleForDetail.note && (
+                  <div className="p-2.5 rounded-lg bg-surface-container text-[11px] text-on-surface-variant">
+                    <strong>Nota:</strong> {selectedSaleForDetail.note}
+                  </div>
+                )}
+
+                <div className="p-3 rounded-xl bg-surface neo-raised flex justify-between items-center text-sm font-bold border border-outline-variant/20">
+                  <span>Total Facturado:</span>
+                  <span className="font-mono text-primary text-base">
+                    ${formatCUP(selectedSaleForDetail.total)} CUP
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-4 border-t border-outline-variant/15 flex justify-end gap-2 bg-surface-container-low/20">
+                <button
+                  onClick={() => setSelectedSaleForDetail(null)}
+                  className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface hover:text-primary cursor-pointer"
+                  type="button"
+                >
+                  Cerrar
+                </button>
               </div>
             </div>
           </div>

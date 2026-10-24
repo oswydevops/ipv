@@ -11,6 +11,8 @@
  */
 const Database = require('better-sqlite3');
 const crypto = require('crypto');
+const fs = require('fs');
+const { execFileSync } = require('child_process');
 
 class DomainError extends Error {
   constructor(code, message) {
@@ -26,6 +28,79 @@ const localTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const BASE32_CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+function readMachineGuid() {
+  if (process.platform !== 'win32') return null;
+
+  try {
+    const output = execFileSync(
+      'reg.exe',
+      ['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid'],
+      { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    const match = output.match(/^\s*MachineGuid\s+REG_SZ\s+([^\r\n]+)\s*$/im);
+    return match ? match[1].trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function readFallbackGuid(file) {
+  try {
+    const guid = fs.readFileSync(file, 'utf8').trim();
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(guid)) {
+      return guid;
+    }
+    throw new Error('El UUID de respaldo de la instalación no es válido.');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  const guid = crypto.randomUUID();
+  try {
+    fs.writeFileSync(file, guid, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    return guid;
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    const existingGuid = fs.readFileSync(file, 'utf8').trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(existingGuid)) {
+      throw new Error('El UUID de respaldo de la instalación no es válido.');
+    }
+    return existingGuid;
+  }
+}
+
+function installationIdFromGuid(guid) {
+  const digest = crypto.createHash('sha256').update(`FerreStock-v1:${guid}`, 'utf8').digest();
+  let buffer = 0;
+  let bits = 0;
+  let encoded = '';
+  for (const byte of digest) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      encoded += BASE32_CROCKFORD[(buffer >> bits) & 31];
+      buffer &= (1 << bits) - 1;
+    }
+  }
+  if (bits > 0) encoded += BASE32_CROCKFORD[(buffer << (5 - bits)) & 31];
+  return encoded.slice(0, 6);
+}
+
+function createInstallationId(machineGuidReader, fallbackGuidPath) {
+  let machineGuid = null;
+  try {
+    machineGuid = machineGuidReader();
+  } catch {
+    machineGuid = null;
+  }
+  const guid = typeof machineGuid === 'string' && machineGuid.trim()
+    ? machineGuid.trim()
+    : readFallbackGuid(fallbackGuidPath);
+  return installationIdFromGuid(guid);
+}
 
 /* ------------------------------------------------------------------ */
 /* Migraciones: se aplican en orden; PRAGMA user_version guarda el nº. */
@@ -149,8 +224,7 @@ const MIGRATIONS = [
       `);
     } catch {}
   },
-  // Reintenta la migración anterior, que podía ocultar errores y avanzar user_version.
-  (db) =>
+  (db) => {
     db.exec(`
       CREATE TABLE IF NOT EXISTS returns (
         id TEXT PRIMARY KEY,
@@ -180,7 +254,19 @@ const MIGRATIONS = [
         damaged_reason TEXT,
         reintegrate_to_stock INTEGER NOT NULL DEFAULT 0
       );
-    `),
+    `);
+  },
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS license_state (
+        id                 INTEGER PRIMARY KEY CHECK (id = 1),
+        installation_id    TEXT NOT NULL,
+        payload            BLOB,
+        signature          BLOB,
+        ultima_fecha_vista TEXT
+      );
+    `);
+  },
 ];
 
 function migrate(db) {
@@ -222,7 +308,11 @@ const ticketLabel = (n) => `TKT-${String(n).padStart(5, '0')}`;
 /* ------------------------------------------------------------------ */
 /* Repositorio                                                         */
 /* ------------------------------------------------------------------ */
-function createRepo(db, { clock = () => new Date() } = {}) {
+function createRepo(db, {
+  clock = () => new Date(),
+  machineGuidReader = readMachineGuid,
+  fallbackGuidPath,
+} = {}) {
   const today = () => localDate(clock());
   const nowStamp = () => {
     const d = clock();
@@ -233,6 +323,55 @@ function createRepo(db, { clock = () => new Date() } = {}) {
     return d;
   };
   const isClosed = (date) => !!db.prepare('SELECT 1 FROM day_closes WHERE date = ?').get(date);
+  const existingLicenseState = db.prepare('SELECT installation_id FROM license_state WHERE id = 1').get();
+  if (!existingLicenseState) {
+    const installationId = createInstallationId(machineGuidReader, fallbackGuidPath);
+    db.prepare('INSERT INTO license_state (id, installation_id) VALUES (1, ?)').run(installationId);
+  }
+  const getLicenseRecord = () => db.prepare('SELECT * FROM license_state WHERE id = 1').get();
+  const observeLicenseDate = () => {
+    const record = getLicenseRecord();
+    const currentDate = today();
+    if (!record || !record.payload) return { clockRollback: false, currentDate, lastSeenDate: null };
+    if (record.ultima_fecha_vista && currentDate < record.ultima_fecha_vista) {
+      return { clockRollback: true, currentDate, lastSeenDate: record.ultima_fecha_vista };
+    }
+    db.prepare('UPDATE license_state SET ultima_fecha_vista = ? WHERE id = 1').run(currentDate);
+    return { clockRollback: false, currentDate, lastSeenDate: currentDate };
+  };
+  const saveLicense = (payload, signature, issueDate) => {
+    const record = getLicenseRecord();
+    const currentDate = today();
+    if (record.payload && record.ultima_fecha_vista && currentDate < record.ultima_fecha_vista) {
+      throw new DomainError('CLOCK_ROLLBACK', 'La fecha del sistema es anterior a la última fecha registrada. Corrija la hora antes de activar.');
+    }
+    if (typeof issueDate !== 'string' || !DATE_RE.test(issueDate)) {
+      throw new DomainError('INVALID', 'La fecha de emisión de la licencia no es válida.');
+    }
+    db.prepare(
+      'UPDATE license_state SET payload = ?, signature = ?, ultima_fecha_vista = ? WHERE id = 1'
+    ).run(payload, signature, currentDate);
+    return getLicenseRecord();
+  };
+  const clockStatus = () => {
+    const result = db.prepare(`
+      SELECT MAX(activity_date) AS last_activity_date
+      FROM (
+        SELECT substr(created_at, 1, 10) AS activity_date FROM products
+        UNION ALL SELECT date FROM stock_movements
+        UNION ALL SELECT date FROM sales
+        UNION ALL SELECT date FROM day_closes
+        UNION ALL SELECT date FROM returns
+      )
+    `).get();
+    const lastActivityDate = result.last_activity_date || null;
+    const currentDate = today();
+    return {
+      today: currentDate,
+      lastActivityDate,
+      warning: Boolean(lastActivityDate && currentDate < lastActivityDate),
+    };
+  };
 
   const q = {
     productById: db.prepare('SELECT * FROM products WHERE id = ?'),
@@ -396,6 +535,14 @@ function createRepo(db, { clock = () => new Date() } = {}) {
 
   const recordSale = db.transaction((input) => {
     const date = today();
+    const licenseState = getLicenseRecord();
+    if (
+      licenseState.payload &&
+      licenseState.ultima_fecha_vista &&
+      date < licenseState.ultima_fecha_vista
+    ) {
+      throw new DomainError('CLOCK_ROLLBACK', 'La fecha del sistema es anterior a la última fecha registrada. Corrija la hora para registrar ventas.');
+    }
     if (isClosed(date)) throw new DomainError('DAY_CLOSED', 'El día ya está cerrado. Reábrelo para registrar ventas.');
     if (!input || !Array.isArray(input.items) || input.items.length === 0) {
       throw new DomainError('INVALID', 'Debe seleccionar al menos un producto.');
@@ -458,6 +605,11 @@ function createRepo(db, { clock = () => new Date() } = {}) {
       move(l.p.id, 'venta', -l.qty, { saleId });
       db.prepare('UPDATE products SET last_exit = ? WHERE id = ?').run(`Hoy ${localTime(d)}`, l.p.id);
     }
+    db.prepare(
+      `UPDATE license_state
+          SET ultima_fecha_vista = MAX(COALESCE(ultima_fecha_vista, ?), ?)
+        WHERE id = 1 AND payload IS NOT NULL`
+    ).run(date, date);
     return loadSale(saleId);
   });
 
@@ -655,18 +807,6 @@ function createRepo(db, { clock = () => new Date() } = {}) {
     return { restored: Object.fromEntries(TABLES.map((t) => [t, data.tables[t].length])) };
   });
 
-  const resetAll = db.transaction(() => {
-    const tables = ['return_items', 'returns', 'day_closes', 'stock_movements', 'sale_items', 'sales', 'products'];
-    const cleared = Object.fromEntries(
-      tables.map((table) => [table, db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count])
-    );
-    for (const table of tables) db.prepare(`DELETE FROM ${table}`).run();
-    db.prepare('DELETE FROM meta').run();
-    db.prepare("INSERT INTO meta (key, value) VALUES ('ticket_seq', '100')").run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('sale_items', 'stock_movements', 'return_items')").run();
-    return { cleared };
-  });
-
   /* ---------------- Devoluciones ---------------- */
   const recordReturn = db.transaction((input) => {
     const id = `return-${crypto.randomUUID()}`;
@@ -767,8 +907,20 @@ function createRepo(db, { clock = () => new Date() } = {}) {
     return rows.map((r) => loadReturn(r.id)).filter(Boolean);
   }
 
+  const resetAll = db.transaction(() => {
+    const cleared = {};
+    for (const t of ['return_items', 'returns', ...[...TABLES].reverse()]) {
+      cleared[t] = db.prepare(`SELECT COUNT(*) AS count FROM ${t}`).get().count;
+      db.prepare(`DELETE FROM ${t}`).run();
+    }
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('sale_items','stock_movements','return_items')").run();
+    db.prepare("INSERT INTO meta (key, value) VALUES ('ticket_seq', '100')").run();
+    return { ok: true, cleared };
+  });
+
   return {
-    today,
+    today, clockStatus,
+    getLicenseRecord, observeLicenseDate, saveLicense,
     listProducts, createProduct, updateProduct, archiveProduct, addStock, reponerStock,
     recordSale, voidSale, listSales, listSalesRange,
     recordReturn, listReturns,
@@ -785,7 +937,11 @@ function openDatabase(file, options) {
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
   migrate(db);
-  return { db, repo: createRepo(db, options), close: () => db.close() };
+  const repoOptions = {
+    ...options,
+    fallbackGuidPath: options?.fallbackGuidPath || `${file}.machine-guid`,
+  };
+  return { db, repo: createRepo(db, repoOptions), close: () => db.close() };
 }
 
 module.exports = { openDatabase, DomainError, localDate };
