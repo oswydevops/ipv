@@ -348,14 +348,11 @@ export const ReturnsView: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-600">
-              <span className="material-symbols-outlined text-[24px]">assignment_return</span>
-            </div>
             <div>
-              <h1 className="text-2xl font-headline font-bold text-on-surface">
+              <h1 className="text-2xl lg:text-3xl font-headline font-bold text-on-surface tracking-tight">
                 Control de Devoluciones y Garantías
               </h1>
-              <p className="text-xs text-on-surface-variant font-medium mt-0.5">
+              <p className="text-xs lg:text-sm text-on-surface-variant">
                 Registro de reembolsos al cliente, auditoría de artículos devueltos en mal estado y reflejo contable en el Cierre de Caja.
               </p>
             </div>
@@ -391,7 +388,7 @@ export const ReturnsView: React.FC = () => {
             type="button"
           >
             <span className="material-symbols-outlined text-[18px]">add_circle</span>
-            <span>+ Registrar Devolución</span>
+            <span>Registrar Devolución</span>
           </button>
         </div>
       </div>

@@ -769,9 +769,6 @@ export const ReportsView: React.FC = () => {
         <div className="flex flex-col gap-1.5">
           <h1 className="text-2xl lg:text-3xl font-headline font-bold text-on-surface tracking-tight flex items-center gap-2.5">
             <span>Reportes y Analítica Comercial</span>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-surface neo-inset text-primary font-mono font-bold">
-              Ventas + Devoluciones
-            </span>
           </h1>
           <p className="text-sm text-on-surface-variant max-w-2xl font-normal leading-relaxed">
             Consolidación integral de facturación bruta, reembolsos procesados por devoluciones y recaudación neta en CUP.

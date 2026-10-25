@@ -219,8 +219,8 @@ export const ProductsView: React.FC = () => {
       {/* Header section without Gestion de Almacen badge and without Excel/Export buttons */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-2xl lg:text-3xl font-headline font-semibold text-on-surface tracking-tight">
-            Catálogo Maestro de Productos
+          <h1 className="text-2xl lg:text-3xl font-headline font-bold text-on-surface tracking-tight">
+            Catálogo de Productos
           </h1>
           <p className="text-xs lg:text-sm text-on-surface-variant max-w-2xl leading-relaxed">
             Gestión de existencias base, categorización, precios oficiales en CUP y umbrales de stock mínimo de seguridad.
@@ -234,7 +234,7 @@ export const ProductsView: React.FC = () => {
             type="button"
           >
             <span className="material-symbols-outlined text-[18px]">add_circle</span>
-            <span>+ Nuevo Producto</span>
+            <span>Nuevo Producto</span>
           </button>
         </div>
       </div>
@@ -270,7 +270,7 @@ export const ProductsView: React.FC = () => {
               <span className="text-xl font-headline font-bold text-on-surface font-mono">
                 {Array.from(new Set(products.map((p) => p.category))).length}
               </span>
-              <span className="text-[11px] text-on-surface-variant">familias</span>
+              <span className="text-[11px] text-on-surface-variant">activas</span>
             </div>
           </div>
         </div>

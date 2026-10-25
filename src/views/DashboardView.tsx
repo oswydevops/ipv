@@ -403,7 +403,7 @@ export const DashboardView: React.FC = () => {
             type="button"
           >
             <span className="material-symbols-outlined text-[18px]">point_of_sale</span>
-            <span>Ver IPV del Día</span>
+            <span>Ver IPV</span>
           </button>
           <button
             onClick={() => setCurrentView('cierre-de-caja')}
@@ -423,7 +423,7 @@ export const DashboardView: React.FC = () => {
           <div className="flex items-start justify-between">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-                Total Recaudado Hoy
+                Total Recaudado
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-on-surface tracking-tight font-mono">
@@ -438,10 +438,10 @@ export const DashboardView: React.FC = () => {
           <div className="flex items-center gap-2 mt-4 pt-3 border-t-0">
             <span className="flex items-center text-xs font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full">
               <span className="material-symbols-outlined text-[14px]">trending_up</span>
-              En caja activa
+              En caja 
             </span>
             <span className="text-[11px] text-on-surface-variant font-medium">
-              Vendido IPV: ${formatCUP(ipvTotalVendido)} CUP
+              Vendido hoy: ${formatCUP(ipvTotalVendido)} CUP
             </span>
           </div>
         </div>
@@ -499,7 +499,7 @@ export const DashboardView: React.FC = () => {
               onClick={() => setCurrentView('alertas-de-stock')}
               className="text-primary font-semibold hover:underline flex items-center gap-1 cursor-pointer"
             >
-              <span>Resolver en reposición</span>
+              <span>Ir a reponer</span>
               <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
             </button>
             {zeroStockCount > 0 && (
@@ -533,7 +533,7 @@ export const DashboardView: React.FC = () => {
               type="button"
             >
               <span>
-                {returnsToday.length} {returnsToday.length === 1 ? 'devolución' : 'devoluciones'} ({returnedUnitsToday} u.)
+                {returnsToday.length} {returnsToday.length === 1 ? 'devolución' : 'devoluciones'}
               </span>
               <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
             </button>

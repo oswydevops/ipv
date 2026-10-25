@@ -606,7 +606,7 @@ export const CashCloseView: React.FC = () => {
               </div>
               <div className="flex items-center gap-1.5 mt-1 text-[11px] text-on-surface-variant font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                <span>{totalPieces} piezas contabilizadas en total</span>
+                <span>{totalPieces} piezas contadas en total</span>
               </div>
             </div>
           </div>
@@ -677,7 +677,7 @@ export const CashCloseView: React.FC = () => {
                   </span>
                   <div className="flex flex-col">
                     <span className="text-xs font-bold text-on-surface">
-                      Efectivo Contado Total
+                      Monto Total de Efectivo
                     </span>
                     <span className="text-[10px] text-on-surface-variant">
                       Billetes en gaveta
@@ -788,7 +788,7 @@ export const CashCloseView: React.FC = () => {
                         Total Recaudado
                       </span>
                       <span className="text-[10px] text-on-surface-variant">
-                        Efectivo + Transferencias
+                        Efectivo + Transferencias - Devoluciones
                       </span>
                     </div>
                   </div>
@@ -836,7 +836,7 @@ export const CashCloseView: React.FC = () => {
                 <div className="w-7 h-7 rounded-lg bg-surface neo-inset flex items-center justify-center text-primary">
                   <span className="material-symbols-outlined text-[16px]">person</span>
                 </div>
-                <span className="text-xs font-bold text-on-surface">Datos de Custodia y Turno</span>
+                <span className="text-xs font-bold text-on-surface">Datos de Custodia</span>
               </div>
               <span className="text-[10px] text-on-surface-variant font-mono">{todayDate}</span>
             </div>
@@ -872,7 +872,7 @@ export const CashCloseView: React.FC = () => {
                 className="text-[10px] font-semibold text-on-surface-variant uppercase"
                 htmlFor="cash-notes"
               >
-                Observaciones del arqueo (opcional)
+                Observaciones del cierre (opcional)
               </label>
               <input
                 id="cash-notes"
@@ -880,7 +880,7 @@ export const CashCloseView: React.FC = () => {
                 disabled={isCurrentDayClosed}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Sin incidencias en el arqueo del día..."
+                placeholder="Sin incidencias en el cierre del día..."
                 className="w-full bg-surface neo-inset px-3 py-2 rounded-xl text-xs text-on-surface placeholder:text-on-surface-variant/60 focus:outline-none disabled:opacity-60"
               />
             </div>
@@ -915,7 +915,7 @@ export const CashCloseView: React.FC = () => {
                 type="button"
               >
                 <span className="material-symbols-outlined text-[16px]">history</span>
-                <span>Historial Arqueos</span>
+                <span>Historial de Cierres</span>
               </button>
               <button
                 onClick={() => setShowActaModal(true)}
@@ -946,7 +946,7 @@ export const CashCloseView: React.FC = () => {
                     {isExporting ? 'Exportando cierre...' : 'Exportar cierre'}
                   </span>
                   <span className="text-[10px] text-on-surface-variant font-normal">
-                    Genera PDF oficial y Excel (.xlsx)
+                    Genera PDF y Excel (.xlsx)
                   </span>
                 </div>
               </div>
@@ -1001,7 +1001,7 @@ export const CashCloseView: React.FC = () => {
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-white p-3.5 sm:p-4 rounded-xl shadow-inner font-mono text-[10px] sm:text-[11px] text-neutral-800 flex flex-col gap-1.5 border border-neutral-300">
               <div className="text-center pb-2 border-b border-dashed border-neutral-400">
                 <p className="font-bold text-sm text-neutral-900">{APP_NAME}</p>
-                <p className="text-[9px] sm:text-[10px] text-neutral-600 tracking-wider font-semibold">ACTA DE ARQUEO Y CIERRE DIARIO</p>
+                <p className="text-[9px] sm:text-[10px] text-neutral-600 tracking-wider font-semibold">ACTA DE CIERRE DIARIO</p>
               </div>
 
               <div className="grid grid-cols-2 text-[10px] pt-0.5 gap-y-0.5 text-neutral-700">

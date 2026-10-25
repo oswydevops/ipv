@@ -323,7 +323,7 @@ export const SalesHistoryView: React.FC = () => {
             </span>
           </div>
           <p className="text-sm text-on-surface-variant max-w-3xl font-normal leading-relaxed">
-            Auditoría de tickets emitidos, reimpresión de comprobantes y control de ventas diarias, semanales y mensuales en CUP.
+            Auditoría de transacciones emitidas, reimpresión de comprobantes y control de ventas diarias, semanales y mensuales en CUP.
           </p>
         </div>
 
@@ -507,7 +507,7 @@ export const SalesHistoryView: React.FC = () => {
           <div className="flex items-start justify-between">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-                Transferencias / Digital
+                Recaudado en Transferencias
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-primary tracking-tight font-mono">

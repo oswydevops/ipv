@@ -131,14 +131,14 @@ export const IPVView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight text-on-surface">IPV del Dia</h1>
+            <h1 className="text-2xl lg:text-3xl font-headline font-bold text-on-surface tracking-tight">IPV del Dia</h1>
             {isViewDateClosed && (
               <span className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider">
                 Cerrado
               </span>
             )}
           </div>
-          <p className="text-xs text-on-surface-variant font-medium">
+          <p className="text-xs lg:text-sm text-on-surface-variant">
             Control de movimiento de inventario calculado a partir de movimientos de stock (solo lectura)
           </p>
         </div>

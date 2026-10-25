@@ -811,7 +811,7 @@ export const SettingsView: React.FC = () => {
         <section className="flex flex-col gap-6 animate-in fade-in duration-200">
           <div className="flex flex-col">
             <h2 className="text-lg font-headline font-bold text-on-surface">
-              Tipos de Reportes Disponibles para Exportación
+              Tipos de Reportes Disponibles para Exportar
             </h2>
             <span className="text-xs text-on-surface-variant">
               Seleccione el formato y tipo de documento que desea generar en hojas de cálculo compatibles con Microsoft Excel y LibreOffice.
@@ -830,10 +830,10 @@ export const SettingsView: React.FC = () => {
                     Control Diario
                   </span>
                   <h3 className="font-bold text-base text-on-surface leading-snug">
-                    Planilla IPV de la Jornada
+                    IPV de la Jornada
                   </h3>
                   <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
-                    Inventario completo del día: saldos iniciales, entradas, stock total, artículos vendidos, saldos finales, arqueo físico y devoluciones registradas.
+                    Inventario completo del día: saldos iniciales, entradas, stock total, artículos vendidos, saldos finales, cierre físico y devoluciones registradas.
                   </p>
                 </div>
               </div>
@@ -849,7 +849,7 @@ export const SettingsView: React.FC = () => {
                   className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-primary text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                 >
                   <span className="material-symbols-outlined text-[17px]">file_download</span>
-                  <span>Generar Planilla Diaria</span>
+                  <span>Descargar Documento</span>
                 </button>
               </div>
             </div>
@@ -862,13 +862,13 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <div className="flex flex-col gap-1 mt-1">
                   <span className="text-[11px] font-semibold text-tertiary uppercase tracking-wider">
-                    Contabilidad y Fisco
+                    Control Mensual
                   </span>
                   <h3 className="font-bold text-base text-on-surface leading-snug">
-                    Resumen Contable y Fiscal Mensual
+                    Resumen Contable Mensual
                   </h3>
                   <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
-                    Consolidado mensual con facturación bruta acumulada, devoluciones del mes, ventas netas fiscales, base imponible estimada (90.9%) e impuestos (9.1%).
+                    Consolidado mensual con facturación bruta acumulada, devoluciones del mes, ventas netas y demas indicadores fiscales, incluyendo desglose de artículos vendidos.
                   </p>
                 </div>
               </div>
@@ -884,7 +884,7 @@ export const SettingsView: React.FC = () => {
                   className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-tertiary text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                 >
                   <span className="material-symbols-outlined text-[17px]">download_for_offline</span>
-                  <span>Descargar Resumen Fiscal</span>
+                  <span>Descargar Resumen</span>
                 </button>
               </div>
             </div>
@@ -919,7 +919,7 @@ export const SettingsView: React.FC = () => {
                   className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-emerald-700 text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                 >
                   <span className="material-symbols-outlined text-[17px]">output</span>
-                  <span>Exportar Catálogo de Stock</span>
+                  <span>Exportar Catálogo</span>
                 </button>
               </div>
             </div>
@@ -935,10 +935,10 @@ export const SettingsView: React.FC = () => {
                     Facturación Comercial
                   </span>
                   <h3 className="font-bold text-base text-on-surface leading-snug">
-                    Historial de Ventas y Tickets
+                    Historial de Ventas y Transacciones
                   </h3>
                   <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
-                    Detalle cronológico de todas las ventas emitidas: fecha, hora, monto total facturado, canal de pago (efectivo / transferencia / mixto), notas y relación de artículos por ticket.
+                    Detalle cronológico de todas las ventas emitidas: fecha, hora, monto total facturado, método de pago (efectivo / transferencia / mixto), notas y relación de artículos por transacción.
                   </p>
                 </div>
               </div>
@@ -1272,7 +1272,7 @@ export const SettingsView: React.FC = () => {
         <section className="flex flex-col gap-6 animate-in fade-in duration-200">
           <div className="flex flex-col">
             <h2 className="text-lg font-headline font-bold text-on-surface">
-              Activación de la Aplicación
+              Licencia de Activación
             </h2>
             <span className="text-xs text-on-surface-variant">
               Gestión de la clave de activación única requerida para desbloquear todas las funciones operativas de FerreStock.
@@ -1468,7 +1468,7 @@ export const SettingsView: React.FC = () => {
 
               <div className="pt-3 border-t border-outline-variant/15 text-[11px] text-on-surface-variant flex items-center justify-between">
                 <span>Firma digital</span>
-                <span className="font-mono">FerreStock v1.0.0-beta</span>
+                <span className="font-mono">FerreStock v1.1.0</span>
               </div>
             </div>
           </div>
