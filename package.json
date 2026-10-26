@@ -18,7 +18,7 @@
     "app": "npm run build && npm run prepare:sqlite && electron .",
     "app:dev": "npm run prepare:sqlite && electron .",
     "prepare:sqlite": "node scripts/prepare-sqlite.cjs",
-    "dist": "npm run build && electron-builder --win nsis portable --x64"
+    "dist": "npm run build && electron-builder --win nsis --x64"
   },
   "dependencies": {
     "better-sqlite3": "8.7.0",
