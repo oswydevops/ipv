@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
     create: (input) => call('products:create', input),
     update: (id, patch) => call('products:update', id, patch),
     archive: (id) => call('products:archive', id),
+    delete: (id) => call('products:delete', id),
     addStock: (id, qty, note) => call('products:addStock', id, qty, note),
     reponerStock: (id, qty) => call('products:reponerStock', id, qty),
   },
@@ -33,6 +34,13 @@ contextBridge.exposeInMainWorld('api', {
   returns: {
     record: (input) => call('returns:record', input),
     list: () => call('returns:list'),
+  },
+  mermas: {
+    list: () => call('mermas:list'),
+    venderConDescuento: (id, price, note) => call('mermas:venderConDescuento', id, price, note),
+    enviarAlmacen: (id, note) => call('mermas:enviarAlmacen', id, note),
+    darDeBaja: (id, note) => call('mermas:darDeBaja', id, note),
+    revocar: (id) => call('mermas:revocar', id),
   },
   ipv: { getDay: (date) => call('ipv:getDay', date) },
   cash: {

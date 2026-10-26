@@ -294,7 +294,7 @@ export const SaleModal: React.FC = () => {
         {activeTab === 'nueva' ? (
           <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 min-h-[460px]">
             {/* LEFT COLUMN: Product Catalog & Search (6 of 12 cols) */}
-            <div className="lg:col-span-6 flex flex-col gap-3.5">
+            <div className="lg:col-span-6 min-w-0 flex flex-col gap-3.5">
               {/* Search Bar */}
               <div className="flex items-center gap-2">
                 <div className="flex-1 h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center gap-2 text-on-surface">
@@ -320,7 +320,7 @@ export const SaleModal: React.FC = () => {
               </div>
 
               {/* Category Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+              <div className="flex items-center gap-1.5 overflow-x-auto h-scrollbar pb-2 text-xs">
                 {categories.map((cat) => (
                   <button
                     key={cat}
@@ -332,7 +332,7 @@ export const SaleModal: React.FC = () => {
                     }`}
                     type="button"
                   >
-                    {cat === 'all' ? 'Todas las familias' : cat}
+                    {cat === 'all' ? 'Todas las categorias' : cat}
                   </button>
                 ))}
               </div>

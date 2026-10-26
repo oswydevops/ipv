@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { SearchableSelect } from '../components/SearchableSelect';
+import { PRODUCT_CATEGORIES } from '../data/productCategories';
 import { Product } from '../types';
 
 export const StockAlertsView: React.FC = () => {
@@ -14,7 +16,7 @@ export const StockAlertsView: React.FC = () => {
   // Modal state for quick restock
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalProductId, setModalProductId] = useState('');
-  const [modalQty, setModalQty] = useState(20);
+  const [modalQty, setModalQty] = useState('0');
   const [modalCost, setModalCost] = useState(0);
   const [modalDest, setModalDest] = useState('Mostrador Principal / Repisa Inmediata');
 
@@ -50,19 +52,14 @@ export const StockAlertsView: React.FC = () => {
 
   const handleOpenRestock = (targetProduct?: Product) => {
     let prodId = '';
-    let initialQty = 1;
     if (targetProduct) {
       prodId = targetProduct.id;
-      const disp = targetProduct.almacenStock || 0;
-      initialQty = disp > 0 ? Math.min(disp, 10) : 1;
     } else if (products.length > 0) {
       prodId = products[0].id;
-      const disp = products[0].almacenStock || 0;
-      initialQty = disp > 0 ? Math.min(disp, 10) : 1;
     }
 
     setModalProductId(prodId);
-    setModalQty(initialQty);
+    setModalQty('0');
     setIsModalOpen(true);
   };
 
@@ -119,7 +116,7 @@ export const StockAlertsView: React.FC = () => {
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-error"></span>
             </span>
             <span className="text-on-surface-variant">
-              Auditoría: <strong className="text-on-surface">En vivo (SQLite)</strong>
+              Actualización<strong className="text-on-surface">(BD)</strong>
             </span>
             <button
               onClick={async () => {
@@ -308,21 +305,16 @@ export const StockAlertsView: React.FC = () => {
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5">
           {/* Category Dropdown */}
           <div className="relative flex-1 sm:flex-initial sm:w-56">
-            <select
+            <SearchableSelect
               value={familyFilter}
-              onChange={(e) => setFamilyFilter(e.target.value)}
-              className="appearance-none w-full h-10 pl-3.5 pr-9 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface focus:outline-none cursor-pointer"
-            >
-              <option value="all">Todas las categorías</option>
-              <option value="plomería">Plomería y Agua</option>
-              <option value="electricidad">Electricidad e Ilum.</option>
-              <option value="tornillería">Fijaciones y Tornillería</option>
-              <option value="herramientas">Herramientas</option>
-              <option value="pinturas">Pinturas y Acabados</option>
-            </select>
-            <span className="material-symbols-outlined pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[18px] text-primary">
-              expand_more
-            </span>
+              onChange={setFamilyFilter}
+              placeholder="Buscar categoría..."
+              options={[
+                { value: 'all', label: 'Todas las categorías' },
+                ...PRODUCT_CATEGORIES.map((category) => ({ value: category, label: category })),
+              ]}
+              className="h-10 pl-3.5 rounded-xl bg-surface neo-inset text-xs font-semibold"
+            />
           </div>
 
           {/* Severity Dropdown */}
@@ -330,16 +322,13 @@ export const StockAlertsView: React.FC = () => {
             <select
               value={severityFilter}
               onChange={(e) => setSeverityFilter(e.target.value)}
-              className="appearance-none w-full h-10 pl-3.5 pr-9 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface focus:outline-none cursor-pointer"
+              className="app-select w-full h-10 pl-3.5 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface focus:outline-none cursor-pointer"
             >
               <option value="all">Todas las alertas</option>
               <option value="critico">Solo Agotados (Cero)</option>
               <option value="bajo">Solo Stock Bajo</option>
               <option value="disponible">Solo Disponibles</option>
             </select>
-            <span className="material-symbols-outlined pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[18px] text-primary">
-              filter_list
-            </span>
           </div>
 
           {/* Reset Filters button */}
@@ -577,31 +566,20 @@ export const StockAlertsView: React.FC = () => {
                 <div className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-semibold text-on-surface">Producto a reponer</label>
-                    <div className="h-11 px-3.5 rounded-xl bg-surface neo-inset flex items-center text-xs text-on-surface">
-                      <select
-                        value={modalProductId}
-                        onChange={(e) => {
-                          const selectedId = e.target.value;
-                          setModalProductId(selectedId);
-                          const prod = products.find((p) => p.id === selectedId);
-                          if (prod) {
-                            const disp = prod.almacenStock || 0;
-                            setModalQty(disp > 0 ? Math.min(disp, 10) : 1);
-                          }
-                        }}
-                        className="bg-transparent w-full focus:outline-none font-medium text-on-surface cursor-pointer"
-                      >
-                        {products.length === 0 ? (
-                          <option value="">No hay productos disponibles</option>
-                        ) : (
-                          products.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.code} - {p.name}
-                            </option>
-                          ))
-                        )}
-                      </select>
-                    </div>
+                    <SearchableSelect
+                      value={modalProductId}
+                      onChange={(selectedId) => {
+                        setModalProductId(selectedId);
+                        setModalQty('0');
+                      }}
+                      placeholder={products.length === 0 ? 'No hay productos disponibles' : 'Buscar producto por código o nombre...'}
+                      options={products.map((product) => ({
+                        value: product.id,
+                        label: `${product.code} - ${product.name}`,
+                      }))}
+                      disabled={products.length === 0}
+                      className="h-11 pl-3.5 rounded-xl bg-surface neo-inset text-xs font-medium"
+                    />
                   </div>
 
                   {/* Badges mostrador vs almacén */}
@@ -635,7 +613,7 @@ export const StockAlertsView: React.FC = () => {
                       {dispAlmacen > 0 && (
                         <button
                           type="button"
-                          onClick={() => setModalQty(dispAlmacen)}
+                          onClick={() => setModalQty(String(dispAlmacen))}
                           className="text-[11px] text-primary font-bold hover:underline cursor-pointer"
                         >
                           Todo el almacén ({dispAlmacen})
@@ -648,7 +626,7 @@ export const StockAlertsView: React.FC = () => {
                         min="1"
                         max={dispAlmacen > 0 ? dispAlmacen : 1}
                         value={modalQty}
-                        onChange={(e) => setModalQty(parseInt(e.target.value) || 0)}
+                        onChange={(e) => setModalQty(e.target.value.replace(/^0+(?=\d)/, ''))}
                         className="bg-transparent w-full focus:outline-none font-mono font-bold text-sm text-on-surface"
                       />
                     </div>

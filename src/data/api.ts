@@ -115,6 +115,7 @@ export interface IpvApi {
     create(input: Partial<Omit<Product, 'id' | 'status' | 'createdAt'>> & { name: string }): Promise<Product>;
     update(id: string, patch: Partial<Omit<Product, 'id' | 'status' | 'createdAt'>>): Promise<Product>;
     archive(id: string): Promise<{ id: string }>;
+    delete(id: string): Promise<{ id: string; mode: 'deleted' | 'archived' }>;
     addStock(id: string, qty: number, note?: string): Promise<Product>;
     reponerStock(id: string, qty: number): Promise<Product>;
   };
@@ -151,8 +152,10 @@ export interface IpvApi {
   };
   mermas?: {
     list(): Promise<any[]>;
-    reincorporar(mermaId: string, newPrice: number, note?: string): Promise<any>;
+    venderConDescuento(mermaId: string, newPrice: number, note?: string): Promise<any>;
+    enviarAlmacen(mermaId: string, note?: string): Promise<any>;
     darDeBaja(mermaId: string, note?: string): Promise<any>;
+    revocar(mermaId: string): Promise<any>;
   };
   _isElectron?: boolean;
 }

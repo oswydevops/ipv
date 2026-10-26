@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { openDatabase } = require('./db.cjs');
+const { getResumenDia } = require('../src/main/reports/getResumenDia.js');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ipv-'));
 let now = new Date(2026, 9, 9, 9, 0); // 2026-10-09 09:00 local
@@ -153,6 +154,79 @@ test('devolución: registra y consulta artículos devueltos', () => {
   assert.strictEqual(record.totalRefund, 20);
   assert.strictEqual(record.items.length, 1);
   assert.strictEqual(repo.listReturns()[0].id, record.id);
+  const merma = repo.listMermas().find((item) => item.returnId === record.id);
+  assert.ok(merma);
+  assert.strictEqual(merma.status, 'en_almacen_merma');
+
+  repo.venderMermaConDescuento(merma.id, 7);
+  const defectiveProduct = repo.listProducts().find((product) => product.category === 'Defectuoso');
+  assert.ok(defectiveProduct.name.includes('(Defectuoso)'));
+  assert.strictEqual(defectiveProduct.price, 7);
+  assert.strictEqual(defectiveProduct.stock, 2);
+  assert.strictEqual(repo.listMermas().find((item) => item.id === merma.id).defectiveProductId, defectiveProduct.id);
+  const defectiveSale = repo.recordSale({
+    items: [{ productId: defectiveProduct.id, quantity: 1 }],
+    paymentMethod: 'efectivo',
+  });
+  throwsCode(() => repo.revocarMerma(merma.id), 'INVALID');
+  assert.strictEqual(defectiveSale.items[0].unitPrice, 7);
+  const closeSummary = getResumenDia(D2, store.db);
+  const defectiveLine = closeSummary.ventasPorProducto.find((item) => item.codigo === defectiveProduct.code);
+  assert.strictEqual(defectiveLine.categoria, 'Defectuoso');
+  assert.ok(defectiveLine.nombre.includes('(Defectuoso)'));
+
+  const reversibleSaleReturn = repo.recordReturn({
+    reason: 'Revocación de venta rebajada',
+    items: [{
+      productId: tornillo.id, code: tornillo.code, name: tornillo.name, um: tornillo.um,
+      quantity: 1, unitPrice: 10, condition: 'mal_estado',
+    }],
+  });
+  const reversibleSaleMerma = repo.listMermas().find((item) => item.returnId === reversibleSaleReturn.id);
+  repo.venderMermaConDescuento(reversibleSaleMerma.id, 7);
+  const reversibleDefectiveId = repo.listMermas().find((item) => item.id === reversibleSaleMerma.id).defectiveProductId;
+  store.db.prepare('UPDATE merma_items SET defective_product_id = NULL WHERE id = ?').run(reversibleSaleMerma.id);
+  repo.revocarMerma(reversibleSaleMerma.id);
+  assert.strictEqual(repo.listMermas().find((item) => item.id === reversibleSaleMerma.id).status, 'en_almacen_merma');
+  assert.ok(!repo.listProducts().some((product) => product.id === reversibleDefectiveId));
+
+  const warehouseReturn = repo.recordReturn({
+    reason: 'Devolución para almacén',
+    items: [{
+      productId: tornillo.id, code: tornillo.code, name: tornillo.name, um: tornillo.um,
+      quantity: 1, unitPrice: 10, condition: 'mal_estado',
+    }],
+  });
+  const warehouseMerma = repo.listMermas().find((item) => item.returnId === warehouseReturn.id);
+  const stockBeforeWarehouse = repo.listProducts().find((product) => product.id === tornillo.id);
+  const stockBefore = stockBeforeWarehouse.stock;
+  const warehouseBefore = stockBeforeWarehouse.almacenStock;
+  repo.enviarMermaAlmacen(warehouseMerma.id);
+  const afterWarehouse = repo.listProducts().find((product) => product.id === tornillo.id);
+  assert.strictEqual(afterWarehouse.stock, stockBefore);
+  assert.strictEqual(afterWarehouse.almacenStock, warehouseBefore + 1);
+  assert.strictEqual(repo.listMermas().find((item) => item.id === warehouseMerma.id).status, 'devuelto_a_almacen');
+  repo.revocarMerma(warehouseMerma.id);
+  assert.strictEqual(repo.listMermas().find((item) => item.id === warehouseMerma.id).status, 'en_almacen_merma');
+  assert.strictEqual(repo.listProducts().find((product) => product.id === tornillo.id).almacenStock, warehouseBefore);
+  repo.enviarMermaAlmacen(warehouseMerma.id);
+  repo.reponerStock(tornillo.id, 1);
+  const afterRestock = repo.listProducts().find((product) => product.id === tornillo.id);
+  assert.strictEqual(afterRestock.stock, stockBefore + 1);
+  assert.strictEqual(afterRestock.almacenStock, warehouseBefore);
+
+  const discardedReturn = repo.recordReturn({
+    reason: 'Artículo inservible',
+    items: [{
+      productId: tornillo.id, code: tornillo.code, name: tornillo.name, um: tornillo.um,
+      quantity: 1, unitPrice: 10, condition: 'mal_estado',
+    }],
+  });
+  const discardedMerma = repo.listMermas().find((item) => item.returnId === discardedReturn.id);
+  repo.darDeBajaMerma(discardedMerma.id);
+  assert.strictEqual(repo.listMermas().find((item) => item.id === discardedMerma.id).status, 'baja_definitiva');
+  repo.revocarMerma(discardedMerma.id);
+  assert.strictEqual(repo.listMermas().find((item) => item.id === discardedMerma.id).status, 'en_almacen_merma');
 });
 
 test('respaldo: exportar -> borrar cambios -> restaurar deja todo igual', () => {
@@ -222,7 +296,13 @@ test('migración repara tablas de devoluciones ausentes', () => {
 
   assert.strictEqual(record.items.length, 1);
   assert.strictEqual(repairedStore.repo.listReturns()[0].returnNumber, record.returnNumber);
+  assert.strictEqual(repairedStore.repo.listMermas().length, 1);
+  repairedStore.db.exec('DROP TABLE merma_items; PRAGMA user_version = 5;');
   repairedStore.close();
+  const migratedStore = openDatabase(file, { clock: () => now });
+  assert.strictEqual(migratedStore.repo.listMermas().length, 1);
+  assert.strictEqual(migratedStore.repo.listMermas()[0].status, 'en_almacen_merma');
+  migratedStore.close();
 });
 
 test('restablecimiento elimina todos los datos comerciales y reinicia las secuencias', () => {
@@ -230,7 +310,7 @@ test('restablecimiento elimina todos los datos comerciales y reinicia las secuen
   assert.ok(result.cleared.products > 0);
   assert.ok(result.cleared.sales > 0);
   assert.ok(result.cleared.returns > 0);
-  for (const table of ['products', 'sales', 'sale_items', 'stock_movements', 'day_closes', 'returns', 'return_items']) {
+  for (const table of ['products', 'sales', 'sale_items', 'stock_movements', 'day_closes', 'returns', 'return_items', 'merma_items']) {
     assert.strictEqual(store.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0, `${table} debe quedar vacía`);
   }
   assert.strictEqual(store.db.prepare("SELECT value FROM meta WHERE key = 'ticket_seq'").get().value, '100');
@@ -240,6 +320,40 @@ test('restablecimiento elimina todos los datos comerciales y reinicia las secuen
   assert.strictEqual(sale.ticketNumber, 'TKT-00101');
   const returnRecord = repo.recordReturn({ items: [], totalRefund: 0, refundMethod: 'efectivo' });
   assert.strictEqual(returnRecord.returnNumber, 'DEV-001');
+});
+
+test('eliminar: sin historial borra la fila y libera el código', () => {
+  const descartable = repo.createProduct({ name: 'Descartable', price: 5, stock: 0, code: 'PROD-880' });
+  assert.deepStrictEqual(repo.deleteProduct(descartable.id), { id: descartable.id, mode: 'deleted' });
+  assert.ok(!repo.listProducts().find((p) => p.id === descartable.id));
+  assert.strictEqual(
+    store.db.prepare('SELECT COUNT(*) AS count FROM products WHERE id = ?').get(descartable.id).count,
+    0,
+    'la fila debe desaparecer de la tabla'
+  );
+  const reuso = repo.createProduct({ name: 'Reuso', price: 5, stock: 0, code: 'PROD-880' });
+  assert.strictEqual(reuso.code, 'PROD-880');
+});
+
+test('eliminar: con historial archiva, libera el código y conserva los movimientos', () => {
+  const conHistorial = repo.createProduct({ name: 'Con historial', price: 5, stock: 3, code: 'PROD-881' });
+  assert.deepStrictEqual(repo.deleteProduct(conHistorial.id), { id: conHistorial.id, mode: 'archived' });
+  assert.ok(!repo.listProducts().find((p) => p.id === conHistorial.id));
+  assert.strictEqual(
+    store.db.prepare('SELECT archived FROM products WHERE id = ?').get(conHistorial.id).archived,
+    1,
+    'la fila debe quedar archivada'
+  );
+  assert.strictEqual(
+    store.db.prepare('SELECT COUNT(*) AS count FROM stock_movements WHERE product_id = ?').get(conHistorial.id).count,
+    1,
+    'el movimiento inicial debe sobrevivir'
+  );
+  // el código archivado ya no bloquea uno nuevo
+  const reuso = repo.createProduct({ name: 'Reuso con historial', price: 5, stock: 0, code: 'PROD-881' });
+  assert.strictEqual(reuso.code, 'PROD-881');
+  // pero sigue bloqueado mientras el nuevo está activo
+  throwsCode(() => repo.createProduct({ name: 'Duplicado', price: 1, stock: 0, code: 'PROD-881' }), 'CODE_EXISTS');
 });
 
 (async () => {

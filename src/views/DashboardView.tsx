@@ -398,14 +398,6 @@ export const DashboardView: React.FC = () => {
             <span>Actualizar</span>
           </button>
           <button
-            onClick={() => setCurrentView('ipv-del-dia')}
-            className="h-10 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-primary hover:text-tertiary transition-all active:neo-inset cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[18px]">point_of_sale</span>
-            <span>Ver IPV</span>
-          </button>
-          <button
             onClick={() => setCurrentView('cierre-de-caja')}
             className="h-10 px-5 rounded-xl bg-primary text-white text-xs font-bold shadow-md shadow-primary/25 hover:bg-primary-container transition-all flex items-center gap-2 cursor-pointer"
             type="button"
@@ -441,7 +433,7 @@ export const DashboardView: React.FC = () => {
               En caja 
             </span>
             <span className="text-[11px] text-on-surface-variant font-medium">
-              Vendido hoy: ${formatCUP(ipvTotalVendido)} CUP
+              Hoy: ${formatCUP(ipvTotalVendido)} CUP
             </span>
           </div>
         </div>
@@ -848,7 +840,7 @@ export const DashboardView: React.FC = () => {
             className="h-9 px-3.5 rounded-xl bg-surface neo-raised text-xs font-semibold text-primary hover:text-on-surface active:neo-inset transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
             type="button"
           >
-            <span>Ver Catálogo Maestro</span>
+            <span>Ver Catálogo</span>
             <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
           </button>
         </div>

@@ -123,6 +123,11 @@ export function createFallbackApi(): IpvApi {
         persist();
         return { id };
       },
+      async delete(id) {
+        products = products.filter((p) => p.id !== id);
+        persist();
+        return { id, mode: 'deleted' as const };
+      },
       async addStock(id, qty, _note) {
         const idx = products.findIndex((p) => p.id === id);
         if (idx === -1) throw new Error('Producto no encontrado');
@@ -553,31 +558,21 @@ export function createFallbackApi(): IpvApi {
 
         let mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
 
-        // 1. Artículos devueltos en buen estado pasan DIRECTAMENTE al almacén para volver a utilizar en stock
-        for (const it of (input.items || [])) {
-          if (it.condition === 'buen_estado') {
-            const prod = products.find((p) => p.id === it.productId || p.code === it.code);
-            if (prod) {
-              prod.stock += Number(it.quantity) || 0;
-              prod.status = prod.stock === 0 ? 'out' : prod.stock <= prod.minStock ? 'low' : 'ok';
-            }
-          } else if (it.condition === 'mal_estado') {
-            // 2. Artículos devueltos en mal estado van al almacén como artículos en merma
-            mermas.push({
-              id: `merma-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              returnId: id,
-              returnNumber,
-              date: today,
-              productId: it.productId,
-              code: it.code,
-              name: it.name,
-              um: it.um,
-              quantity: Number(it.quantity) || 1,
-              originalUnitPrice: Number(it.unitPrice) || 0,
-              damagedReason: it.damagedReason || 'Mal estado / defecto',
-              status: 'en_almacen_merma',
-            });
-          }
+        for (const it of (input.items || []).filter((item: any) => item.condition === 'mal_estado')) {
+          mermas.push({
+            id: `merma-${id}-${mermas.length + 1}`,
+            returnId: id,
+            returnNumber,
+            date: today,
+            productId: it.productId,
+            code: it.code,
+            name: it.name,
+            um: it.um,
+            quantity: Number(it.quantity) || 1,
+            originalUnitPrice: Number(it.unitPrice) || 0,
+            damagedReason: it.damagedReason?.trim() || input.reason || 'Devolución de cliente',
+            status: 'en_almacen_merma',
+          });
         }
         setStored(STORAGE_KEYS.MERMAS, mermas);
 
@@ -620,59 +615,116 @@ export function createFallbackApi(): IpvApi {
         return getStored<any[]>(STORAGE_KEYS.MERMAS, []);
       },
 
-      async reincorporar(mermaId: string, newPrice: number, note?: string) {
+      async venderConDescuento(mermaId: string, newPrice: number, note?: string) {
         let mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
         const itemIndex = mermas.findIndex((m) => m.id === mermaId);
         if (itemIndex === -1) throw new Error('Artículo de merma no encontrado');
         const item = mermas[itemIndex];
+        if (item.status !== 'en_almacen_merma') throw new Error('Este artículo de merma ya fue procesado');
+        if (!Number.isFinite(Number(newPrice)) || Number(newPrice) <= 0 || Number(newPrice) >= Number(item.originalUnitPrice)) {
+          throw new Error('El precio debe ser mayor que cero y menor que el precio original.');
+        }
+        const source = products.find((p) => p.id === item.productId);
+        if (!source) throw new Error('No se encontró el producto original.');
+        const defectiveProduct: Product = {
+          ...source,
+          id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          code: `MERMA-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+          name: `${item.name} (Defectuoso)`,
+          detail: `Artículo defectuoso: ${item.damagedReason}`,
+          category: 'Defectuoso',
+          price: Number(newPrice),
+          stock: Number(item.quantity),
+          minStock: 1,
+          almacenStock: 0,
+          status: 'ok',
+          createdAt: getTodayStr(),
+        };
+        products.push(defectiveProduct);
         item.status = 'reincorporado_con_precio';
         item.discountedPrice = Number(newPrice);
+        item.defectiveProductId = defectiveProduct.id;
         item.resolvedAt = getTodayStr();
-        item.resolutionNote = note || `Reincorporado al almacén con precio de oferta/descuento: $${Number(newPrice).toFixed(2)}`;
+        item.resolutionNote = note || `Preparado para venta como defectuoso con precio de $${Number(newPrice).toFixed(2)}`;
         setStored(STORAGE_KEYS.MERMAS, mermas);
+        persist();
+        return item;
+      },
 
-        // Reincorporar al inventario de productos
-        const existing = products.find((p) => p.id === item.productId || p.code === item.code);
-        if (existing) {
-          if (Math.abs(existing.price - newPrice) < 0.01) {
-            existing.stock += Number(item.quantity) || 1;
-            existing.status = existing.stock === 0 ? 'out' : existing.stock <= existing.minStock ? 'low' : 'ok';
-          } else {
-            const saldoCode = `${item.code}-SALDO`;
-            const existingSaldo = products.find((p) => p.code === saldoCode);
-            if (existingSaldo) {
-              existingSaldo.stock += Number(item.quantity) || 1;
-              existingSaldo.price = Number(newPrice);
-              existingSaldo.status = existingSaldo.stock === 0 ? 'out' : existingSaldo.stock <= existingSaldo.minStock ? 'low' : 'ok';
-            } else {
-              const newSaldoProduct: Product = {
-                id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                code: saldoCode,
-                name: `${item.name} (Saldo / Defecto)`,
-                detail: `Artículo reincorporado de merma: ${item.damagedReason}`,
-                category: existing.category,
-                um: item.um,
-                price: Number(newPrice),
-                stock: Number(item.quantity) || 1,
-                minStock: 1,
-                status: 'ok',
-              };
-              products.push(newSaldoProduct);
-            }
-          }
-        }
+      async enviarAlmacen(mermaId: string, note?: string) {
+        const mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+        const item = mermas.find((m) => m.id === mermaId);
+        if (!item) throw new Error('Artículo de merma no encontrado');
+        if (item.status !== 'en_almacen_merma') throw new Error('Este artículo de merma ya fue procesado');
+        const product = products.find((p) => p.id === item.productId);
+        if (!product) throw new Error('No se encontró el producto original.');
+        product.almacenStock = (Number(product.almacenStock) || 0) + Number(item.quantity);
+        item.status = 'devuelto_a_almacen';
+        item.resolvedAt = getTodayStr();
+        item.resolutionNote = note || 'Enviado al almacén central para reponerlo al mostrador cuando sea necesario.';
+        setStored(STORAGE_KEYS.MERMAS, mermas);
         persist();
         return item;
       },
 
       async darDeBaja(mermaId: string, note?: string) {
-        let mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
-        const itemIndex = mermas.findIndex((m) => m.id === mermaId);
-        if (itemIndex === -1) throw new Error('Artículo de merma no encontrado');
-        const item = mermas[itemIndex];
+        const mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+        const item = mermas.find((m) => m.id === mermaId);
+        if (!item) throw new Error('Artículo de merma no encontrado');
+        if (item.status !== 'en_almacen_merma') throw new Error('Este artículo de merma ya fue procesado');
         item.status = 'baja_definitiva';
         item.resolvedAt = getTodayStr();
         item.resolutionNote = note || 'Baja definitiva por daño o merma irreparable';
+        setStored(STORAGE_KEYS.MERMAS, mermas);
+        persist();
+        return item;
+      },
+
+      async revocar(mermaId: string) {
+        const mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+        const item = mermas.find((merma) => merma.id === mermaId);
+        if (!item) throw new Error('Artículo de merma no encontrado');
+        if (item.status === 'en_almacen_merma') throw new Error('El artículo todavía está pendiente.');
+
+        if (item.status === 'reincorporado_con_precio') {
+          let defectiveProductId = item.defectiveProductId;
+          if (!defectiveProductId) {
+            const candidates = products.filter((product) =>
+              product.code.startsWith('MERMA-') &&
+              product.name === `${item.name} (Defectuoso)` &&
+              product.detail === `Artículo defectuoso: ${item.damagedReason}` &&
+              product.category === 'Defectuoso' &&
+              product.price === Number(item.discountedPrice) &&
+              product.stock === Number(item.quantity) &&
+              Number(product.almacenStock || 0) === 0 &&
+              product.createdAt?.slice(0, 10) === item.resolvedAt &&
+              !sales.some((sale) => sale.items.some((saleItem) => saleItem.productId === product.id))
+            );
+            if (candidates.length !== 1) {
+              throw new Error('No se puede revocar con seguridad: no se encontró un único artículo defectuoso intacto asociado.');
+            }
+            defectiveProductId = candidates[0].id;
+          }
+          const defectiveProduct = products.find((product) => product.id === defectiveProductId);
+          const hasSales = sales.some((sale) => sale.items.some((saleItem) => saleItem.productId === defectiveProductId));
+          if (!defectiveProduct || defectiveProduct.stock !== Number(item.quantity) || Number(defectiveProduct.almacenStock || 0) !== 0 || hasSales) {
+            throw new Error('No se puede revocar: el artículo defectuoso ya se vendió o su existencia cambió.');
+          }
+          products = products.filter((product) => product.id !== defectiveProductId);
+        } else if (item.status === 'devuelto_a_almacen') {
+          const product = products.find((entry) => entry.id === item.productId);
+          const warehouseStock = Number(product?.almacenStock || 0);
+          if (!product || warehouseStock < Number(item.quantity)) {
+            throw new Error('No se puede revocar: no hay suficiente existencia en el almacén para devolver la cantidad.');
+          }
+          product.almacenStock = warehouseStock - Number(item.quantity);
+        }
+
+        item.status = 'en_almacen_merma';
+        item.discountedPrice = undefined;
+        item.defectiveProductId = undefined;
+        item.resolvedAt = undefined;
+        item.resolutionNote = undefined;
         setStored(STORAGE_KEYS.MERMAS, mermas);
         persist();
         return item;

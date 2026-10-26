@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { ReturnRecord, ReturnItem, MermaItem } from '../types';
 
 export const ReturnsView: React.FC = () => {
@@ -8,8 +9,10 @@ export const ReturnsView: React.FC = () => {
     sales = [],
     products = [],
     mermaItems = [],
-    reincorporarMermaItem,
+    venderMermaConDescuento,
+    enviarMermaAlmacen,
     darDeBajaMermaItem,
+    revocarMermaItem,
     todayDate,
     addReturn,
     isCurrentDayClosed,
@@ -17,7 +20,7 @@ export const ReturnsView: React.FC = () => {
   } = useApp();
 
   // Estados de vista
-  const [activeTab, setActiveTab] = useState<'todas' | 'mal_estado' | 'buen_estado' | 'almacen_merma'>('todas');
+  const [activeTab, setActiveTab] = useState<'todas' | 'almacen_merma'>('todas');
   const [searchQuery, setSearchQuery] = useState('');
   const [periodFilter, setPeriodFilter] = useState<'hoy' | 'semana' | 'mes' | 'todos'>('hoy');
   const [page, setPage] = useState(1);
@@ -30,7 +33,6 @@ export const ReturnsView: React.FC = () => {
   const [transferenciaRefundInput, setTransferenciaRefundInput] = useState<string>('');
   const [generalReason, setGeneralReason] = useState('Artículo defectuoso / Garantía');
   const [customReason, setCustomReason] = useState('');
-  const [catalogSearch, setCatalogSearch] = useState('');
   const [selectedReturnDetail, setSelectedReturnDetail] = useState<ReturnRecord | null>(null);
 
   // Estados para gestión de merma
@@ -39,6 +41,8 @@ export const ReturnsView: React.FC = () => {
   const [repriceNote, setRepriceNote] = useState<string>('');
   const [mermaItemToBaja, setMermaItemToBaja] = useState<MermaItem | null>(null);
   const [bajaNote, setBajaNote] = useState<string>('');
+  const [mermaItemToWarehouse, setMermaItemToWarehouse] = useState<MermaItem | null>(null);
+  const [mermaItemToRevoke, setMermaItemToRevoke] = useState<MermaItem | null>(null);
 
   // Borrador de artículos a devolver en el modal
   interface ReturnDraftItem {
@@ -51,7 +55,6 @@ export const ReturnsView: React.FC = () => {
     unitPrice: number;
     condition: 'mal_estado' | 'buen_estado';
     damagedReason: string;
-    reintegrateToStock: boolean;
     selected: boolean;
   }
   const [draftItems, setDraftItems] = useState<ReturnDraftItem[]>([]);
@@ -85,19 +88,9 @@ export const ReturnsView: React.FC = () => {
     });
   }, [returns, todayDate, periodFilter]);
 
-  // 2. Filtrado por pestaña (Todas / Solo Mal Estado / Solo Buen Estado) y búsqueda
+  // 2. Filtrado por búsqueda
   const finalFilteredReturns = useMemo(() => {
     return periodFilteredReturns.filter((r) => {
-      // Filtro de condición
-      if (activeTab === 'mal_estado') {
-        const hasDamaged = r.hasDamagedItems || (r.items || []).some((it) => it.condition === 'mal_estado');
-        if (!hasDamaged) return false;
-      }
-      if (activeTab === 'buen_estado') {
-        const allGood = (r.items || []).every((it) => it.condition === 'buen_estado');
-        if (!allGood) return false;
-      }
-
       // Filtro de texto
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
@@ -110,7 +103,7 @@ export const ReturnsView: React.FC = () => {
       );
       return matchNum || matchTicket || matchClient || matchReason || matchProduct;
     });
-  }, [periodFilteredReturns, activeTab, searchQuery]);
+  }, [periodFilteredReturns, searchQuery]);
 
   // Artículos en merma filtrados por búsqueda
   const filteredMermaItems = useMemo(() => {
@@ -149,13 +142,6 @@ export const ReturnsView: React.FC = () => {
     }, 0);
   }, [todayReturns]);
 
-  // Filtrado de productos para el selector de catálogo en el modal
-  const filteredCatalogProducts = useMemo(() => {
-    if (!catalogSearch.trim()) return products;
-    const q = catalogSearch.toLowerCase();
-    return products.filter((p) => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q));
-  }, [products, catalogSearch]);
-
   // Agregar producto seleccionado del catálogo al borrador
   const handleAddManualProduct = (prodId: string) => {
     const prod = products.find((p) => p.id === prodId);
@@ -181,7 +167,6 @@ export const ReturnsView: React.FC = () => {
         unitPrice: prod.price,
         condition: 'mal_estado',
         damagedReason: 'Artículo en mal estado / averiado',
-        reintegrateToStock: false,
         selected: true,
       },
     ]);
@@ -218,7 +203,7 @@ export const ReturnsView: React.FC = () => {
       refundAmount: Number(d.quantity) * Number(d.unitPrice),
       condition: d.condition,
       damagedReason: d.condition === 'mal_estado' ? (d.damagedReason || 'Mal estado / averiado') : undefined,
-      reintegrateToStock: d.condition === 'buen_estado' ? d.reintegrateToStock : false,
+      reintegrateToStock: false,
     }));
 
     const finalReason = generalReason === 'Otro motivo' && customReason.trim()
@@ -254,7 +239,6 @@ export const ReturnsView: React.FC = () => {
       setDraftItems([]);
       setGeneralReason('Artículo defectuoso / Garantía');
       setCustomReason('');
-      setCatalogSearch('');
       setTransferenciaRefundInput('');
     }
   };
@@ -376,7 +360,6 @@ export const ReturnsView: React.FC = () => {
               setGeneralReason('Artículo defectuoso / Garantía');
               setCustomReason('');
               setRefundMethod('efectivo');
-              setCatalogSearch('');
               setIsModalOpen(true);
             }}
             disabled={isCurrentDayClosed}
@@ -415,7 +398,7 @@ export const ReturnsView: React.FC = () => {
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-outline-variant/15 text-[11px] text-on-surface-variant font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>Reflejado en Devoluciones de Cierre de Caja</span>
+            <span>Reflejado en Cierre de Caja</span>
           </div>
         </div>
 
@@ -463,7 +446,7 @@ export const ReturnsView: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-red-200/40 text-[11px] text-red-700 font-medium">
-            <span>Catalogados como MERMA (No van a mostrador)</span>
+            <span>Catalogados como merma</span>
           </div>
         </div>
 
@@ -494,7 +477,7 @@ export const ReturnsView: React.FC = () => {
 
       {/* Barra de Filtros, Pestañas y Búsqueda */}
       <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 p-4 rounded-2xl bg-surface neo-raised">
-        {/* Pestañas de Condición */}
+        {/* Pestañas de vista */}
         <div className="flex items-center p-1 bg-surface neo-inset rounded-xl">
           <button
             onClick={() => {
@@ -509,38 +492,6 @@ export const ReturnsView: React.FC = () => {
             type="button"
           >
             Todas las Devoluciones ({periodFilteredReturns.length})
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveTab('mal_estado');
-              setPage(1);
-            }}
-            className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'mal_estado'
-                ? 'bg-red-500/15 text-red-700 font-bold border border-red-500/20'
-                : 'text-red-600 hover:bg-red-500/10'
-            }`}
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[16px]">warning</span>
-            <span>Artículos en Mal Estado</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveTab('buen_estado');
-              setPage(1);
-            }}
-            className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'buen_estado'
-                ? 'bg-emerald-500/15 text-emerald-700 font-bold border border-emerald-500/20'
-                : 'text-emerald-600 hover:bg-emerald-500/10'
-            }`}
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[16px]">verified</span>
-            <span>En Buen Estado</span>
           </button>
 
           <button
@@ -571,7 +522,7 @@ export const ReturnsView: React.FC = () => {
                 setPeriodFilter(e.target.value as any);
                 setPage(1);
               }}
-              className="h-10 px-3 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+              className="app-select h-10 px-3 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
             >
               <option value="hoy">Hoy ({todayDate})</option>
               <option value="semana">Últimos 7 días</option>
@@ -620,29 +571,29 @@ export const ReturnsView: React.FC = () => {
                   Gestión del Almacén de Mermas y Artículos Averiados
                 </h3>
                 <p className="text-xs text-amber-800">
-                  Los artículos devueltos en mal estado pasan aquí. Puede asignarles un nuevo precio rebajado según el defecto para reincorporarlos al stock comercial, o darles baja definitiva.
+                  Clasifique cada artículo defectuoso: venderlo a un precio rebajado, enviarlo al almacén central para reponerlo después al mostrador o darlo de baja.
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 self-end sm:self-auto">
               <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-800 font-mono">
-                {filteredMermaItems.filter((m) => m.status === 'en_almacen_merma').length} pendientes en merma
+                {filteredMermaItems.filter((m) => m.status === 'en_almacen_merma').length} pendientes
               </span>
             </div>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm whitespace-nowrap">
+            <table className="w-full table-fixed text-left text-sm whitespace-nowrap">
               <thead>
-                <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant bg-surface-container-low/40">
-                  <th className="py-3 px-4">Fecha</th>
-                  <th className="py-3 px-4">Folio Dev.</th>
-                  <th className="py-3 px-4">Artículo</th>
-                  <th className="py-3 px-4 text-center">Cant.</th>
-                  <th className="py-3 px-4 text-right">Precio Original</th>
-                  <th className="py-3 px-4">Defecto / Causa</th>
-                  <th className="py-3 px-4 text-center">Estado en Almacén</th>
-                  <th className="py-3 px-4 text-center">Acciones</th>
+                <tr className="text-[10px] font-semibold uppercase tracking-wide text-on-surface-variant bg-surface-container-low/40">
+                  <th className="py-2 px-2 w-[9%]">Fecha</th>
+                  <th className="py-2 px-2 w-[9%]">Folio</th>
+                  <th className="py-2 px-2 w-[18%]">Artículo</th>
+                  <th className="py-2 px-2 w-[8%] text-center">Cant.</th>
+                  <th className="py-2 px-2 w-[12%] text-right">Precio orig.</th>
+                  <th className="py-2 px-2 w-[19%]">Defecto / Causa</th>
+                  <th className="py-2 px-2 w-[15%] text-center">Estado</th>
+                  <th className="py-2 px-2 w-[10%] text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y-0 text-on-surface">
@@ -668,42 +619,54 @@ export const ReturnsView: React.FC = () => {
                       key={item.id}
                       className="group hover:bg-surface-container-high/40 transition-colors border-b border-outline-variant/10"
                     >
-                      <td className="py-3 px-4 font-mono text-xs text-on-surface-variant">
+                      <td className="py-2 px-2 font-mono text-[10px] text-on-surface-variant">
                         {item.date}
                       </td>
-                      <td className="py-3 px-4 font-mono font-bold text-xs text-amber-600">
+                      <td className="py-2 px-2 font-mono font-bold text-[10px] text-amber-600">
                         {item.returnNumber}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-2 px-2">
                         <div className="flex flex-col">
-                          <span className="font-semibold text-on-surface text-xs">{item.name}</span>
-                          <span className="text-[10px] text-on-surface-variant font-mono">
+                          <span className="font-semibold text-on-surface text-[11px] truncate" title={item.name}>{item.name}</span>
+                          <span className="text-[9px] text-on-surface-variant font-mono truncate">
                             Cód: {item.code}
                           </span>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-center font-mono font-bold text-xs">
+                      <td className="py-2 px-2 text-center font-mono font-bold text-[10px]">
                         {item.quantity} {item.um}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-semibold text-xs text-on-surface-variant">
+                      <td className="py-2 px-2 text-right font-mono font-semibold text-[10px] text-on-surface-variant">
                         ${formatCUP(item.originalUnitPrice)} CUP
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="text-xs text-red-600 font-medium inline-block max-w-xs truncate" title={item.damagedReason}>
+                      <td className="py-2 px-2">
+                        <span className="text-[10px] text-red-600 font-medium block truncate" title={item.damagedReason}>
                           {item.damagedReason}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-2 px-2 text-left align-top">
                         {item.status === 'en_almacen_merma' ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-800 border border-amber-500/30">
                             <span className="material-symbols-outlined text-[13px]">warehouse</span>
-                            EN ALMACÉN DE MERMA
+                            EN MERMA
                           </span>
                         ) : item.status === 'reincorporado_con_precio' ? (
-                          <div className="flex flex-col items-center">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 border border-emerald-500/30">
+                          <div className="flex flex-col items-start">
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-bold bg-emerald-500/15 text-emerald-700 border border-emerald-500/30">
                               <span className="material-symbols-outlined text-[13px]">verified</span>
-                              REINCORPORADO (${formatCUP(item.discountedPrice || 0)} CUP)
+                              VENTA DEFECTUOSA
+                            </span>
+                            {item.resolvedAt && (
+                              <span className="text-[9px] text-on-surface-variant font-mono mt-0.5">
+                                {item.resolvedAt}
+                              </span>
+                            )}
+                          </div>
+                        ) : item.status === 'devuelto_a_almacen' ? (
+                          <div className="flex flex-col items-start">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-sky-500/15 text-sky-700 border border-sky-500/30">
+                              <span className="material-symbols-outlined text-[13px]">inventory_2</span>
+                              EN ALMACÉN 
                             </span>
                             {item.resolvedAt && (
                               <span className="text-[9px] text-on-surface-variant font-mono mt-0.5">
@@ -712,7 +675,7 @@ export const ReturnsView: React.FC = () => {
                             )}
                           </div>
                         ) : (
-                          <div className="flex flex-col items-center">
+                          <div className="flex flex-col items-start">
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gray-500/15 text-gray-700 border border-gray-500/30">
                               <span className="material-symbols-outlined text-[13px]">delete_sweep</span>
                               BAJA DEFINITIVA
@@ -725,40 +688,54 @@ export const ReturnsView: React.FC = () => {
                           </div>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-2 px-1 text-center">
                         {item.status === 'en_almacen_merma' ? (
-                          <div className="flex items-center justify-center gap-1.5">
+                          <div className="flex items-center justify-center gap-1">
                             <button
                               onClick={() => {
                                 setMermaItemToReprice(item);
-                                const suggested = Math.max(1, Math.round(item.originalUnitPrice * 0.7));
+                                const suggested = Math.max(0.01, Number((item.originalUnitPrice * 0.7).toFixed(2)));
                                 setNewPriceInput(String(suggested));
-                                setRepriceNote(`Reincorporado con descuento por defecto: ${item.damagedReason}`);
+                                setRepriceNote(`Venta como defectuoso por: ${item.damagedReason}`);
                               }}
-                              className="px-2.5 py-1 rounded-lg bg-surface neo-raised text-primary hover:text-primary-container text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all active:neo-inset"
+                              className="w-7 h-7 rounded-lg bg-surface neo-raised text-primary hover:text-primary-container flex items-center justify-center cursor-pointer transition-all active:neo-inset"
                               type="button"
-                              title="Asignar nuevo precio según el defecto y reincorporar al stock"
+                              title="Crear existencia separada para vender como artículo defectuoso"
                             >
-                              <span className="material-symbols-outlined text-[14px]">price_change</span>
-                              <span>Asignar Precio</span>
+                              <span className="material-symbols-outlined text-[16px]">price_change</span>
+                            </button>
+                            <button
+                              onClick={() => setMermaItemToWarehouse(item)}
+                              className="w-7 h-7 rounded-lg bg-surface neo-raised text-sky-700 hover:text-sky-800 flex items-center justify-center cursor-pointer transition-all active:neo-inset"
+                              type="button"
+                              title="Enviar al almacén central para reponer después al mostrador"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">warehouse</span>
                             </button>
                             <button
                               onClick={() => {
                                 setMermaItemToBaja(item);
                                 setBajaNote(`Baja definitiva por daño irreparable: ${item.damagedReason}`);
                               }}
-                              className="px-2.5 py-1 rounded-lg bg-surface neo-raised text-red-600 hover:text-red-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all active:neo-inset"
+                              className="w-7 h-7 rounded-lg bg-surface neo-raised text-red-600 hover:text-red-700 flex items-center justify-center cursor-pointer transition-all active:neo-inset"
                               type="button"
                               title="Dar de baja definitiva por merma irreparable"
                             >
-                              <span className="material-symbols-outlined text-[14px]">delete</span>
-                              <span>Dar de Baja</span>
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
                             </button>
                           </div>
                         ) : (
-                          <span className="text-[11px] text-on-surface-variant italic">
-                            {item.resolutionNote || 'Procesado'}
-                          </span>
+                          <div className="flex items-center justify-center">
+                            <button
+                              onClick={() => setMermaItemToRevoke(item)}
+                              className="w-7 h-7 rounded-lg bg-surface neo-raised text-amber-700 hover:text-amber-800 flex items-center justify-center cursor-pointer transition-all active:neo-inset"
+                              type="button"
+                              title="Revocar acción y devolver a pendientes"
+                              aria-label="Revocar acción y devolver a pendientes"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">undo</span>
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -777,9 +754,7 @@ export const ReturnsView: React.FC = () => {
               <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant bg-surface-container-low/40">
                 <th className="py-3 px-4">N° Devolución</th>
                 <th className="py-3 px-4">Fecha &amp; Hora</th>
-                <th className="py-3 px-4">Ticket Venta</th>
                 <th className="py-3 px-4">Artículos Devueltos</th>
-                <th className="py-3 px-4 text-center">Estado del Artículo</th>
                 <th className="py-3 px-4 text-right">Reembolsado (CUP)</th>
                 <th className="py-3 px-4 text-center">Reintegro</th>
                 <th className="py-3 px-4 text-center">Acciones</th>
@@ -788,7 +763,7 @@ export const ReturnsView: React.FC = () => {
             <tbody className="divide-y-0 text-on-surface">
               {paginatedReturns.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-14 text-center text-xs text-on-surface-variant font-medium">
+                  <td colSpan={6} className="py-14 text-center text-xs text-on-surface-variant font-medium">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <span className="material-symbols-outlined text-[36px] text-on-surface-variant/60">
                         assignment_return
@@ -797,17 +772,16 @@ export const ReturnsView: React.FC = () => {
                         No hay devoluciones registradas en este período
                       </span>
                       <p className="text-xs text-on-surface-variant/80 max-w-md">
-                        {activeTab === 'mal_estado'
-                          ? 'No se han registrado artículos devueltos en mal estado o averiados.'
-                          : 'Utilice el botón «+ Registrar Devolución» para ingresar devoluciones de clientes.'}
+                        Utilice el botón «Registrar Devolución» para ingresar devoluciones de clientes.
                       </p>
                     </div>
                   </td>
                 </tr>
               ) : (
                 paginatedReturns.map((ret) => {
-                  const hasDamaged = ret.hasDamagedItems || (ret.items || []).some((it) => it.condition === 'mal_estado');
-                  const totalUnits = (ret.items || []).reduce((acc, it) => acc + (it.quantity || 0), 0);
+                  const visibleItems = ret.items || [];
+                  const hasDamaged = visibleItems.some((item) => item.condition === 'mal_estado');
+                  const visibleRefund = ret.totalRefund;
 
                   return (
                     <tr
@@ -833,21 +807,10 @@ export const ReturnsView: React.FC = () => {
                         </div>
                       </td>
 
-                      {/* Ticket Origen */}
-                      <td className="py-3.5 px-4">
-                        {ret.ticketNumber ? (
-                          <span className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-surface neo-inset text-primary">
-                            {ret.ticketNumber}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-on-surface-variant italic">Directa / Sin ticket</span>
-                        )}
-                      </td>
-
                       {/* Artículos Devueltos */}
                       <td className="py-3.5 px-4">
                         <div className="flex flex-col max-w-sm">
-                          {(ret.items || []).map((it, idx) => (
+                          {visibleItems.map((it, idx) => (
                             <div key={idx} className="flex items-center gap-1.5 text-xs py-0.5">
                               <span className="font-mono font-bold text-primary">
                                 {it.quantity} {it.um}
@@ -868,34 +831,10 @@ export const ReturnsView: React.FC = () => {
                         </div>
                       </td>
 
-                      {/* Estado del Artículo (DESTACADO EN MAL ESTADO) */}
-                      <td className="py-3.5 px-4 text-center">
-                        <div className="flex flex-col items-center gap-1">
-                          {hasDamaged ? (
-                            <div className="inline-flex flex-col items-center">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-red-500/15 text-red-700 border border-red-500/30">
-                                <span className="material-symbols-outlined text-[14px]">warning</span>
-                                MAL ESTADO (MERMA)
-                              </span>
-                              {ret.items?.find((i) => i.condition === 'mal_estado')?.damagedReason && (
-                                <span className="text-[10px] text-red-600 font-medium max-w-[180px] truncate mt-0.5" title={ret.items.find((i) => i.condition === 'mal_estado')?.damagedReason}>
-                                  {ret.items.find((i) => i.condition === 'mal_estado')?.damagedReason}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-700 border border-emerald-500/30">
-                              <span className="material-symbols-outlined text-[14px]">verified</span>
-                              BUEN ESTADO
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
                       {/* Monto Reembolsado al cliente */}
-                      <td className="py-3.5 px-4 text-right">
+                      <td className="py-3.5 px-4 text-center">
                         <span className="font-mono font-bold text-sm text-amber-600">
-                          ${formatCUP(ret.totalRefund)}
+                          ${formatCUP(visibleRefund)}
                         </span>
                       </td>
 
@@ -1004,44 +943,23 @@ export const ReturnsView: React.FC = () => {
                     1. Agregar Artículo del Catálogo
                   </span>
                   <span className="text-[11px] text-on-surface-variant font-medium">
-                    {filteredCatalogProducts.length} producto(s) en catálogo
+                    {products.length} producto(s) en catálogo
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                  <div className="sm:col-span-4 relative">
-                    <span className="material-symbols-outlined absolute left-2.5 top-2.5 text-[18px] text-on-surface-variant pointer-events-none">
-                      search
-                    </span>
-                    <input
-                      type="text"
-                      value={catalogSearch}
-                      onChange={(e) => setCatalogSearch(e.target.value)}
-                      placeholder="Buscar por código o nombre..."
-                      className="w-full h-10 pl-9 pr-3 rounded-xl bg-surface neo-raised text-xs text-on-surface outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-8">
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          handleAddManualProduct(e.target.value);
-                          e.target.value = '';
-                        }
-                      }}
-                      className="w-full h-10 px-3 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
-                    >
-                      <option value="">+ Seleccionar artículo para agregar a la devolución...</option>
-                      {filteredCatalogProducts.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({p.code}) — Stock: {p.stock} {p.um} — ${p.price.toFixed(2)} CUP
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                <SearchableSelect
+                  value=""
+                  onChange={(productId) => {
+                    if (productId) handleAddManualProduct(productId);
+                  }}
+                  placeholder="+ Buscar artículo por nombre o código para agregar..."
+                  options={products.map((product) => ({
+                    value: product.id,
+                    label: `${product.name} (${product.code}) — Stock: ${product.stock} ${product.um} — $${product.price.toFixed(2)} CUP`,
+                  }))}
+                  emptyMessage="No se encontraron productos"
+                  className="h-10 pl-3 rounded-xl bg-surface neo-raised text-xs font-semibold"
+                />
               </div>
 
               {/* 2. Lista de Artículos a Devolver con Selector de Estado */}
@@ -1149,7 +1067,6 @@ export const ReturnsView: React.FC = () => {
                                     onChange={() => {
                                       const next = [...draftItems];
                                       next[idx].condition = 'mal_estado';
-                                      next[idx].reintegrateToStock = false;
                                       setDraftItems(next);
                                     }}
                                     className="hidden"
@@ -1172,7 +1089,6 @@ export const ReturnsView: React.FC = () => {
                                     onChange={() => {
                                       const next = [...draftItems];
                                       next[idx].condition = 'buen_estado';
-                                      next[idx].reintegrateToStock = true;
                                       setDraftItems(next);
                                     }}
                                     className="hidden"
@@ -1208,12 +1124,12 @@ export const ReturnsView: React.FC = () => {
                                 </div>
                               ) : (
                                 <div>
-                                  <label className="text-[10px] font-bold uppercase text-emerald-700 block mb-1">
-                                    Destino en Almacén:
+                                  <label className="text-[10px] font-bold uppercase text-amber-700 block mb-1">
+                                    Destino en Almacén de Mermas:
                                   </label>
-                                  <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 mt-1">
-                                    <span className="material-symbols-outlined text-emerald-600 text-[16px]">inventory_2</span>
-                                    <span>Pasa directamente al almacén listo para volver a utilizar en stock</span>
+                                  <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 mt-1">
+                                    <span className="material-symbols-outlined text-amber-600 text-[16px]">warehouse</span>
+                                    <span>Pasa a mermas para su revisión antes de reincorporarse al inventario o darse de baja</span>
                                   </div>
                                 </div>
                               )}
@@ -1236,7 +1152,7 @@ export const ReturnsView: React.FC = () => {
                   <select
                     value={generalReason}
                     onChange={(e) => setGeneralReason(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface outline-none cursor-pointer focus:ring-1 focus:ring-primary"
+                    className="app-select w-full h-10 px-3 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface outline-none cursor-pointer focus:ring-1 focus:ring-primary"
                   >
                     <option value="Artículo defectuoso / Garantía">Artículo defectuoso / Garantía</option>
                     <option value="Artículo en mal estado / Averiado">Artículo en mal estado / Averiado</option>
@@ -1271,7 +1187,7 @@ export const ReturnsView: React.FC = () => {
                         setTransferenciaRefundInput((modalCalculatedRefund / 2).toFixed(2));
                       }
                     }}
-                    className="w-full h-10 px-3 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface outline-none cursor-pointer focus:ring-1 focus:ring-primary"
+                    className="app-select w-full h-10 px-3 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface outline-none cursor-pointer focus:ring-1 focus:ring-primary"
                   >
                     <option value="efectivo">Efectivo (100%)</option>
                     <option value="transferencia">Transferencia (100%)</option>
@@ -1507,7 +1423,7 @@ export const ReturnsView: React.FC = () => {
         </div>
       )}
 
-      {/* Modal para Asignar Nuevo Precio a Merma y Reincorporar al Almacén */}
+      {/* Modal para preparar el artículo defectuoso para la venta */}
       {mermaItemToReprice && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-md rounded-2xl bg-surface neo-raised border border-outline-variant/20 shadow-2xl overflow-hidden flex flex-col">
@@ -1517,7 +1433,7 @@ export const ReturnsView: React.FC = () => {
                   <span className="material-symbols-outlined text-[20px]">price_change</span>
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-on-surface">Asignar Nuevo Precio</h3>
+                  <h3 className="text-sm font-bold text-on-surface">Vender a Precio Rebajado</h3>
                   <span className="text-xs text-on-surface-variant font-mono">
                     {mermaItemToReprice.code} • {mermaItemToReprice.returnNumber}
                   </span>
@@ -1550,7 +1466,7 @@ export const ReturnsView: React.FC = () => {
 
               <div>
                 <label className="text-[11px] font-bold text-on-surface block mb-1">
-                  Nuevo Precio de Venta Asignado ($ CUP):
+                  Precio de venta del artículo defectuoso ($ CUP):
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-2.5 font-mono text-xs font-bold text-primary">$</span>
@@ -1574,6 +1490,11 @@ export const ReturnsView: React.FC = () => {
                     </span>
                   </div>
                 )}
+                {Number(newPriceInput) >= mermaItemToReprice.originalUnitPrice && (
+                  <p className="text-[10px] text-red-600 mt-1">
+                    El precio debe ser menor que el precio original de ${formatCUP(mermaItemToReprice.originalUnitPrice)} CUP.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -1590,7 +1511,7 @@ export const ReturnsView: React.FC = () => {
               </div>
 
               <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-800">
-                Al confirmar, el artículo se reintegrará directamente al almacén como stock comercial listo para vender con el nuevo precio asignado.
+                Se creará una existencia separada identificada como <strong>Defectuoso</strong>, con este precio y cantidad. Aparecerá así en el cierre de caja; no se mezclará con el stock normal.
               </div>
             </div>
 
@@ -1606,14 +1527,120 @@ export const ReturnsView: React.FC = () => {
                 onClick={async () => {
                   const np = parseFloat(newPriceInput);
                   if (isNaN(np) || np <= 0) return;
-                  await reincorporarMermaItem(mermaItemToReprice.id, np, repriceNote.trim() || undefined);
+                  await venderMermaConDescuento(mermaItemToReprice.id, np, repriceNote.trim() || undefined);
                   setMermaItemToReprice(null);
                 }}
-                disabled={!newPriceInput || parseFloat(newPriceInput) <= 0}
+                disabled={!newPriceInput || parseFloat(newPriceInput) <= 0 || parseFloat(newPriceInput) >= mermaItemToReprice.originalUnitPrice}
                 className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold shadow-md hover:bg-primary-container disabled:opacity-50 cursor-pointer"
                 type="button"
               >
-                Reincorporar al Almacén
+                Preparar para Venta
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mermaItemToWarehouse && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-surface neo-raised border border-outline-variant/20 shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-outline-variant/15 flex items-center gap-2.5 bg-surface-container-low/40">
+              <div className="w-9 h-9 rounded-xl bg-sky-500/10 flex items-center justify-center text-sky-700">
+                <span className="material-symbols-outlined text-[20px]">warehouse</span>
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-on-surface">Enviar al almacén central</h3>
+                <span className="text-xs text-on-surface-variant font-mono">
+                  {mermaItemToWarehouse.code} • {mermaItemToWarehouse.returnNumber}
+                </span>
+              </div>
+            </div>
+            <div className="p-5 flex flex-col gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-surface neo-inset flex flex-col gap-1">
+                <span className="font-bold text-on-surface">{mermaItemToWarehouse.name}</span>
+                <span className="text-on-surface-variant">Cantidad: {mermaItemToWarehouse.quantity} {mermaItemToWarehouse.um}</span>
+              </div>
+              <p className="text-on-surface-variant">
+                La cantidad se sumará al almacén del producto original, no al stock disponible para venta. Desde Productos podrá reponerla al mostrador cuando corresponda.
+              </p>
+            </div>
+            <div className="p-4 border-t border-outline-variant/15 flex justify-end gap-2 bg-surface-container-low/20">
+              <button
+                onClick={() => setMermaItemToWarehouse(null)}
+                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface-variant hover:text-on-surface cursor-pointer"
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  await enviarMermaAlmacen(mermaItemToWarehouse.id);
+                  setMermaItemToWarehouse(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold shadow-md cursor-pointer"
+                type="button"
+              >
+                Confirmar Envío
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mermaItemToRevoke && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-surface neo-raised border border-outline-variant/20 shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-outline-variant/15 flex items-center justify-between bg-surface-container-low/40">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-700">
+                  <span className="material-symbols-outlined text-[20px]">undo</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-on-surface">Revocar acción aplicada</h3>
+                  <span className="text-xs text-on-surface-variant font-mono">
+                    {mermaItemToRevoke.code} • {mermaItemToRevoke.returnNumber}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setMermaItemToRevoke(null)}
+                className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant hover:text-on-surface cursor-pointer"
+                type="button"
+                aria-label="Cerrar"
+              >
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            </div>
+
+            <div className="p-5 flex flex-col gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-900 flex flex-col gap-1">
+                <span className="font-bold text-xs">{mermaItemToRevoke.name}</span>
+                <span>
+                  Cantidad: {mermaItemToRevoke.quantity} {mermaItemToRevoke.um}
+                </span>
+              </div>
+              <p className="text-on-surface-variant">
+                Se revocará la acción aplicada y el artículo volverá a quedar pendiente en el almacén de mermas.
+              </p>
+            </div>
+
+            <div className="p-4 border-t border-outline-variant/15 flex justify-end gap-2 bg-surface-container-low/20">
+              <button
+                onClick={() => setMermaItemToRevoke(null)}
+                className="px-4 py-2 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface-variant hover:text-on-surface cursor-pointer"
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  await revocarMermaItem(mermaItemToRevoke.id);
+                  setMermaItemToRevoke(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                type="button"
+              >
+                Confirmar revocación
               </button>
             </div>
           </div>

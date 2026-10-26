@@ -267,15 +267,108 @@ const MIGRATIONS = [
       );
     `);
   },
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS merma_items (
+        id TEXT PRIMARY KEY,
+        return_id TEXT NOT NULL,
+        return_number TEXT NOT NULL,
+        date TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        um TEXT NOT NULL,
+        quantity REAL NOT NULL CHECK (quantity > 0),
+        original_unit_price REAL NOT NULL DEFAULT 0,
+        damaged_reason TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('en_almacen_merma','reincorporado_con_precio','devuelto_a_almacen','baja_definitiva')),
+        discounted_price REAL,
+        resolved_at TEXT,
+        resolution_note TEXT
+      );
+      INSERT OR IGNORE INTO merma_items (
+        id, return_id, return_number, date, product_id, code, name, um, quantity,
+        original_unit_price, damaged_reason, status
+      )
+      SELECT
+        'merma-' || r.id || '-' || ri.id,
+        r.id, r.return_number, r.date, ri.product_id, ri.code, ri.name, ri.um, ri.quantity,
+        ri.unit_price, COALESCE(ri.damaged_reason, r.reason, 'Devolución de cliente'), 'en_almacen_merma'
+      FROM return_items ri
+      JOIN returns r ON r.id = ri.return_id
+      WHERE ri.condition = 'mal_estado';
+    `);
+  },
+  (db) => {
+    try {
+      db.exec('ALTER TABLE merma_items ADD COLUMN defective_product_id TEXT;');
+    } catch {}
+  },
+  (db) => {
+    // `products.code` tenía UNIQUE a nivel de columna, así que un producto archivado
+    // seguía bloqueando su código para siempre. Se reconstruye la tabla sin ese UNIQUE
+    // y se crea un índice único parcial que cubre solo los productos activos: el
+    // archivado conserva su código para los reportes históricos y el código vuelve a
+    // quedar disponible para un producto nuevo.
+    // SQLite no permite quitar un constraint de columna, por eso el rebuild.
+    db.exec(`
+      CREATE TABLE products_rebuild (
+        id            TEXT PRIMARY KEY,
+        code          TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        detail        TEXT NOT NULL DEFAULT '',
+        category      TEXT NOT NULL DEFAULT 'General',
+        um            TEXT NOT NULL DEFAULT 'Unidad',
+        price         REAL NOT NULL DEFAULT 0 CHECK (price >= 0),
+        stock         REAL NOT NULL DEFAULT 0 CHECK (stock >= 0),
+        min_stock     REAL NOT NULL DEFAULT 0 CHECK (min_stock >= 0),
+        provider      TEXT,
+        location      TEXT,
+        rotation      TEXT,
+        last_exit     TEXT,
+        created_at    TEXT NOT NULL,
+        archived      INTEGER NOT NULL DEFAULT 0,
+        almacen_stock REAL NOT NULL DEFAULT 0
+      );
+
+      INSERT INTO products_rebuild (
+        id, code, name, detail, category, um, price, stock, min_stock,
+        provider, location, rotation, last_exit, created_at, archived, almacen_stock
+      )
+      SELECT
+        id, code, name, detail, category, um, price, stock, min_stock,
+        provider, location, rotation, last_exit, created_at, archived, almacen_stock
+      FROM products;
+
+      DROP TABLE products;
+      ALTER TABLE products_rebuild RENAME TO products;
+
+      CREATE UNIQUE INDEX ux_products_code_active ON products(code) WHERE archived = 0;
+    `);
+  },
 ];
 
 function migrate(db) {
   const current = db.pragma('user_version', { simple: true });
-  for (let i = current; i < MIGRATIONS.length; i++) {
-    db.transaction(() => {
-      MIGRATIONS[i](db);
-      db.pragma(`user_version = ${i + 1}`);
-    })();
+  if (current >= MIGRATIONS.length) return;
+  // Las migraciones que reconstruyen tablas necesitan las claves foráneas apagadas:
+  // con foreign_keys = ON, DROP TABLE hace un DELETE implícito y falla contra
+  // sale_items / stock_movements, que referencian products(id).
+  const fkWasOn = db.pragma('foreign_keys', { simple: true });
+  db.pragma('foreign_keys = OFF');
+  try {
+    for (let i = current; i < MIGRATIONS.length; i++) {
+      db.transaction(() => {
+        MIGRATIONS[i](db);
+        db.pragma(`user_version = ${i + 1}`);
+      })();
+    }
+    const violations = db.pragma('foreign_key_check');
+    if (violations.length) {
+      throw new Error(`Migración con violaciones de clave foránea: ${JSON.stringify(violations.slice(0, 5))}`);
+    }
+  } finally {
+    db.pragma(`foreign_keys = ${fkWasOn ? 'ON' : 'OFF'}`);
   }
 }
 
@@ -301,6 +394,25 @@ const mapProduct = (r) => ({
   rotation: r.rotation || undefined,
   lastExit: r.last_exit || undefined,
   createdAt: r.created_at,
+});
+
+const mapMerma = (r) => ({
+  id: r.id,
+  returnId: r.return_id,
+  returnNumber: r.return_number,
+  date: r.date,
+  productId: r.product_id,
+  code: r.code,
+  name: r.name,
+  um: r.um,
+  quantity: r.quantity,
+  originalUnitPrice: r.original_unit_price,
+  damagedReason: r.damaged_reason,
+  status: r.status,
+  discountedPrice: r.discounted_price === null ? undefined : r.discounted_price,
+  defectiveProductId: r.defective_product_id || undefined,
+  resolvedAt: r.resolved_at || undefined,
+  resolutionNote: r.resolution_note || undefined,
 });
 
 const ticketLabel = (n) => `TKT-${String(n).padStart(5, '0')}`;
@@ -411,7 +523,7 @@ function createRepo(db, {
     if (!isNum(minStock) || minStock < 0) throw new DomainError('INVALID', 'Stock mínimo inválido.');
 
     const code = String(input.code || '').trim() || nextCode();
-    if (db.prepare('SELECT 1 FROM products WHERE code = ? COLLATE NOCASE').get(code)) {
+    if (db.prepare('SELECT 1 FROM products WHERE code = ? COLLATE NOCASE AND archived = 0').get(code)) {
       throw new DomainError('CODE_EXISTS', `Ya existe un producto con el código ${code}.`);
     }
     const almacenStock = input.almacenStock === undefined ? 0 : Number(input.almacenStock);
@@ -455,7 +567,7 @@ function createRepo(db, {
     if (!isNum(next.min_stock) || next.min_stock < 0) throw new DomainError('INVALID', 'Stock mínimo inválido.');
     if (
       next.code.toLowerCase() !== cur.code.toLowerCase() &&
-      db.prepare('SELECT 1 FROM products WHERE code = ? COLLATE NOCASE AND id <> ?').get(next.code, id)
+      db.prepare('SELECT 1 FROM products WHERE code = ? COLLATE NOCASE AND id <> ? AND archived = 0').get(next.code, id)
     ) {
       throw new DomainError('CODE_EXISTS', `Ya existe un producto con el código ${next.code}.`);
     }
@@ -499,6 +611,30 @@ function createRepo(db, {
     if (!r.changes) throw new DomainError('NOT_FOUND', 'Producto no encontrado.');
     return { id };
   }
+
+  // Borra de verdad solo si el producto no dejó rastro. Si tiene historial (ventas,
+  // movimientos de stock, devoluciones o mermas) se archiva: esos registros lo
+  // referencian y los reportes históricos dependen de él. En ambos casos el código
+  // queda disponible para reutilizar.
+  function hasHistory(id) {
+    return Boolean(
+      db.prepare('SELECT 1 FROM sale_items WHERE product_id = ? LIMIT 1').get(id) ||
+      db.prepare('SELECT 1 FROM stock_movements WHERE product_id = ? LIMIT 1').get(id) ||
+      db.prepare('SELECT 1 FROM return_items WHERE product_id = ? LIMIT 1').get(id) ||
+      db.prepare('SELECT 1 FROM merma_items WHERE defective_product_id = ? LIMIT 1').get(id)
+    );
+  }
+
+  const deleteProduct = db.transaction((id) => {
+    const cur = q.productById.get(id);
+    if (!cur) throw new DomainError('NOT_FOUND', 'Producto no encontrado.');
+    if (hasHistory(id)) {
+      db.prepare('UPDATE products SET archived = 1 WHERE id = ?').run(id);
+      return { id, mode: 'archived' };
+    }
+    db.prepare('DELETE FROM products WHERE id = ?').run(id);
+    return { id, mode: 'deleted' };
+  });
 
   const addStock = db.transaction((productId, qty, note) => {
     const p = q.productById.get(productId);
@@ -778,7 +914,10 @@ function createRepo(db, {
   }
 
   /* ---------------- Respaldo ---------------- */
-  const TABLES = ['products', 'sales', 'sale_items', 'stock_movements', 'day_closes', 'meta'];
+  const TABLES = [
+    'products', 'sales', 'sale_items', 'stock_movements', 'day_closes', 'meta',
+    'returns', 'return_items', 'merma_items',
+  ];
   // orden de inserción respetando claves foráneas; el borrado va al revés
   const BACKUP_FORMAT = 1;
 
@@ -790,12 +929,13 @@ function createRepo(db, {
 
   const restoreAll = db.transaction((data) => {
     if (!data || data.format !== BACKUP_FORMAT || !data.tables) throw new DomainError('BAD_BACKUP', 'Archivo de respaldo no reconocido.');
-    if (data.schema !== db.pragma('user_version', { simple: true })) {
+    const currentSchema = db.pragma('user_version', { simple: true });
+    if (data.schema !== currentSchema && data.schema !== currentSchema - 1) {
       throw new DomainError('BAD_BACKUP', 'El respaldo es de otra versión de la base de datos.');
     }
     for (const t of TABLES) if (!Array.isArray(data.tables[t])) throw new DomainError('BAD_BACKUP', `Falta la tabla ${t} en el respaldo.`);
     for (const t of [...TABLES].reverse()) db.prepare(`DELETE FROM ${t}`).run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('sale_items','stock_movements')").run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('sale_items','stock_movements','return_items')").run();
     for (const t of TABLES) {
       const rows = data.tables[t];
       if (!rows.length) continue;
@@ -843,7 +983,9 @@ function createRepo(db, {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    let itemIndex = 0;
     for (const it of items) {
+      itemIndex += 1;
       const q = Number(it.quantity) || 1;
       const uPrice = Number(it.unitPrice) || 0;
       const refAmt = Number(it.refundAmount) || (q * uPrice);
@@ -864,6 +1006,26 @@ function createRepo(db, {
       );
       if (reintegrate) {
         move(it.productId, 'entrada', q, { note: `Reingreso por devolución ${returnNumber}` });
+      }
+      if (isDamaged) {
+        db.prepare(`
+          INSERT INTO merma_items (
+            id, return_id, return_number, date, product_id, code, name, um, quantity,
+            original_unit_price, damaged_reason, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'en_almacen_merma')
+        `).run(
+          `merma-${id}-${itemIndex}`,
+          id,
+          returnNumber,
+          dateStr,
+          it.productId,
+          it.code || '',
+          it.name || '',
+          it.um || 'Unidad',
+          q,
+          uPrice,
+          it.damagedReason || input.reason || 'Devolución de cliente'
+        );
       }
     }
 
@@ -907,9 +1069,156 @@ function createRepo(db, {
     return rows.map((r) => loadReturn(r.id)).filter(Boolean);
   }
 
+  function listMermas() {
+    return db.prepare('SELECT * FROM merma_items ORDER BY date DESC, id DESC').all().map(mapMerma);
+  }
+
+  const venderMermaConDescuento = db.transaction((mermaId, newPrice, note) => {
+    const item = db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId);
+    if (!item) throw new DomainError('NOT_FOUND', 'Artículo de merma no encontrado.');
+    if (item.status !== 'en_almacen_merma') throw new DomainError('INVALID', 'Este artículo de merma ya fue procesado.');
+    const price = Number(newPrice);
+    if (!isNum(price) || price <= 0 || price >= Number(item.original_unit_price)) {
+      throw new DomainError('INVALID', 'El precio debe ser mayor que cero y menor que el precio original.');
+    }
+    const source = q.productById.get(item.product_id);
+    if (!source || source.archived) throw new DomainError('NOT_FOUND', 'No se encontró el producto original.');
+    const defectiveProduct = createProduct({
+      code: `MERMA-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+      name: `${item.name} (Defectuoso)`,
+      detail: `Artículo defectuoso: ${item.damaged_reason}`,
+      category: 'Defectuoso',
+      um: item.um,
+      price,
+      stock: item.quantity,
+      minStock: 1,
+    });
+    db.prepare(`
+      UPDATE merma_items
+      SET status = 'reincorporado_con_precio', discounted_price = ?, defective_product_id = ?, resolved_at = ?, resolution_note = ?
+      WHERE id = ?
+    `).run(
+      price,
+      defectiveProduct.id,
+      today(),
+      note || `Preparado para venta como defectuoso con precio de $${price.toFixed(2)}`,
+      mermaId
+    );
+    return { ...mapMerma(db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId)), defectiveProductId: defectiveProduct.id };
+  });
+
+  const enviarMermaAlmacen = db.transaction((mermaId, note) => {
+    const item = db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId);
+    if (!item) throw new DomainError('NOT_FOUND', 'Artículo de merma no encontrado.');
+    if (item.status !== 'en_almacen_merma') throw new DomainError('INVALID', 'Este artículo de merma ya fue procesado.');
+    const product = q.productById.get(item.product_id);
+    if (!product || product.archived) throw new DomainError('NOT_FOUND', 'No se encontró el producto original.');
+    db.prepare('UPDATE products SET almacen_stock = almacen_stock + ? WHERE id = ?').run(item.quantity, item.product_id);
+    db.prepare(`
+      UPDATE merma_items
+      SET status = 'devuelto_a_almacen', resolved_at = ?, resolution_note = ?
+      WHERE id = ?
+    `).run(
+      today(),
+      note || 'Enviado al almacén central para reponerlo al mostrador cuando sea necesario.',
+      mermaId
+    );
+    return mapMerma(db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId));
+  });
+
+  const darDeBajaMerma = db.transaction((mermaId, note) => {
+    const item = db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId);
+    if (!item) throw new DomainError('NOT_FOUND', 'Artículo de merma no encontrado.');
+    if (item.status !== 'en_almacen_merma') throw new DomainError('INVALID', 'Este artículo de merma ya fue procesado.');
+    db.prepare(`
+      UPDATE merma_items
+      SET status = 'baja_definitiva', resolved_at = ?, resolution_note = ?
+      WHERE id = ?
+    `).run(today(), note || 'Baja definitiva por daño irreparable / inutilizable', mermaId);
+    return mapMerma(db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId));
+  });
+
+  const revocarMerma = db.transaction((mermaId) => {
+    const item = db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId);
+    if (!item) throw new DomainError('NOT_FOUND', 'Artículo de merma no encontrado.');
+    if (item.status === 'en_almacen_merma') {
+      throw new DomainError('INVALID', 'El artículo todavía está pendiente.');
+    }
+
+    if (item.status === 'reincorporado_con_precio') {
+      let defectiveProductId = item.defective_product_id;
+      if (!defectiveProductId) {
+        const candidates = db.prepare(`
+          SELECT p.id
+          FROM products p
+          WHERE p.code LIKE 'MERMA-%'
+            AND p.name = ?
+            AND p.detail = ?
+            AND p.category = 'Defectuoso'
+            AND p.price = ?
+            AND p.stock = ?
+            AND COALESCE(p.almacen_stock, 0) = 0
+            AND substr(p.created_at, 1, 10) = ?
+            AND NOT EXISTS (SELECT 1 FROM sale_items si WHERE si.product_id = p.id)
+            AND (SELECT COUNT(*) FROM stock_movements sm WHERE sm.product_id = p.id) = 1
+            AND EXISTS (
+              SELECT 1 FROM stock_movements sm
+              WHERE sm.product_id = p.id AND sm.type = 'inicial' AND sm.qty = ?
+            )
+        `).all(
+          `${item.name} (Defectuoso)`,
+          `Artículo defectuoso: ${item.damaged_reason}`,
+          item.discounted_price,
+          item.quantity,
+          item.resolved_at,
+          item.quantity
+        );
+        if (candidates.length !== 1) {
+          throw new DomainError('INVALID', 'No se puede revocar con seguridad: no se encontró un único artículo defectuoso intacto asociado.');
+        }
+        defectiveProductId = candidates[0].id;
+      }
+      const product = q.productById.get(defectiveProductId);
+      const saleCount = db.prepare('SELECT COUNT(*) AS count FROM sale_items WHERE product_id = ?')
+        .get(defectiveProductId).count;
+      const movements = db.prepare('SELECT type, qty FROM stock_movements WHERE product_id = ?')
+        .all(defectiveProductId);
+      if (
+        !product ||
+        Number(product.stock) !== Number(item.quantity) ||
+        Number(product.almacen_stock || 0) !== 0 ||
+        saleCount > 0 ||
+        movements.length !== 1 ||
+        movements[0].type !== 'inicial' ||
+        Number(movements[0].qty) !== Number(item.quantity)
+      ) {
+        throw new DomainError('INVALID', 'No se puede revocar: el artículo defectuoso ya se vendió o su existencia cambió.');
+      }
+      db.prepare('UPDATE products SET archived = 1 WHERE id = ?').run(defectiveProductId);
+    } else if (item.status === 'devuelto_a_almacen') {
+      const product = q.productById.get(item.product_id);
+      if (!product || product.archived) {
+        throw new DomainError('NOT_FOUND', 'No se puede revocar: el producto original no está disponible.');
+      }
+      if (Number(product.almacen_stock || 0) < Number(item.quantity)) {
+        throw new DomainError('INVALID', 'No se puede revocar: no hay suficiente existencia en el almacén para devolver la cantidad.');
+      }
+      db.prepare('UPDATE products SET almacen_stock = almacen_stock - ? WHERE id = ?')
+        .run(item.quantity, item.product_id);
+    }
+
+    db.prepare(`
+      UPDATE merma_items
+      SET status = 'en_almacen_merma', discounted_price = NULL, defective_product_id = NULL,
+          resolved_at = NULL, resolution_note = NULL
+      WHERE id = ?
+    `).run(mermaId);
+    return mapMerma(db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId));
+  });
+
   const resetAll = db.transaction(() => {
     const cleared = {};
-    for (const t of ['return_items', 'returns', ...[...TABLES].reverse()]) {
+    for (const t of [...TABLES].reverse()) {
       cleared[t] = db.prepare(`SELECT COUNT(*) AS count FROM ${t}`).get().count;
       db.prepare(`DELETE FROM ${t}`).run();
     }
@@ -921,9 +1230,9 @@ function createRepo(db, {
   return {
     today, clockStatus,
     getLicenseRecord, observeLicenseDate, saveLicense,
-    listProducts, createProduct, updateProduct, archiveProduct, addStock, reponerStock,
+    listProducts, createProduct, updateProduct, archiveProduct, deleteProduct, addStock, reponerStock,
     recordSale, voidSale, listSales, listSalesRange,
-    recordReturn, listReturns,
+    recordReturn, listReturns, listMermas, venderMermaConDescuento, enviarMermaAlmacen,     darDeBajaMerma, revocarMerma,
     getIpvDay,
     getClose, listCloses, closeDay, reopenDay,
     exportAll, restoreAll, resetAll,

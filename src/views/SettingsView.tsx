@@ -1473,8 +1473,9 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          {/* Card de Solicitud de Código y Contacto Directo */}
+        {/* Card de Solicitud de Código y Contacto Directo */}
           <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-5">
+            {/* 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant/15 pb-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/15 neo-inset flex items-center justify-center text-emerald-700 shrink-0">
@@ -1496,10 +1497,10 @@ export const SettingsView: React.FC = () => {
                   Atención Activa
                 </span>
               </div>
-            </div>
-
+            </div> */}
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* Opción 1: WhatsApp Directo */}
+              {/* Opción 1: WhatsApp Directo 
               <div className="p-5 rounded-xl bg-surface neo-inset flex flex-col justify-between gap-4 border border-emerald-500/20">
                 <div className="flex flex-col gap-2.5">
                   <div className="flex items-center justify-between">
@@ -1549,9 +1550,9 @@ export const SettingsView: React.FC = () => {
                     <span className="material-symbols-outlined text-[18px]">content_copy</span>
                   </button>
                 </div>
-              </div>
+              </div> */}
 
-              {/* Opción 2: Sin WhatsApp en la PC (Información Telefónica Separada) */}
+              {/* Opción 2: Sin WhatsApp en la PC (Información Telefónica Separada) 
               <div className="p-5 rounded-xl bg-surface neo-inset flex flex-col justify-between gap-4 border border-blue-500/20">
                 <div className="flex flex-col gap-2.5">
                   <div className="flex items-center justify-between">
@@ -1608,9 +1609,9 @@ export const SettingsView: React.FC = () => {
                     <span className="material-symbols-outlined text-[14px]">content_copy</span>
                   </button>
                 </div>
-              </div>
+              </div> */}
             </div>
-          </div>
+          </div>               
         </section>
       )}
 
@@ -1626,28 +1627,13 @@ export const SettingsView: React.FC = () => {
               </div>
               <div className="flex flex-col">
                 <h3 className="font-bold text-base text-on-surface">Configurar Copia de Respaldo</h3>
-                <span className="text-xs text-on-surface-variant">Seleccione el formato de destino</span>
+                <span className="text-xs text-on-surface-variant">Se genererá un archivo .json con todas las tablas y transacciones</span>
               </div>
             </div>
 
             <div className="flex flex-col gap-3">
               <span className="text-xs font-semibold text-on-surface">Formato de Exportación:</span>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setBackupFormat('sqlite')}
-                  className={`p-3.5 rounded-xl flex flex-col items-center justify-center gap-1.5 transition-all text-xs font-bold cursor-pointer ${
-                    backupFormat === 'sqlite'
-                      ? 'bg-surface neo-inset text-primary border border-primary/20'
-                      : 'bg-surface neo-raised text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[22px]">database</span>
-                  <span>SQLite (.db)</span>
-                  {backupFormat === 'sqlite' && (
-                    <span className="text-[10px] text-emerald-600 font-normal">Recomendado</span>
-                  )}
-                </button>
+              <div className="flex flex-col justify-center gap-3">
 
                 <button
                   type="button"

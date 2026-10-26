@@ -428,7 +428,7 @@ export const SalesHistoryView: React.FC = () => {
                   setSelectedWeekIdx(Number(e.target.value));
                   setPage(1);
                 }}
-                className="h-10 px-3 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                className="app-select h-10 px-3 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
               >
                 {weeksList.map((w) => (
                   <option key={w.idx} value={w.idx}>
@@ -652,7 +652,7 @@ export const SalesHistoryView: React.FC = () => {
               setStatusFilter(e.target.value as any);
               setPage(1);
             }}
-            className="h-10 px-3 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+            className="app-select h-10 px-3 rounded-xl bg-surface neo-inset text-xs font-semibold text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
           >
             <option value="all">Todos los tickets</option>
             <option value="active">Solo completadas</option>

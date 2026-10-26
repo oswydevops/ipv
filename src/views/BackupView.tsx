@@ -54,7 +54,6 @@ export const BackupView: React.FC = () => {
   // Modals and form state
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [backupFormat, setBackupFormat] = useState<'sqlite' | 'json'>('sqlite');
   const [isBackingUp, setIsBackingUp] = useState(false);
 
   // Estados para Restablecer Aplicación
@@ -111,19 +110,7 @@ export const BackupView: React.FC = () => {
     setIsBackingUp(true);
     try {
       if (window.api && window.api.backup) {
-        if (backupFormat === 'sqlite') {
-          const res = await window.api.backup.saveSqlite();
-          if (res.canceled || !('path' in res)) {
-            showToast('Operación Cancelada', 'No se guardó el respaldo.', 'info');
-            return;
-          }
-          updateBackupState(res.path, 'sqlite');
-          showToast(
-            'Copia SQLite Generada',
-            `Base de datos respaldada correctamente en:\n${res.path}`,
-            'success'
-          );
-        } else {
+        
           const res = await window.api.backup.saveJson();
           if (res.canceled || !('path' in res)) {
             showToast('Operación Cancelada', 'No se guardó el respaldo.', 'info');
@@ -135,7 +122,7 @@ export const BackupView: React.FC = () => {
             `Tablas y transacciones exportadas a:\n${res.path}`,
             'success'
           );
-        }
+        
         setIsBackupModalOpen(false);
       } else {
         showToast('Aviso', 'API de respaldo no disponible en este entorno.', 'error');
@@ -798,60 +785,8 @@ export const BackupView: React.FC = () => {
               <div className="flex flex-col flex-1">
                 <h3 className="text-base font-bold text-on-surface">Respaldo Inmediato del Sistema</h3>
                 <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
-                  Elija el tipo de archivo que desea generar. Se abrirá el selector nativo para que elija la carpeta de su PC donde guardarlo.
+                  Se generará un archivo .json con todas las tablas y transacciones. Se abrirá el selector nativo para que elija la carpeta de su PC donde guardarlo.
                 </p>
-              </div>
-            </div>
-
-            {/* Selector de Formato */}
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold text-on-surface">Formato de Respaldo:</label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setBackupFormat('sqlite')}
-                  className={`p-3.5 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
-                    backupFormat === 'sqlite'
-                      ? 'border-primary bg-primary/5 neo-inset'
-                      : 'border-outline-variant/30 bg-surface neo-raised hover:border-primary/50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-on-surface flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-[16px] text-primary">database</span>
-                      Base SQLite (.sqlite)
-                    </span>
-                    {backupFormat === 'sqlite' && (
-                      <span className="w-2 h-2 rounded-full bg-primary"></span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-on-surface-variant">
-                    Copia bit-a-bit exacta del archivo de base de datos activa.
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setBackupFormat('json')}
-                  className={`p-3.5 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
-                    backupFormat === 'json'
-                      ? 'border-primary bg-primary/5 neo-inset'
-                      : 'border-outline-variant/30 bg-surface neo-raised hover:border-primary/50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-on-surface flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-[16px] text-tertiary">data_object</span>
-                      Exportación JSON (.json)
-                    </span>
-                    {backupFormat === 'json' && (
-                      <span className="w-2 h-2 rounded-full bg-primary"></span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-on-surface-variant">
-                    Estructura en texto legible con esquema y tablas completas.
-                  </span>
-                </button>
               </div>
             </div>
 

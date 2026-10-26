@@ -1,0 +1,14 @@
+export const PRODUCT_CATEGORIES = [
+  'Herramientas manuales',
+  'Herramientas eléctricas',
+  'Tornillería y fijaciones',
+  'Electricidad e iluminación',
+  'Plomería y gasfitería',
+  'Pinturas y accesorios',
+  'Adhesivos y selladores',
+  'Cerrajería y herrajes',
+  'Construcción y obra',
+  'Jardinería y exteriores',
+  'Seguridad y protección',
+  'Otra categoría',
+] as const;

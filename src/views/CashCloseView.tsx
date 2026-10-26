@@ -166,6 +166,11 @@ export const CashCloseView: React.FC = () => {
   const transferDifference = transferenciasAmount - expectedTransfers;
   const netIpvExpected = Math.max(0, ipvTotalVendido - devolucionesAmount);
   const netDifference = totalGeneralContado - netIpvExpected;
+  const handleResetDenominationCounts = () => {
+    denominations.forEach(({ id }) => updateDenominationCount(id, 0));
+    showToast('Conteo reiniciado', 'El conteo de billetes se ha reiniciado a cero.');
+  };
+
   const handlePerformClose = async () => {
     if (isCurrentDayClosed) {
       showToast('Aviso', 'El día ya está cerrado.', 'info');
@@ -480,9 +485,22 @@ export const CashCloseView: React.FC = () => {
                   </p>
                 </div>
               </div>
-              <span className="px-2.5 py-1 rounded-lg bg-surface neo-inset text-[11px] font-bold text-primary font-mono">
-                CUP $
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={handleResetDenominationCounts}
+                  disabled={isCurrentDayClosed || denominations.every(({ count }) => count === 0)}
+                  className="h-8 px-2.5 rounded-lg bg-surface neo-raised hover:text-primary active:neo-inset flex items-center gap-1.5 text-[11px] font-semibold text-on-surface-variant transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  title="Reiniciar conteo de billetes"
+                  aria-label="Reiniciar conteo de billetes"
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                  <span>Reiniciar</span>
+                </button>
+                <span className="px-2.5 py-1 rounded-lg bg-surface neo-inset text-[11px] font-bold text-primary font-mono">
+                  CUP $
+                </span>
+              </div>
             </div>
 
             {/* Table Structure */}

@@ -48,6 +48,25 @@ export const getFriendlyErrorMessage = (err: any): string => {
   return err?.message || 'Ocurrió un error inesperado al procesar la solicitud.';
 };
 
+const createMermaItemsForReturn = (
+  returnRecord: Pick<ReturnRecord, 'id' | 'returnNumber' | 'date' | 'reason'>,
+  items: ReturnItem[]
+): MermaItem[] =>
+  items.filter((item) => item.condition === 'mal_estado').map((item, index) => ({
+    id: `merma-${returnRecord.id}-${index + 1}`,
+    returnId: returnRecord.id,
+    returnNumber: returnRecord.returnNumber,
+    date: returnRecord.date,
+    productId: item.productId,
+    code: item.code,
+    name: item.name,
+    um: item.um,
+    quantity: Number(item.quantity) || 1,
+    originalUnitPrice: Number(item.unitPrice) || 0,
+    damagedReason: item.damagedReason?.trim() || returnRecord.reason || 'Devolución de cliente',
+    status: 'en_almacen_merma',
+  }));
+
 const getCategoryIcon = (category: string) => {
   const cat = (category || '').toLowerCase();
   if (cat.includes('plom') || cat.includes('agua') || cat.includes('fontan')) return 'plumbing';
@@ -160,8 +179,10 @@ interface AppContextType {
   totalDevolucionesEfectivoToday: number;
   totalDevolucionesTransferenciaToday: number;
   mermaItems: MermaItem[];
-  reincorporarMermaItem: (mermaId: string, newPrice: number, note?: string) => Promise<boolean>;
+  venderMermaConDescuento: (mermaId: string, newPrice: number, note?: string) => Promise<boolean>;
+  enviarMermaAlmacen: (mermaId: string, note?: string) => Promise<boolean>;
   darDeBajaMermaItem: (mermaId: string, note?: string) => Promise<boolean>;
+  revocarMermaItem: (mermaId: string) => Promise<boolean>;
   isSaleModalOpen: boolean;
   setIsSaleModalOpen: (open: boolean) => void;
   preselectedProductForSale: Product | null;
@@ -678,15 +699,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteProduct = async (id: string): Promise<boolean> => {
     try {
       if (!window.api) return false;
-      await window.api.products.archive(id);
+      const result = await window.api.products.delete(id);
       if (selectedProductId === id) {
         setSelectedProductId(null);
       }
       await refreshAll();
-      showToast('Producto Archivado', 'El producto fue archivado correctamente del catálogo.');
+      if (result?.mode === 'archived') {
+        showToast(
+          'Producto Archivado',
+          'El producto tiene historial de ventas o movimientos, así que se archivó. Su código ya quedó disponible para reutilizar.'
+        );
+      } else {
+        showToast('Producto Eliminado', 'El producto fue eliminado del catálogo de forma definitiva.');
+      }
       return true;
     } catch (err: any) {
-      showToast('Error al archivar', getFriendlyErrorMessage(err), 'error');
+      showToast('Error al eliminar', getFriendlyErrorMessage(err), 'error');
       return false;
     }
   };
@@ -837,7 +865,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     try {
       if (window.api && (window.api as any).returns) {
-        await (window.api as any).returns.record(returnData);
+        const recordedReturn: ReturnRecord = await (window.api as any).returns.record(returnData);
+        if (!window.api.mermas) {
+          const rawMermas = localStorage.getItem('ipv_mermas_v2');
+          const storedMermas: MermaItem[] = rawMermas ? JSON.parse(rawMermas) : mermaItems;
+          const updatedMermas = [
+            ...storedMermas,
+            ...createMermaItemsForReturn(recordedReturn, returnData.items || []),
+          ];
+          localStorage.setItem('ipv_mermas_v2', JSON.stringify(updatedMermas));
+          setMermaItems(updatedMermas);
+        }
       } else {
         const today = todayDate || new Date().toISOString().slice(0, 10);
         const now = new Date();
@@ -882,41 +920,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localStorage.setItem('ipv_returns_v2', JSON.stringify(updatedReturns));
         } catch {}
 
-        // Gestión de inventario y merma en fallback
+        // Toda devolución queda pendiente de revisión en el almacén de mermas.
         let mermas = [...mermaItems];
-        const updatedProducts = [...products];
-
-        for (const it of (returnData.items || [])) {
-          if (it.condition === 'buen_estado') {
-            // Reintegrar al stock
-            const prod = updatedProducts.find((p) => p.id === it.productId || p.code === it.code);
-            if (prod) {
-              prod.stock += Number(it.quantity) || 0;
-              prod.status = prod.stock === 0 ? 'out' : prod.stock <= prod.minStock ? 'low' : 'ok';
-            }
-          } else if (it.condition === 'mal_estado') {
-            // Almacén de merma
-            mermas.push({
-              id: `merma-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              returnId: newRecord.id,
-              returnNumber: newRecord.returnNumber,
-              date: today,
-              productId: it.productId,
-              code: it.code,
-              name: it.name,
-              um: it.um,
-              quantity: Number(it.quantity) || 1,
-              originalUnitPrice: Number(it.unitPrice) || 0,
-              damagedReason: it.damagedReason || 'Mal estado / defecto',
-              status: 'en_almacen_merma',
-            });
-          }
-        }
-
-        setProducts(updatedProducts);
+        mermas.push(...createMermaItemsForReturn(newRecord, returnData.items || []));
         setMermaItems(mermas);
         try {
-          localStorage.setItem('ipv_products_v2', JSON.stringify(updatedProducts));
           localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
         } catch {}
       }
@@ -934,42 +942,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const reincorporarMermaItem = async (mermaId: string, newPrice: number, note?: string): Promise<boolean> => {
+  const venderMermaConDescuento = async (mermaId: string, newPrice: number, note?: string): Promise<boolean> => {
     try {
-      if (window.api && (window.api as any).mermas) {
-        await (window.api as any).mermas.reincorporar(mermaId, newPrice, note);
+      if (window.api.mermas) {
+        await window.api.mermas.venderConDescuento(mermaId, newPrice, note);
       } else {
         const raw = localStorage.getItem('ipv_mermas_v2');
         let mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
         const idx = mermas.findIndex((m) => m.id === mermaId);
         if (idx === -1) throw new Error('Artículo de merma no encontrado');
+        if (newPrice <= 0 || newPrice >= mermas[idx].originalUnitPrice) {
+          throw new Error('El precio debe ser mayor que cero y menor que el precio original.');
+        }
 
+        const sourceProduct = products.find((product) => product.id === mermas[idx].productId);
+        if (!sourceProduct) throw new Error('No se encontró el producto original para crear la existencia defectuosa.');
+        const defectiveProduct: Product = {
+          ...sourceProduct,
+          id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          code: `MERMA-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+          name: `${mermas[idx].name} (Defectuoso)`,
+          detail: `Artículo defectuoso: ${mermas[idx].damagedReason}`,
+          category: 'Defectuoso',
+          price: newPrice,
+          stock: mermas[idx].quantity,
+          almacenStock: 0,
+          minStock: 1,
+          status: 'ok',
+          createdAt: todayDate,
+        };
+        await window.api.products.create(defectiveProduct);
         mermas[idx].status = 'reincorporado_con_precio';
         mermas[idx].discountedPrice = Number(newPrice);
+        mermas[idx].defectiveProductId = defectiveProduct.id;
         mermas[idx].resolvedAt = todayDate;
-        mermas[idx].resolutionNote = note || `Reincorporado con precio: $${Number(newPrice).toFixed(2)}`;
+        mermas[idx].resolutionNote = note || `Preparado para venta como defectuoso: $${Number(newPrice).toFixed(2)}`;
         setMermaItems([...mermas]);
-        try {
-          localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
-        } catch {}
+        localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
       }
       await refreshAll();
       showToast(
-        'Artículo Reincorporado',
-        `El artículo fue reintegrado al almacén listo para vender con el nuevo precio de $${Number(newPrice).toFixed(2)} CUP.`,
+        'Artículo listo para la venta',
+        `Se creó una existencia separada como artículo defectuoso con precio de $${Number(newPrice).toFixed(2)} CUP.`,
         'success'
       );
       return true;
     } catch (err: any) {
-      showToast('Error al reincorporar merma', err?.message || 'No se pudo procesar la reincorporación', 'error');
+      showToast('Error al preparar la venta', err?.message || 'No se pudo preparar el artículo defectuoso', 'error');
+      return false;
+    }
+  };
+
+  const enviarMermaAlmacen = async (mermaId: string, note?: string): Promise<boolean> => {
+    try {
+      if (window.api.mermas) {
+        await window.api.mermas.enviarAlmacen(mermaId, note);
+      } else {
+        const raw = localStorage.getItem('ipv_mermas_v2');
+        const mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
+        const item = mermas.find((merma) => merma.id === mermaId);
+        if (!item) throw new Error('Artículo de merma no encontrado');
+        const product = products.find((entry) => entry.id === item.productId);
+        if (!product) throw new Error('No se encontró el producto original para enviarlo al almacén.');
+        product.almacenStock = (product.almacenStock || 0) + item.quantity;
+        item.status = 'devuelto_a_almacen';
+        item.resolvedAt = todayDate;
+        item.resolutionNote = note || 'Enviado al almacén central para reponerlo al mostrador cuando sea necesario.';
+        setMermaItems([...mermas]);
+        localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
+        localStorage.setItem('ipv_products_v2', JSON.stringify(products));
+      }
+      await refreshAll();
+      showToast(
+        'Artículo enviado al almacén',
+        'La cantidad quedó disponible en el almacén central; puede reponerla al mostrador desde Productos.',
+        'success'
+      );
+      return true;
+    } catch (err: any) {
+      showToast('Error al enviar al almacén', err?.message || 'No se pudo enviar el artículo al almacén', 'error');
       return false;
     }
   };
 
   const darDeBajaMermaItem = async (mermaId: string, note?: string): Promise<boolean> => {
     try {
-      if (window.api && (window.api as any).mermas) {
-        await (window.api as any).mermas.darDeBaja(mermaId, note);
+      if (window.api.mermas) {
+        await window.api.mermas.darDeBaja(mermaId, note);
       } else {
         const raw = localStorage.getItem('ipv_mermas_v2');
         let mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
@@ -980,15 +1039,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         mermas[idx].resolvedAt = todayDate;
         mermas[idx].resolutionNote = note || 'Baja definitiva por daño irreparable / inutilizable';
         setMermaItems([...mermas]);
-        try {
-          localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
-        } catch {}
+        localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
       }
       await refreshAll();
       showToast('Baja Definitiva Registrada', 'El artículo ha sido dado de baja en el almacén de merma.', 'info');
       return true;
     } catch (err: any) {
       showToast('Error al dar de baja', err?.message || 'No se pudo dar de baja el artículo', 'error');
+      return false;
+    }
+  };
+
+  const revocarMermaItem = async (mermaId: string): Promise<boolean> => {
+    try {
+      if (window.api.mermas?.revocar) {
+        await window.api.mermas.revocar(mermaId);
+      } else {
+        const raw = localStorage.getItem('ipv_mermas_v2');
+        const mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
+        const item = mermas.find((merma) => merma.id === mermaId);
+        if (!item) throw new Error('Artículo de merma no encontrado');
+        if (item.status === 'en_almacen_merma') throw new Error('El artículo todavía está pendiente.');
+
+        if (item.status === 'reincorporado_con_precio') {
+          let defectiveProductId = item.defectiveProductId;
+          if (!defectiveProductId) {
+            const candidates = products.filter((product) =>
+              product.code.startsWith('MERMA-') &&
+              product.name === `${item.name} (Defectuoso)` &&
+              product.detail === `Artículo defectuoso: ${item.damagedReason}` &&
+              product.category === 'Defectuoso' &&
+              product.price === Number(item.discountedPrice) &&
+              product.stock === Number(item.quantity) &&
+              Number(product.almacenStock || 0) === 0 &&
+              product.createdAt?.slice(0, 10) === item.resolvedAt &&
+              !sales.some((sale) => sale.items.some((saleItem) => saleItem.productId === product.id))
+            );
+            if (candidates.length !== 1) {
+              throw new Error('No se puede revocar con seguridad: no se encontró un único artículo defectuoso intacto asociado.');
+            }
+            defectiveProductId = candidates[0].id;
+          }
+          const defectiveProduct = products.find((product) => product.id === defectiveProductId);
+          const hasSales = sales.some((sale) => sale.items.some((saleItem) => saleItem.productId === defectiveProductId));
+          if (!defectiveProduct || defectiveProduct.stock !== item.quantity || defectiveProduct.almacenStock !== 0 || hasSales) {
+            throw new Error('No se puede revocar: el artículo defectuoso ya se vendió o su existencia cambió.');
+          }
+          await window.api.products.archive(defectiveProductId);
+        } else if (item.status === 'devuelto_a_almacen') {
+          const product = products.find((entry) => entry.id === item.productId);
+          if (!product || (product.almacenStock || 0) < item.quantity) {
+            throw new Error('No se puede revocar: no hay suficiente existencia en el almacén para devolver la cantidad.');
+          }
+          await window.api.products.update(item.productId, { almacenStock: Number(product.almacenStock || 0) - item.quantity });
+        }
+
+        item.status = 'en_almacen_merma';
+        item.discountedPrice = undefined;
+        item.defectiveProductId = undefined;
+        item.resolvedAt = undefined;
+        item.resolutionNote = undefined;
+        setMermaItems(mermas);
+        localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
+      }
+      await refreshAll();
+      showToast('Acción revocada', 'El artículo volvió a quedar pendiente en el almacén de mermas.', 'success');
+      return true;
+    } catch (err: any) {
+      showToast('Error al revocar la acción', err?.message || 'No se pudo revocar la acción del artículo', 'error');
       return false;
     }
   };
@@ -1202,8 +1320,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         totalDevolucionesEfectivoToday,
         totalDevolucionesTransferenciaToday,
         mermaItems,
-        reincorporarMermaItem,
+        venderMermaConDescuento,
+        enviarMermaAlmacen,
         darDeBajaMermaItem,
+        revocarMermaItem,
         isSaleModalOpen,
         setIsSaleModalOpen,
         preselectedProductForSale,

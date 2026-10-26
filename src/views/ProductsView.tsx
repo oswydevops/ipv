@@ -1,20 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { SearchableSelect } from '../components/SearchableSelect';
+import { PRODUCT_CATEGORIES } from '../data/productCategories';
 import { Product } from '../types';
-
-export const PRODUCT_CATEGORIES = [
-  'Herramientas manuales',
-  'Herramientas eléctricas',
-  'Tornillería y fijaciones',
-  'Electricidad e iluminación',
-  'Plomería y gasfitería',
-  'Pinturas y accesorios',
-  'Adhesivos y selladores',
-  'Cerrajería y herrajes',
-  'Construcción y obra',
-  'Jardinería y exteriores',
-  'Seguridad y protección (EPIs)',
-] as const;
 
 export const getCategoryBadgeClass = (category: string) => {
   const cat = (category || '').toLowerCase();
@@ -31,6 +19,8 @@ export const getCategoryBadgeClass = (category: string) => {
   if (cat.includes('seguridad') || cat.includes('epi')) return 'bg-rose-100 text-rose-800';
   return 'bg-surface-container-high text-on-surface';
 };
+
+const normalizeNumericInput = (value: string) => value.replace(/^0+(?=\d)/, '');
 
 export const ProductsView: React.FC = () => {
   const {
@@ -56,10 +46,10 @@ export const ProductsView: React.FC = () => {
   const [newName, setNewName] = useState('');
   const [newCategory, setNewCategory] = useState<string>('Herramientas manuales');
   const [newUM, setNewUM] = useState('Unidad');
-  const [newPrice, setNewPrice] = useState<number>(0);
-  const [newStock, setNewStock] = useState<number>(10);
-  const [newMinStock, setNewMinStock] = useState<number>(5);
-  const [newAlmacenStock, setNewAlmacenStock] = useState<number>(0);
+  const [newPrice, setNewPrice] = useState('0');
+  const [newStock, setNewStock] = useState('0');
+  const [newMinStock, setNewMinStock] = useState('0');
+  const [newAlmacenStock, setNewAlmacenStock] = useState('0');
   const [newLocation, setNewLocation] = useState('Almacén Central');
 
   // Edit product form state
@@ -115,10 +105,10 @@ export const ProductsView: React.FC = () => {
     setNewName('');
     setNewCategory('Herramientas manuales');
     setNewUM('Unidad');
-    setNewPrice(0);
-    setNewStock(10);
-    setNewMinStock(5);
-    setNewAlmacenStock(0);
+    setNewPrice('0');
+    setNewStock('0');
+    setNewMinStock('0');
+    setNewAlmacenStock('0');
     setNewLocation('Almacén Central');
     setIsNewModalOpen(true);
   };
@@ -130,7 +120,9 @@ export const ProductsView: React.FC = () => {
     }
     // Product code is automatically generated upon adding the product
     const finalCode = newCode || generateNextProductCode(products);
-    const status = newStock === 0 ? 'out' : newStock <= newMinStock ? 'low' : 'ok';
+    const stockNum = Number(newStock) || 0;
+    const minStockNum = Number(newMinStock) || 0;
+    const status = stockNum === 0 ? 'out' : stockNum <= minStockNum ? 'low' : 'ok';
     const now = new Date();
     const formattedDate =
       now.toLocaleDateString('es-CU', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
@@ -145,8 +137,8 @@ export const ProductsView: React.FC = () => {
       category: newCategory,
       um: newUM,
       price: Number(newPrice) || 0,
-      stock: Number(newStock) || 0,
-      minStock: Number(newMinStock) || 0,
+      stock: stockNum,
+      minStock: minStockNum,
       almacenStock: Number(newAlmacenStock) || 0,
       status,
       rotation: 'Normal (15 u)',
@@ -315,11 +307,11 @@ export const ProductsView: React.FC = () => {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="text-on-surface-variant/80 uppercase text-[10px] font-semibold tracking-wider">
-                    <th className="py-3 px-4">Código</th>
-                    <th className="py-3 px-4">Producto / Detalle</th>
+                    <th className="py-3 pl-4 pr-2">Código</th>
+                    <th className="py-3 pl-2 pr-4">Producto / Detalle</th>
                     <th className="py-3 px-3">Categoría</th>
                     <th className="py-3 px-3 text-center">U/M</th>
-                    <th className="py-3 px-4 text-right">Precio CUP</th>
+                    <th className="py-3 px-4 text-right">Precio</th>
                     <th className="py-3 px-4 text-center">Stock</th>
                     <th className="py-3 px-3 text-center">Almacén</th>
                     <th className="py-3 px-4 text-center">Acciones</th>
@@ -342,12 +334,12 @@ export const ProductsView: React.FC = () => {
                         }`}
                         title="Haga clic para ver la Ficha Técnica"
                       >
-                        <td className="py-3 px-4 font-mono font-medium text-primary">
+                        <td className="py-3 pl-4 pr-2 font-mono font-medium text-primary">
                           <span className="px-2 py-1 rounded-lg bg-surface neo-inset font-bold">
                             {p.code}
                           </span>
                         </td>
-                        <td className="py-3 px-4">
+                        <td className="py-3 pl-2 pr-4">
                           <div className="font-semibold text-on-surface group-hover:text-primary transition-colors">
                             {p.name}
                           </div>
@@ -362,7 +354,7 @@ export const ProductsView: React.FC = () => {
                             {p.category}
                           </span>
                         </td>
-                        <td className="py-3 px-3 text-center font-mono text-on-surface-variant">
+                        <td className="py-2.5 px-3 text-center font-mono text-on-surface-variant">
                           {p.um}
                         </td>
                         <td className="py-3 px-4 text-right font-headline font-semibold text-on-surface font-mono">
@@ -665,19 +657,13 @@ export const ProductsView: React.FC = () => {
 
               <div className="flex flex-col gap-1.5">
                 <label className="font-semibold text-on-surface">Categoría</label>
-                <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
-                  <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value)}
-                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
-                  >
-                    {PRODUCT_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <SearchableSelect
+                  value={newCategory}
+                  onChange={setNewCategory}
+                  placeholder="Buscar categoría..."
+                  options={PRODUCT_CATEGORIES.map((category) => ({ value: category, label: category }))}
+                  className="h-10 pl-3 rounded-xl bg-surface neo-inset text-xs"
+                />
               </div>
 
               <div className="col-span-2 flex flex-col gap-1.5">
@@ -701,14 +687,16 @@ export const ProductsView: React.FC = () => {
                   <select
                     value={newUM}
                     onChange={(e) => setNewUM(e.target.value)}
-                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
+                    className="app-select bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
                   >
                     <option>Unidad</option>
                     <option>Metro</option>
-                    <option>Rollo</option>
+                    <option>Litro</option>
                     <option>Pieza</option>
                     <option>Caja</option>
                     <option>Galón</option>
+                    <option>Kilogramo</option>
+                    <option>Libra</option>
                   </select>
                 </div>
               </div>
@@ -720,8 +708,8 @@ export const ProductsView: React.FC = () => {
                     type="number"
                     step="0.01"
                     min="0"
-                    value={newPrice || ''}
-                    onChange={(e) => setNewPrice(parseFloat(e.target.value) || 0)}
+                    value={newPrice}
+                    onChange={(e) => setNewPrice(normalizeNumericInput(e.target.value))}
                     placeholder="0.00"
                     className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono text-xs"
                   />
@@ -735,7 +723,7 @@ export const ProductsView: React.FC = () => {
                     type="number"
                     min="0"
                     value={newStock}
-                    onChange={(e) => setNewStock(parseInt(e.target.value) || 0)}
+                    onChange={(e) => setNewStock(normalizeNumericInput(e.target.value))}
                     placeholder="En mostrador"
                     className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
@@ -752,7 +740,7 @@ export const ProductsView: React.FC = () => {
                     type="number"
                     min="0"
                     value={newAlmacenStock}
-                    onChange={(e) => setNewAlmacenStock(parseInt(e.target.value) || 0)}
+                    onChange={(e) => setNewAlmacenStock(normalizeNumericInput(e.target.value))}
                     placeholder="Resto en almacén"
                     className="bg-transparent border-none outline-none text-on-surface w-full font-mono font-bold text-xs"
                   />
@@ -834,19 +822,13 @@ export const ProductsView: React.FC = () => {
 
               <div className="flex flex-col gap-1.5">
                 <label className="font-semibold text-on-surface">Categoría</label>
-                <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
-                  <select
-                    value={editCategory}
-                    onChange={(e) => setEditCategory(e.target.value)}
-                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
-                  >
-                    {PRODUCT_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <SearchableSelect
+                  value={editCategory}
+                  onChange={setEditCategory}
+                  placeholder="Buscar categoría..."
+                  options={PRODUCT_CATEGORIES.map((category) => ({ value: category, label: category }))}
+                  className="h-10 pl-3 rounded-xl bg-surface neo-inset text-xs"
+                />
               </div>
 
               <div className="col-span-2 flex flex-col gap-1.5">
@@ -869,14 +851,15 @@ export const ProductsView: React.FC = () => {
                   <select
                     value={editUM}
                     onChange={(e) => setEditUM(e.target.value)}
-                    className="bg-transparent border-none outline-none w-full text-on-surface cursor-pointer"
+                    className="app-select bg-transparent border-none outline-none w-full text-on-surface cursor-pointer"
                   >
                     <option>Unidad</option>
                     <option>Metro</option>
-                    <option>Rollo</option>
                     <option>Pieza</option>
                     <option>Caja</option>
                     <option>Galón</option>
+                    <option>Litro</option>
+                    <option>Kilogramo</option>
                   </select>
                 </div>
               </div>
@@ -976,7 +959,9 @@ export const ProductsView: React.FC = () => {
             <p className="text-xs text-on-surface-variant leading-relaxed">
               Está a punto de eliminar el producto{' '}
               <strong className="text-on-surface">"{deletingProduct.name}"</strong>.
-              El producto será retirado del catálogo activo de existencias. ¿Desea confirmar la eliminación?
+              Si nunca tuvo ventas ni movimientos de stock se borrará de forma definitiva. Si tiene
+              historial se archivará para no romper los reportes, y su código quedará libre para
+              asignarlo a otro producto.
             </p>
 
             <div className="flex items-center justify-end gap-3 pt-2">

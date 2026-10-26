@@ -150,9 +150,9 @@ export interface MermaItem {
   quantity: number;
   originalUnitPrice: number;
   damagedReason: string;
-  status: 'en_almacen_merma' | 'reincorporado_con_precio' | 'baja_definitiva';
+  status: 'en_almacen_merma' | 'reincorporado_con_precio' | 'devuelto_a_almacen' | 'baja_definitiva';
   discountedPrice?: number;
+  defectiveProductId?: string;
   resolvedAt?: string;
   resolutionNote?: string;
 }
-

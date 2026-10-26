@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 export const IPVView: React.FC = () => {
   const {
@@ -377,21 +378,18 @@ export const IPVView: React.FC = () => {
         {/* Quick Dropdowns & Search/Date */}
         <div className="flex flex-wrap items-center gap-3">
           {/* Selector de Categoría */}
-          <div className="relative">
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="appearance-none h-9 pl-3.5 pr-8 rounded-xl bg-surface neo-inset text-xs font-medium text-on-surface focus:outline-none cursor-pointer"
-            >
-              <option value="all">Todas las categorías</option>
-              {categories.filter((c) => c !== 'all').map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <span className="material-symbols-outlined text-[16px] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant">
-              expand_more
-            </span>
-          </div>
+          <SearchableSelect
+            value={selectedCategory}
+            onChange={setSelectedCategory}
+            ariaLabel="Filtrar por categoría"
+            placeholder="Buscar categoría..."
+            options={categories.map((category) => ({
+              value: category,
+              label: category === 'all' ? 'Todas las categorías' : category,
+            }))}
+            containerClassName="w-full sm:w-56"
+            className="h-10 pl-3.5 rounded-xl bg-surface neo-inset text-xs font-medium"
+          />
 
           {/* Selector de Fecha para consultar días anteriores */}
           <div className="h-9 px-3 rounded-xl bg-surface neo-inset flex items-center gap-2 text-xs font-medium text-on-surface">
