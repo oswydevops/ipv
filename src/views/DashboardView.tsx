@@ -134,6 +134,7 @@ export const DashboardView: React.FC = () => {
     ipvRows,
     sales,
     returns = [],
+    mermaItems = [],
     totalDevolucionesToday,
     todayDate,
     setCurrentView,
@@ -143,9 +144,6 @@ export const DashboardView: React.FC = () => {
 
   const [trendView, setTrendView] = useState<'hourly' | 'weekly'>('hourly');
   const [hoveredCategoryIndex, setHoveredCategoryIndex] = useState<number | null>(null);
-
-  const zeroStockCount = products.filter((p) => p.stock === 0).length;
-  const lowStockCount = products.filter((p) => p.stock > 0 && p.stock <= p.minStock).length;
 
   const returnsToday = useMemo(() => {
     return returns.filter((r) => r.date === todayDate);
@@ -159,6 +157,16 @@ export const DashboardView: React.FC = () => {
       return acc + damaged;
     }, 0);
   }, [returnsToday]);
+  const resolvedMermaToday = useMemo(
+    () => mermaItems.filter((item) => item.resolvedAt === todayDate),
+    [mermaItems, todayDate]
+  );
+  const defectiveSalesToday = resolvedMermaToday
+    .filter((item) => item.status === 'reincorporado_con_precio')
+    .reduce((total, item) => total + item.quantity, 0);
+  const writtenOffToday = resolvedMermaToday
+    .filter((item) => item.status === 'baja_definitiva')
+    .reduce((total, item) => total + item.quantity, 0);
 
   const returnedUnitsToday = useMemo(() => {
     return returnsToday.reduce((acc, r) => {
@@ -166,6 +174,21 @@ export const DashboardView: React.FC = () => {
       return acc + qty;
     }, 0);
   }, [returnsToday]);
+  const netProfitToday = useMemo(() => {
+    const salesToday = sales.filter((sale) => sale.date === todayDate && !sale.voided);
+    const grossProfit = salesToday.reduce(
+      (total, sale) =>
+        total +
+        sale.total -
+        sale.items.reduce(
+          (cost, item) => cost + (Number(item.purchasePrice) || 0) * item.quantity,
+          0
+        ),
+      0
+    );
+    const refunds = returnsToday.reduce((total, record) => total + (record.totalRefund || 0), 0);
+    return grossProfit - refunds;
+  }, [sales, todayDate, returnsToday]);
 
   const formatCUP = (val: number) => {
     return Number(val).toLocaleString('es-CU', {
@@ -467,36 +490,26 @@ export const DashboardView: React.FC = () => {
           </div>
         </div>
 
-        {/* Metric 3: Inventario en Alerta (Stock Crítico) */}
+        {/* Metric 3: Ganancias netas del día */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
           <div className="flex items-start justify-between">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-                Stock Crítico
+                Ganancias Netas
               </span>
               <div className="flex items-baseline gap-2 mt-0.5">
-                <span className="text-2xl font-headline font-bold text-error font-mono">
-                  {zeroStockCount}
+                <span className={`text-2xl font-headline font-bold font-mono ${netProfitToday >= 0 ? 'text-emerald-600' : 'text-error'}`}>
+                  {formatCUP(netProfitToday)}
                 </span>
-                <span className="text-xs font-semibold text-error">en cero</span>
-                <span className="text-xs text-on-surface-variant">• {lowStockCount} bajo umbral</span>
+                <span className="text-xs text-on-surface-variant">CUP hoy</span>
               </div>
             </div>
-            <div className="w-11 h-11 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-500">
-              <span className="material-symbols-outlined text-[22px]">warning</span>
+            <div className="w-11 h-11 rounded-xl bg-surface neo-inset flex items-center justify-center text-emerald-600">
+              <span className="material-symbols-outlined text-[22px]">payments</span>
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 text-xs">
-            <button
-              onClick={() => setCurrentView('alertas-de-stock')}
-              className="text-primary font-semibold hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <span>Ir a reponer</span>
-              <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
-            </button>
-            {zeroStockCount > 0 && (
-              <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
-            )}
+            <span className="text-on-surface-variant">Ventas menos costo de compra y devoluciones</span>
           </div>
         </div>
 
@@ -538,6 +551,10 @@ export const DashboardView: React.FC = () => {
                 Descontado en caja
               </span>
             )}
+          </div>
+          <div className="flex items-center justify-between gap-2 mt-3 pt-2 border-t border-outline-variant/10 text-[10px] font-semibold">
+            <span className="text-purple-700">Venta defectuosa: {defectiveSalesToday}</span>
+            <span className="text-red-700">Bajas: {writtenOffToday}</span>
           </div>
         </div>
       </div>

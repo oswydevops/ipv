@@ -415,6 +415,8 @@ export const SettingsView: React.FC = () => {
         'Vendido',
         'Saldo Final',
         'Importe Vendido ($)',
+        'Costo de Compra Vendido ($)',
+        'Ganancia Bruta ($)',
         'Estado',
       ].join(';'),
     ];
@@ -434,6 +436,8 @@ export const SettingsView: React.FC = () => {
           item.vendido,
           item.saldoFinal,
           item.importe.toFixed(2),
+          item.costOfGoods.toFixed(2),
+          item.grossProfit.toFixed(2),
           `"${estadoLabel}"`,
         ].join(';')
       );
@@ -445,8 +449,10 @@ export const SettingsView: React.FC = () => {
       `"Concepto";"Valor / Monto ($)";"Detalle / Observaciones"`,
       `"Total Unidades Vendidas";${ipvTotalUnidades};"Unidades despachadas según IPV"`,
       `"Total Facturado (Ventas Brutas)";${ipvTotalVendido.toFixed(2)};"Importe bruto facturado"`,
+      `"Costo de Compra de Artículos Vendidos";${ipvRows.reduce((total, item) => total + item.costOfGoods, 0).toFixed(2)};"Costo registrado al realizar cada venta"`,
       `"Total Devoluciones / Reembolsos";-${totalRefundToday.toFixed(2)};"${devolucionesToday.length} devoluciones procesadas"`,
       `"Ventas Netas Efectivas del Día";${Math.max(0, ipvTotalVendido - totalRefundToday).toFixed(2)};"Ingreso neto tras descontar reembolsos"`,
+      `"Ganancias Netas";${(ipvRows.reduce((total, item) => total + item.grossProfit, 0) - totalRefundToday).toFixed(2)};"Ventas menos costo de compra y devoluciones"`,
       `"Efectivo en Caja ($)";${(
         denominations.reduce((acc, d) => acc + d.value * d.count, 0) + (menoresAmount || 0)
       ).toFixed(2)};"Arqueo físico de gaveta"`,
@@ -461,65 +467,93 @@ export const SettingsView: React.FC = () => {
       description: 'Planilla IPV Diaria (.csv / Excel)',
     });
 
-    if (!result.canceled) {
-      showToast('Planilla Diaria Exportada', `Se generó el archivo con ${ipvRows.length} artículos del IPV.`, 'success');
+    if (result.canceled) return;
+    if (!result.ok) {
+      showToast('Error al exportar planilla', result.error || 'No se pudo guardar el archivo.', 'error');
+      return;
     }
+    showToast('Planilla Diaria Exportada', `Se generó el archivo con ${ipvRows.length} artículos del IPV.`, 'success');
   };
 
-  // Reporte 2: Consolidado Contable y Fiscal Mensual
-  const handleExportFiscalSummary = async () => {
+  // Reporte 2: Resumen mensual de ventas y devoluciones
+  const handleExportMonthlySummary = async () => {
     const now = new Date();
     const monthName = now.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
     const pad = (n: number) => String(n).padStart(2, '0');
-    const fileCode = `${now.getFullYear()}_${pad(now.getMonth() + 1)}`;
     const currentYearMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
-
-    const totalEfectivo = sales.reduce((acc, s) => acc + (s.efectivoAmount || 0), 0);
-    const totalTransf = sales.reduce((acc, s) => acc + (s.transferenciaAmount || 0), 0);
-    const totalVentasReal = sales.reduce((acc, s) => acc + (s.total || 0), 0);
-
-    const devolucionesMonth = returns.filter((r) => r.date && r.date.startsWith(currentYearMonth));
-    const monthReturns = devolucionesMonth.length > 0 ? devolucionesMonth : returns;
+    const monthSales = sales.filter(
+      (sale) => sale.date?.startsWith(currentYearMonth) && !(sale as any).voided
+    );
+    const monthReturns = returns.filter((r) => r.date?.startsWith(currentYearMonth));
+    const totalVentasReal = monthSales.reduce((acc, s) => acc + (s.total || 0), 0);
     const totalRefundsMonth = monthReturns.reduce((acc, r) => acc + (r.totalRefund || 0), 0);
     const ventasNetasMonth = Math.max(0, totalVentasReal - totalRefundsMonth);
-    const baseImponibleNeta = ventasNetasMonth * 0.909;
-    const ivaEstimadoNeto = ventasNetasMonth * 0.091;
+    const costOfGoodsMonth = monthSales.reduce(
+      (total, sale) => total + sale.items.reduce((sum, item) => sum + (Number(item.purchasePrice) || 0) * item.quantity, 0),
+      0
+    );
+    const netProfitMonth = ventasNetasMonth - costOfGoodsMonth;
+    const returnedUnits = monthReturns.reduce(
+      (acc, r) => acc + (r.items || []).reduce((sum, item) => sum + (item.quantity || 1), 0),
+      0
+    );
+    const soldProducts = new Map<string, { code: string; name: string; unitPrice: number; quantity: number; subtotal: number; costOfGoods: number }>();
+    monthSales.forEach((sale) => {
+      sale.items.forEach((item) => {
+        const key = item.productId || item.code;
+        const product = soldProducts.get(key);
+        if (product) {
+          product.quantity += item.quantity;
+          product.subtotal += item.subtotal;
+          product.unitPrice = product.subtotal / product.quantity;
+          product.costOfGoods += (Number(item.purchasePrice) || 0) * item.quantity;
+        } else {
+          soldProducts.set(key, {
+            code: item.code,
+            name: item.name,
+            unitPrice: item.unitPrice,
+            quantity: item.quantity,
+            subtotal: item.subtotal,
+            costOfGoods: (Number(item.purchasePrice) || 0) * item.quantity,
+          });
+        }
+      });
+    });
 
     const sections = [
-      `"REPORTE OFICIAL DE CONTABILIDAD FISCAL Y VENTAS - INFORME MENSUAL"`,
-      `"Periodo Fiscal: ${monthName.toUpperCase()}"`,
+      `"RESUMEN MENSUAL DE VENTAS Y DEVOLUCIONES"`,
+      `"Periodo: ${monthName.toUpperCase()}"`,
       `"Fecha de Generación: ${now.toLocaleDateString('es-ES')} ${now.toLocaleTimeString('es-CU')}"`,
       `""`,
-      `"1. RESUMEN TRIBUTARIO Y VENTAS CONSOLIDADAS DEL MES"`,
+      `"1. RESUMEN DEL MES"`,
       `"Concepto";"Monto ($)";"Detalle / Observaciones"`,
-      `"Ventas Brutas Totales";${totalVentasReal.toFixed(2)};"Facturación bruta acumulada del mes"`,
-      `"Total Devoluciones / Reembolsos del Mes";-${totalRefundsMonth.toFixed(2)};"${monthReturns.length} devoluciones procesadas"`,
-      `"Ventas Netas Realizadas del Mes";${ventasNetasMonth.toFixed(2)};"Ingreso fiscal neto tras descontar devoluciones"`,
-      `"Base Imponible Neta de Operaciones";${baseImponibleNeta.toFixed(2)};"Base imponible estimada (90.9%)"`,
-      `"Impuesto / IVA Estimado Neto";${ivaEstimadoNeto.toFixed(2)};"Estimación tributaria (9.1%)"`,
-      `"Recaudación Bruta en Efectivo";${totalEfectivo.toFixed(2)};"Cobros totales en efectivo"`,
-      `"Recaudación Bruta por Transferencias";${totalTransf.toFixed(2)};"Cobros totales por canales digitales"`,
-      `"Total Operaciones de Venta Registradas";${sales.length};"Tickets de venta emitidos"`,
-      `"Total Operaciones de Devolución";${monthReturns.length};"Devoluciones procesadas en el periodo"`,
+      `"Ventas Totales";${totalVentasReal.toFixed(2)};"${monthSales.length} ventas registradas"`,
+      `"Devoluciones / Reembolsos";-${totalRefundsMonth.toFixed(2)};"${monthReturns.length} devoluciones, ${returnedUnits} unidades devueltas"`,
+      `"Ventas Netas";${ventasNetasMonth.toFixed(2)};"Ventas menos reembolsos"`,
+      `"Inversión Total del Mes";${costOfGoodsMonth.toFixed(2)};"Suma del precio de compra por las unidades vendidas durante el mes"`,
+      `"Ganancias Netas";${netProfitMonth.toFixed(2)};"Ventas netas menos costo de compra"`,
       `""`,
-      `"2. DESGLOSE CONSOLIDADO DE ARTÍCULOS VENDIDOS"`,
-      `"Código";"Descripción";"Precio Unit.";"Unidades Vendidas";"Subtotal ($)"`,
-      ...ipvRows
-        .filter((r) => r.vendido > 0)
-        .map((r) => `"${r.code}";"${r.name.replace(/"/g, '""')}";${r.price.toFixed(2)};${r.vendido};${r.importe.toFixed(2)}`),
+      `"2. ARTÍCULOS VENDIDOS EN EL MES"`,
+      `"Código";"Descripción";"Precio Promedio Unit.";"Unidades Vendidas";"Subtotal ($)";"Costo de Compra ($)";"Ganancia Bruta ($)"`,
+      ...Array.from(soldProducts.values()).map(
+        (item) => `"${item.code}";"${item.name.replace(/"/g, '""')}";${item.unitPrice.toFixed(2)};${item.quantity};${item.subtotal.toFixed(2)};${item.costOfGoods.toFixed(2)};${(item.subtotal - item.costOfGoods).toFixed(2)}`
+      ),
     ];
 
     const csvContent = '\uFEFF' + sections.join('\r\n');
     const result = await saveFileWithPicker(csvContent, {
-      suggestedName: `Contabilidad_Fiscal_Mensual_${fileCode}.csv`,
+      suggestedName: `Resumen_Mensual_Ventas_${currentYearMonth}.csv`,
       mimeType: 'text/csv;charset=utf-8;',
       extension: 'csv',
-      description: 'Informe Fiscal Mensual (.csv / Excel)',
+      description: 'Resumen mensual de ventas (.csv / Excel)',
     });
 
-    if (!result.canceled) {
-      showToast('Informe Mensual Exportado', `Se descargó el consolidado contable de ${monthName}.`, 'success');
+    if (result.canceled) return;
+    if (!result.ok) {
+      showToast('Error al exportar informe', result.error || 'No se pudo guardar el archivo.', 'error');
+      return;
     }
+    showToast('Resumen Mensual Exportado', `Se descargó el resumen de ventas y devoluciones de ${monthName}.`, 'success');
   };
 
   // Reporte 3: Catálogo Completo de Productos y Existencias de Almacén
@@ -579,9 +613,12 @@ export const SettingsView: React.FC = () => {
       description: 'Catálogo de Productos (.csv / Excel)',
     });
 
-    if (!result.canceled) {
-      showToast('Catálogo Exportado', `Se exportaron ${products.length} productos con existencias.`, 'success');
+    if (result.canceled) return;
+    if (!result.ok) {
+      showToast('Error al exportar catálogo', result.error || 'No se pudo guardar el archivo.', 'error');
+      return;
     }
+    showToast('Catálogo Exportado', `Se exportaron ${products.length} productos con existencias.`, 'success');
   };
 
   // Reporte 4: Historial de Ventas y Tickets de Facturación
@@ -641,9 +678,12 @@ export const SettingsView: React.FC = () => {
       description: 'Historial de Ventas (.csv / Excel)',
     });
 
-    if (!result.canceled) {
-      showToast('Historial Exportado', `Se descargaron ${sales.length} tickets de venta.`, 'success');
+    if (result.canceled) return;
+    if (!result.ok) {
+      showToast('Error al exportar historial', result.error || 'No se pudo guardar el archivo.', 'error');
+      return;
     }
+    showToast('Historial Exportado', `Se descargaron ${sales.length} tickets de venta.`, 'success');
   };
 
   // Reporte 5: Registro de Devoluciones y Mermas
@@ -704,9 +744,12 @@ export const SettingsView: React.FC = () => {
       description: 'Registro de Devoluciones (.csv / Excel)',
     });
 
-    if (!result.canceled) {
-      showToast('Devoluciones Exportadas', `Se descargaron ${returns.length} registros de devolución.`, 'success');
+    if (result.canceled) return;
+    if (!result.ok) {
+      showToast('Error al exportar devoluciones', result.error || 'No se pudo guardar el archivo.', 'error');
+      return;
     }
+    showToast('Devoluciones Exportadas', `Se descargaron ${returns.length} registros de devolución.`, 'success');
   };
 
   return (
@@ -854,7 +897,7 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
 
-            {/* Report 2: Contabilidad Fiscal Mensual */}
+            {/* Report 2: Resumen mensual */}
             <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform group">
               <div className="flex flex-col gap-3">
                 <div className="w-13 h-13 rounded-2xl bg-surface neo-inset flex items-center justify-center text-tertiary group-hover:scale-105 transition-transform">
@@ -865,10 +908,10 @@ export const SettingsView: React.FC = () => {
                     Control Mensual
                   </span>
                   <h3 className="font-bold text-base text-on-surface leading-snug">
-                    Resumen Contable Mensual
+                    Resumen Mensual
                   </h3>
                   <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
-                    Consolidado mensual con facturación bruta acumulada, devoluciones del mes, ventas netas y demas indicadores fiscales, incluyendo desglose de artículos vendidos.
+                    Ventas totales, devoluciones, ventas netas y desglose de artículos vendidos durante el mes.
                   </p>
                 </div>
               </div>
@@ -876,11 +919,11 @@ export const SettingsView: React.FC = () => {
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
                   <span>Formato: .CSV / Excel</span>
-                  <span>{sales.length} tickets mes</span>
+                  <span>{sales.filter((sale) => sale.date?.startsWith((todayDate || new Date().toISOString()).slice(0, 7)) && !(sale as any).voided).length} tickets mes</span>
                 </div>
                 <button
                   type="button"
-                  onClick={handleExportFiscalSummary}
+                  onClick={handleExportMonthlySummary}
                   className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-tertiary text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                 >
                   <span className="material-symbols-outlined text-[17px]">download_for_offline</span>

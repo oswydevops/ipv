@@ -88,6 +88,7 @@ export function createFallbackApi(): IpvApi {
           category: input.category || 'General',
           um: input.um || 'Unidad',
           price: Number(input.price) || 0,
+          purchasePrice: Number(input.purchasePrice) || 0,
           stock: Number(input.stock) || 0,
           minStock: Number(input.minStock) || 0,
           almacenStock: Number(input.almacenStock) || 0,
@@ -106,6 +107,12 @@ export function createFallbackApi(): IpvApi {
         const idx = products.findIndex((p) => p.id === id);
         if (idx === -1) throw new Error('Producto no encontrado');
         const updated = { ...products[idx], ...patch };
+        if (patch.purchasePrice !== undefined && (!Number.isFinite(Number(patch.purchasePrice)) || Number(patch.purchasePrice) < 0)) {
+          throw new Error('Precio de compra inválido.');
+        }
+        if (patch.price !== undefined && (!Number.isFinite(Number(patch.price)) || Number(patch.price) < 0)) {
+          throw new Error('Precio de venta inválido.');
+        }
         if (patch.almacenStock !== undefined) {
           updated.almacenStock = Number(patch.almacenStock) || 0;
         }
@@ -186,6 +193,7 @@ export function createFallbackApi(): IpvApi {
             name: prod.name,
             um: prod.um,
             unitPrice,
+            purchasePrice: Number(prod.purchasePrice) || 0,
             quantity: item.quantity,
             subtotal,
           };
@@ -283,10 +291,14 @@ export function createFallbackApi(): IpvApi {
 
         const rows = products.map((prod, idx) => {
           let vendido = 0;
+          let importe = 0;
+          let costOfGoods = 0;
           for (const s of daySales) {
             for (const it of s.items) {
               if (it.productId === prod.id) {
                 vendido += it.quantity;
+                importe += it.subtotal;
+                costOfGoods += (Number(it.purchasePrice) || 0) * it.quantity;
               }
             }
           }
@@ -294,7 +306,6 @@ export function createFallbackApi(): IpvApi {
           const entrada = 0;
           const ajuste = 0;
           const saldoIni = saldoFinal + vendido - entrada - ajuste;
-          const importe = vendido * prod.price;
 
           const rowStatus: 'normal' | 'low' | 'zero' =
             saldoFinal === 0 ? 'zero' : saldoFinal <= prod.minStock ? 'low' : 'normal';
@@ -314,6 +325,8 @@ export function createFallbackApi(): IpvApi {
             ajuste,
             saldoFinal,
             price: prod.price,
+            costOfGoods,
+            grossProfit: importe - costOfGoods,
             importe,
             status: rowStatus,
           };
@@ -558,7 +571,7 @@ export function createFallbackApi(): IpvApi {
 
         let mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
 
-        for (const it of (input.items || []).filter((item: any) => item.condition === 'mal_estado')) {
+        for (const it of (input.items || [])) {
           mermas.push({
             id: `merma-${id}-${mermas.length + 1}`,
             returnId: id,
@@ -570,7 +583,10 @@ export function createFallbackApi(): IpvApi {
             um: it.um,
             quantity: Number(it.quantity) || 1,
             originalUnitPrice: Number(it.unitPrice) || 0,
-            damagedReason: it.damagedReason?.trim() || input.reason || 'Devolución de cliente',
+            damagedReason: it.condition === 'buen_estado'
+              ? 'Artículo en buen estado'
+              : input.reason || 'Devolución de cliente',
+            condition: it.condition || 'mal_estado',
             status: 'en_almacen_merma',
           });
         }
@@ -612,7 +628,20 @@ export function createFallbackApi(): IpvApi {
 
     mermas: {
       async list() {
-        return getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+        return getStored<any[]>(STORAGE_KEYS.MERMAS, []).map((item) => {
+          if (item.condition) return item;
+          const record = returns.find((entry) => entry.id === item.returnId);
+          const returnedItem = record?.items?.find((entry: any) =>
+            entry.productId === item.productId &&
+            entry.code === item.code &&
+            entry.name === item.name
+          );
+          return {
+            ...item,
+            condition: returnedItem?.condition ||
+              (item.damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado'),
+          };
+        });
       },
 
       async venderConDescuento(mermaId: string, newPrice: number, note?: string) {
@@ -621,6 +650,8 @@ export function createFallbackApi(): IpvApi {
         if (itemIndex === -1) throw new Error('Artículo de merma no encontrado');
         const item = mermas[itemIndex];
         if (item.status !== 'en_almacen_merma') throw new Error('Este artículo de merma ya fue procesado');
+        const condition = item.condition || (item.damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado');
+        if (condition !== 'mal_estado') throw new Error('Solo los artículos en mal estado pueden venderse con descuento como defectuosos.');
         if (!Number.isFinite(Number(newPrice)) || Number(newPrice) <= 0 || Number(newPrice) >= Number(item.originalUnitPrice)) {
           throw new Error('El precio debe ser mayor que cero y menor que el precio original.');
         }
@@ -656,6 +687,8 @@ export function createFallbackApi(): IpvApi {
         const item = mermas.find((m) => m.id === mermaId);
         if (!item) throw new Error('Artículo de merma no encontrado');
         if (item.status !== 'en_almacen_merma') throw new Error('Este artículo de merma ya fue procesado');
+        const condition = item.condition || (item.damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado');
+        if (condition !== 'buen_estado') throw new Error('Solo los artículos en buen estado pueden enviarse al almacén central.');
         const product = products.find((p) => p.id === item.productId);
         if (!product) throw new Error('No se encontró el producto original.');
         product.almacenStock = (Number(product.almacenStock) || 0) + Number(item.quantity);
@@ -667,11 +700,32 @@ export function createFallbackApi(): IpvApi {
         return item;
       },
 
+      async enviarAStock(mermaId: string, note?: string) {
+        const mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
+        const item = mermas.find((m) => m.id === mermaId);
+        if (!item) throw new Error('Artículo de merma no encontrado');
+        if (item.status !== 'en_almacen_merma') throw new Error('Este artículo de merma ya fue procesado');
+        const condition = item.condition || (item.damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado');
+        if (condition !== 'buen_estado') throw new Error('Solo los artículos en buen estado pueden volver al stock.');
+        const product = products.find((p) => p.id === item.productId);
+        if (!product) throw new Error('No se encontró el producto original.');
+        product.stock += Number(item.quantity);
+        product.status = product.stock === 0 ? 'out' : product.stock <= product.minStock ? 'low' : 'ok';
+        item.status = 'reintegrado_a_stock';
+        item.resolvedAt = getTodayStr();
+        item.resolutionNote = note || 'Reintegrado al stock disponible.';
+        setStored(STORAGE_KEYS.MERMAS, mermas);
+        persist();
+        return item;
+      },
+
       async darDeBaja(mermaId: string, note?: string) {
         const mermas = getStored<any[]>(STORAGE_KEYS.MERMAS, []);
         const item = mermas.find((m) => m.id === mermaId);
         if (!item) throw new Error('Artículo de merma no encontrado');
         if (item.status !== 'en_almacen_merma') throw new Error('Este artículo de merma ya fue procesado');
+        const condition = item.condition || (item.damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado');
+        if (condition !== 'mal_estado') throw new Error('Solo los artículos en mal estado pueden darse de baja.');
         item.status = 'baja_definitiva';
         item.resolvedAt = getTodayStr();
         item.resolutionNote = note || 'Baja definitiva por daño o merma irreparable';
@@ -718,6 +772,13 @@ export function createFallbackApi(): IpvApi {
             throw new Error('No se puede revocar: no hay suficiente existencia en el almacén para devolver la cantidad.');
           }
           product.almacenStock = warehouseStock - Number(item.quantity);
+        } else if (item.status === 'reintegrado_a_stock') {
+          const product = products.find((entry) => entry.id === item.productId);
+          if (!product || product.stock < Number(item.quantity)) {
+            throw new Error('No se puede revocar: no hay suficiente existencia en stock para devolver la cantidad.');
+          }
+          product.stock -= Number(item.quantity);
+          product.status = product.stock === 0 ? 'out' : product.stock <= product.minStock ? 'low' : 'ok';
         }
 
         item.status = 'en_almacen_merma';

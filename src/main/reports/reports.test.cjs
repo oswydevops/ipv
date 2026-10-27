@@ -15,6 +15,9 @@ const fakeDb = {
   prepare(query) {
     return {
       get() {
+        if (query.includes('SUM(si.unit_cost * si.quantity)')) {
+          return { costOfGoods: 120 };
+        }
         if (query.includes('voided_at IS NOT NULL')) {
           return { voidedCount: 1, voidedTotal: 15, voidedCash: 0, voidedTransfer: 15 };
         }
@@ -105,6 +108,8 @@ async function run() {
   assert.strictEqual(resumen.totales.efectivoContado, 320);
   assert.strictEqual(resumen.totales.transferenciaContada, 100);
   assert.strictEqual(resumen.totales.totalDevoluciones, 60);
+  assert.strictEqual(resumen.totales.costoArticulosVendidos, 120);
+  assert.strictEqual(resumen.totales.gananciasNetas, 320);
   assert.strictEqual(resumen.devoluciones.length, 1);
   assert.strictEqual(resumen.ventasAnuladas.length, 1);
 
@@ -121,6 +126,7 @@ async function run() {
     assert.ok(summaryRows.some((row) => row.includes('Efectivo contado en gaveta') && row.includes(320)));
     assert.ok(summaryRows.some((row) => row.includes('Transferencias contadas') && row.includes(100)));
     assert.ok(summaryRows.some((row) => row.includes('Total devuelto / anulado') && row.includes(60)));
+    assert.ok(summaryRows.some((row) => row.includes('Ganancias Netas del Día') && row.includes(320)));
     assert.ok(summaryRows.some((row) => row.includes('Billete 100 CUP')));
 
     const returnSheet = workbook.getWorksheet('Devoluciones');
@@ -181,11 +187,13 @@ async function run() {
     try {
       let nextSaveResult = { canceled: false, filePath: selectedPath };
       let saveDialogOptions;
+      let saveDialogCount = 0;
       const handlers = buildHandlers(
         { today: () => fecha },
         {
           dialog: {
             async showSaveDialog(_window, options) {
+              saveDialogCount += 1;
               saveDialogOptions = options;
               return nextSaveResult;
             },
@@ -221,6 +229,20 @@ async function run() {
       assert.strictEqual(exported.excelPath, selectedPath);
       assert.ok(fs.existsSync(selectedPath));
       assert.ok(saveDialogOptions.defaultPath.endsWith(`cierre-${fecha}.xlsx`));
+
+      const fileExportPath = path.join(directory, 'exportacion-elegida.csv');
+      nextSaveResult = { canceled: false, filePath: fileExportPath };
+      const dialogCountBeforeFileExport = saveDialogCount;
+      const exportedFile = await handlers['files:save']({
+        contentBase64: Buffer.from('contenido exportado', 'utf8').toString('base64'),
+        suggestedName: 'reporte.csv',
+        extension: 'csv',
+        description: 'Reporte CSV',
+      });
+      assert.deepStrictEqual(exportedFile, { canceled: false, path: fileExportPath });
+      assert.strictEqual(fs.readFileSync(fileExportPath, 'utf8'), 'contenido exportado');
+      assert.strictEqual(saveDialogCount, dialogCountBeforeFileExport + 1);
+      assert.strictEqual(saveDialogOptions.defaultPath, 'reporte.csv');
 
       nextSaveResult = { canceled: true, filePath: undefined };
       const canceled = await handlers['reportes:exportar-cierre-excel'](fecha);

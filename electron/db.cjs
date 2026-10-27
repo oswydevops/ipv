@@ -346,6 +346,112 @@ const MIGRATIONS = [
       CREATE UNIQUE INDEX ux_products_code_active ON products(code) WHERE archived = 0;
     `);
   },
+  (db) => {
+    const mermaTableExists = Boolean(db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'merma_items'"
+    ).get());
+    if (mermaTableExists) {
+      db.exec(`
+        ALTER TABLE merma_items RENAME TO merma_items_previous;
+        CREATE TABLE merma_items (
+          id TEXT PRIMARY KEY,
+          return_id TEXT NOT NULL,
+          return_number TEXT NOT NULL,
+          date TEXT NOT NULL,
+          product_id TEXT NOT NULL,
+          code TEXT NOT NULL,
+          name TEXT NOT NULL,
+          um TEXT NOT NULL,
+          quantity REAL NOT NULL CHECK (quantity > 0),
+          original_unit_price REAL NOT NULL DEFAULT 0,
+          damaged_reason TEXT NOT NULL,
+          condition TEXT NOT NULL DEFAULT 'mal_estado' CHECK (condition IN ('mal_estado','buen_estado')),
+          status TEXT NOT NULL CHECK (status IN ('en_almacen_merma','reincorporado_con_precio','devuelto_a_almacen','reintegrado_a_stock','baja_definitiva')),
+          discounted_price REAL,
+          defective_product_id TEXT,
+          resolved_at TEXT,
+          resolution_note TEXT
+        );
+
+        INSERT INTO merma_items (
+          id, return_id, return_number, date, product_id, code, name, um, quantity,
+          original_unit_price, damaged_reason, condition, status, discounted_price,
+          defective_product_id, resolved_at, resolution_note
+        )
+        SELECT
+          id, return_id, return_number, date, product_id, code, name, um, quantity,
+          original_unit_price,
+          CASE WHEN damaged_reason = 'Artículo en buen estado'
+            THEN 'Artículo en buen estado'
+            ELSE COALESCE(
+              (SELECT reason FROM returns WHERE returns.id = merma_items_previous.return_id),
+              damaged_reason
+            )
+          END,
+          CASE WHEN damaged_reason = 'Artículo en buen estado' THEN 'buen_estado' ELSE 'mal_estado' END,
+          status, discounted_price, defective_product_id, resolved_at, resolution_note
+        FROM merma_items_previous;
+
+        DROP TABLE merma_items_previous;
+      `);
+    } else {
+      db.exec(`
+        CREATE TABLE merma_items (
+          id TEXT PRIMARY KEY,
+          return_id TEXT NOT NULL,
+          return_number TEXT NOT NULL,
+          date TEXT NOT NULL,
+          product_id TEXT NOT NULL,
+          code TEXT NOT NULL,
+          name TEXT NOT NULL,
+          um TEXT NOT NULL,
+          quantity REAL NOT NULL CHECK (quantity > 0),
+          original_unit_price REAL NOT NULL DEFAULT 0,
+          damaged_reason TEXT NOT NULL,
+          condition TEXT NOT NULL DEFAULT 'mal_estado' CHECK (condition IN ('mal_estado','buen_estado')),
+          status TEXT NOT NULL CHECK (status IN ('en_almacen_merma','reincorporado_con_precio','devuelto_a_almacen','reintegrado_a_stock','baja_definitiva')),
+          discounted_price REAL,
+          defective_product_id TEXT,
+          resolved_at TEXT,
+          resolution_note TEXT
+        );
+      `);
+    }
+
+    db.exec(`
+      INSERT INTO merma_items (
+        id, return_id, return_number, date, product_id, code, name, um, quantity,
+        original_unit_price, damaged_reason, condition, status
+      )
+      SELECT
+        'merma-' || r.id || '-' || ri.id, r.id, r.return_number, r.date,
+        ri.product_id, ri.code, ri.name, ri.um, ri.quantity, ri.unit_price,
+        CASE WHEN ri.condition = 'buen_estado'
+          THEN 'Artículo en buen estado'
+          ELSE COALESCE(ri.damaged_reason, r.reason, 'Devolución de cliente')
+        END,
+        ri.condition, 'en_almacen_merma'
+      FROM return_items ri
+      JOIN returns r ON r.id = ri.return_id
+      WHERE ri.condition IN ('mal_estado', 'buen_estado')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM merma_items m
+          WHERE m.return_id = r.id
+            AND m.product_id = ri.product_id
+            AND m.code = ri.code
+            AND m.name = ri.name
+            AND m.quantity = ri.quantity
+            AND m.condition = ri.condition
+        );
+    `);
+  },
+  (db) => {
+    db.exec(`
+        ALTER TABLE products ADD COLUMN purchase_price REAL NOT NULL DEFAULT 0 CHECK (purchase_price >= 0);
+        ALTER TABLE sale_items ADD COLUMN unit_cost REAL NOT NULL DEFAULT 0 CHECK (unit_cost >= 0);
+    `);
+  },
 ];
 
 function migrate(db) {
@@ -385,6 +491,7 @@ const mapProduct = (r) => ({
   category: r.category,
   um: r.um,
   price: r.price,
+  purchasePrice: r.purchase_price || 0,
   stock: r.stock,
   minStock: r.min_stock,
   almacenStock: r.almacen_stock !== undefined ? r.almacen_stock : 0,
@@ -408,6 +515,7 @@ const mapMerma = (r) => ({
   quantity: r.quantity,
   originalUnitPrice: r.original_unit_price,
   damagedReason: r.damaged_reason,
+  condition: r.damaged_reason === 'Artículo en buen estado' ? 'buen_estado' : r.condition || 'mal_estado',
   status: r.status,
   discountedPrice: r.discounted_price === null ? undefined : r.discounted_price,
   defectiveProductId: r.defective_product_id || undefined,
@@ -516,9 +624,11 @@ function createRepo(db, {
     const name = String(input.name || '').trim();
     if (!name) throw new DomainError('INVALID', 'El producto necesita un nombre.');
     const price = input.price === undefined ? 0 : Number(input.price);
+    const purchasePrice = input.purchasePrice === undefined ? 0 : Number(input.purchasePrice);
     const stock = input.stock === undefined ? 0 : Number(input.stock);
     const minStock = input.minStock === undefined ? 0 : Number(input.minStock);
     if (!isNum(price) || price < 0) throw new DomainError('INVALID', 'Precio inválido.');
+    if (!isNum(purchasePrice) || purchasePrice < 0) throw new DomainError('INVALID', 'Precio de compra inválido.');
     if (!isNum(stock) || stock < 0) throw new DomainError('INVALID', 'Stock inicial inválido.');
     if (!isNum(minStock) || minStock < 0) throw new DomainError('INVALID', 'Stock mínimo inválido.');
 
@@ -531,14 +641,14 @@ function createRepo(db, {
 
     const id = `prod-${crypto.randomUUID()}`;
     db.prepare(
-      `INSERT INTO products (id, code, name, detail, category, um, price, stock, min_stock, almacen_stock, provider, location, rotation, created_at)
-       VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?)`
+      `INSERT INTO products (id, code, name, detail, category, um, price, purchase_price, stock, min_stock, almacen_stock, provider, location, rotation, created_at)
+       VALUES (?,?,?,?,?,?,?, ?,0,?,?,?,?,?,?)`
     ).run(
       id, code, name,
       String(input.detail || ''),
       String(input.category || 'General'),
       String(input.um || 'Unidad'),
-      round2(price), minStock, almacenStock,
+      round2(price), round2(purchasePrice), minStock, almacenStock,
       input.provider || null, input.location || null, input.rotation || null,
       nowStamp()
     );
@@ -557,6 +667,7 @@ function createRepo(db, {
       category: patch.category !== undefined ? String(patch.category) : cur.category,
       um: patch.um !== undefined ? String(patch.um) : cur.um,
       price: patch.price !== undefined ? Number(patch.price) : cur.price,
+      purchase_price: patch.purchasePrice !== undefined ? Number(patch.purchasePrice) : cur.purchase_price,
       min_stock: patch.minStock !== undefined ? Number(patch.minStock) : cur.min_stock,
       provider: patch.provider !== undefined ? patch.provider || null : cur.provider,
       location: patch.location !== undefined ? patch.location || null : cur.location,
@@ -564,6 +675,7 @@ function createRepo(db, {
     };
     if (!next.name || !next.code) throw new DomainError('INVALID', 'Nombre y código son obligatorios.');
     if (!isNum(next.price) || next.price < 0) throw new DomainError('INVALID', 'Precio inválido.');
+    if (!isNum(next.purchase_price) || next.purchase_price < 0) throw new DomainError('INVALID', 'Precio de compra inválido.');
     if (!isNum(next.min_stock) || next.min_stock < 0) throw new DomainError('INVALID', 'Stock mínimo inválido.');
     if (
       next.code.toLowerCase() !== cur.code.toLowerCase() &&
@@ -572,9 +684,9 @@ function createRepo(db, {
       throw new DomainError('CODE_EXISTS', `Ya existe un producto con el código ${next.code}.`);
     }
     db.prepare(
-      `UPDATE products SET code=@code, name=@name, detail=@detail, category=@category, um=@um, price=@price,
+      `UPDATE products SET code=@code, name=@name, detail=@detail, category=@category, um=@um, price=@price, purchase_price=@purchase_price,
          min_stock=@min_stock, provider=@provider, location=@location, rotation=@rotation WHERE id=@id`
-    ).run({ ...next, price: round2(next.price), id });
+    ).run({ ...next, price: round2(next.price), purchase_price: round2(next.purchase_price), id });
 
     // El stock solo cambia con un movimiento auditable.
     if (patch.stock !== undefined) {
@@ -657,6 +769,7 @@ function createRepo(db, {
       items: items.map((it) => ({
         productId: it.product_id, code: it.code, name: it.name, um: it.um,
         unitPrice: it.unit_price, quantity: it.quantity, subtotal: it.subtotal,
+        purchasePrice: it.unit_cost,
       })),
       total: s.total,
       paymentMethod: s.payment_method,
@@ -702,7 +815,13 @@ function createRepo(db, {
       }
       const unit = isNum(Number(w.unitPrice)) && w.unitPrice !== undefined && w.unitPrice !== null ? Number(w.unitPrice) : p.price;
       if (unit < 0) throw new DomainError('INVALID', 'Precio unitario inválido.');
-      lines.push({ p, qty: w.qty, unit: round2(unit), subtotal: round2(w.qty * unit) });
+      lines.push({
+        p,
+        qty: w.qty,
+        unit: round2(unit),
+        purchasePrice: round2(Number(p.purchase_price || 0)),
+        subtotal: round2(w.qty * unit),
+      });
     }
     const total = round2(lines.reduce((a, l) => a + l.subtotal, 0));
 
@@ -734,10 +853,10 @@ function createRepo(db, {
       input.note || null
     );
     const insItem = db.prepare(
-      'INSERT INTO sale_items (sale_id, product_id, code, name, um, unit_price, quantity, subtotal) VALUES (?,?,?,?,?,?,?,?)'
+      'INSERT INTO sale_items (sale_id, product_id, code, name, um, unit_price, quantity, subtotal, unit_cost) VALUES (?,?,?,?,?,?,?,?,?)'
     );
     for (const l of lines) {
-      insItem.run(saleId, l.p.id, l.p.code, l.p.name, l.p.um, l.unit, l.qty, l.subtotal);
+      insItem.run(saleId, l.p.id, l.p.code, l.p.name, l.p.um, l.unit, l.qty, l.subtotal, l.purchasePrice);
       move(l.p.id, 'venta', -l.qty, { saleId });
       db.prepare('UPDATE products SET last_exit = ? WHERE id = ?').run(`Hoy ${localTime(d)}`, l.p.id);
     }
@@ -814,12 +933,13 @@ function createRepo(db, {
     const importes = new Map(
       db
         .prepare(
-          `SELECT si.product_id AS pid, SUM(si.subtotal) AS importe
+          `SELECT si.product_id AS pid, SUM(si.subtotal) AS importe,
+                  SUM(si.unit_cost * si.quantity) AS cost_of_goods
              FROM sale_items si JOIN sales s ON s.id = si.sale_id
             WHERE s.date = ? AND s.voided_at IS NULL GROUP BY si.product_id`
         )
         .all(date)
-        .map((r) => [r.pid, r.importe])
+        .map((r) => [r.pid, { importe: r.importe, costOfGoods: r.cost_of_goods }])
     );
 
     let totalVendido = 0;
@@ -827,7 +947,9 @@ function createRepo(db, {
     const out = rows.map((r, i) => {
       const saldoFinal = round2(r.stock - r.delta_after);
       const saldoIni = round2(saldoFinal - r.entrada + r.vendido - r.ajuste);
-      const importe = round2(importes.get(r.id) || 0);
+      const rowSales = importes.get(r.id) || { importe: 0, costOfGoods: 0 };
+      const importe = round2(rowSales.importe);
+      const costOfGoods = round2(rowSales.costOfGoods);
       totalVendido += importe;
       totalUnidades += r.vendido;
       const lowAt = r.min_stock > 0 ? r.min_stock : 5;
@@ -846,6 +968,8 @@ function createRepo(db, {
         ajuste: round2(r.ajuste),
         saldoFinal,
         price: r.price,
+        costOfGoods,
+        grossProfit: round2(importe - costOfGoods),
         importe,
         status: saldoFinal <= 0 ? 'zero' : saldoFinal <= lowAt ? 'low' : 'normal',
       };
@@ -944,6 +1068,37 @@ function createRepo(db, {
       const ins = db.prepare(`INSERT INTO ${t} (${cols.join(',')}) VALUES (${cols.map((c) => '@' + c).join(',')})`);
       for (const r of rows) ins.run(r);
     }
+    db.exec(`
+      UPDATE merma_items
+      SET condition = 'buen_estado'
+      WHERE damaged_reason = 'Artículo en buen estado';
+
+      INSERT INTO merma_items (
+        id, return_id, return_number, date, product_id, code, name, um, quantity,
+        original_unit_price, damaged_reason, condition, status
+      )
+      SELECT
+        'merma-' || r.id || '-' || ri.id, r.id, r.return_number, r.date,
+        ri.product_id, ri.code, ri.name, ri.um, ri.quantity, ri.unit_price,
+        CASE WHEN ri.condition = 'buen_estado'
+          THEN 'Artículo en buen estado'
+          ELSE COALESCE(ri.damaged_reason, r.reason, 'Devolución de cliente')
+        END,
+        ri.condition, 'en_almacen_merma'
+      FROM return_items ri
+      JOIN returns r ON r.id = ri.return_id
+      WHERE ri.condition IN ('mal_estado', 'buen_estado')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM merma_items m
+          WHERE m.return_id = r.id
+            AND m.product_id = ri.product_id
+            AND m.code = ri.code
+            AND m.name = ri.name
+            AND m.quantity = ri.quantity
+            AND m.condition = ri.condition
+        );
+    `);
     return { restored: Object.fromEntries(TABLES.map((t) => [t, data.tables[t].length])) };
   });
 
@@ -989,44 +1144,26 @@ function createRepo(db, {
       const q = Number(it.quantity) || 1;
       const uPrice = Number(it.unitPrice) || 0;
       const refAmt = Number(it.refundAmount) || (q * uPrice);
-      const isDamaged = it.condition === 'mal_estado';
-      const reintegrate = it.reintegrateToStock && !isDamaged ? 1 : 0;
-      insItem.run(
-        id,
-        it.productId,
-        it.code || '',
-        it.name || '',
-        it.um || 'Unidad',
-        q,
-        uPrice,
-        refAmt,
-        it.condition || 'mal_estado',
-        it.damagedReason || null,
-        reintegrate
-      );
-      if (reintegrate) {
-        move(it.productId, 'entrada', q, { note: `Reingreso por devolución ${returnNumber}` });
-      }
-      if (isDamaged) {
-        db.prepare(`
-          INSERT INTO merma_items (
-            id, return_id, return_number, date, product_id, code, name, um, quantity,
-            original_unit_price, damaged_reason, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'en_almacen_merma')
-        `).run(
-          `merma-${id}-${itemIndex}`,
-          id,
-          returnNumber,
-          dateStr,
-          it.productId,
-          it.code || '',
-          it.name || '',
-          it.um || 'Unidad',
-          q,
-          uPrice,
-          it.damagedReason || input.reason || 'Devolución de cliente'
-        );
-      }
+// Nada vuelve al stock automáticamente: toda devolución pasa por mermas
+// y se decide allí (vender rebajado / enviar a almacén / baja).
+insItem.run(
+  id, it.productId, it.code || '', it.name || '', it.um || 'Unidad',
+  q, uPrice, refAmt, it.condition || 'mal_estado',
+  it.condition === 'buen_estado' ? null : input.reason || it.damagedReason || null, 0
+);
+db.prepare(`
+  INSERT INTO merma_items (
+    id, return_id, return_number, date, product_id, code, name, um, quantity,
+    original_unit_price, damaged_reason, condition, status
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'en_almacen_merma')
+`).run(
+  `merma-${id}-${itemIndex}`, id, returnNumber, dateStr,
+  it.productId, it.code || '', it.name || '', it.um || 'Unidad', q, uPrice,
+  it.condition === 'buen_estado'
+    ? 'Artículo en buen estado'
+    : it.damagedReason || input.reason || 'Devolución de cliente',
+  it.condition || 'mal_estado'
+);
     }
 
     return loadReturn(id);
@@ -1077,6 +1214,9 @@ function createRepo(db, {
     const item = db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId);
     if (!item) throw new DomainError('NOT_FOUND', 'Artículo de merma no encontrado.');
     if (item.status !== 'en_almacen_merma') throw new DomainError('INVALID', 'Este artículo de merma ya fue procesado.');
+    if (item.condition !== 'mal_estado') {
+      throw new DomainError('INVALID', 'Solo los artículos en mal estado pueden venderse con descuento como defectuosos.');
+    }
     const price = Number(newPrice);
     if (!isNum(price) || price <= 0 || price >= Number(item.original_unit_price)) {
       throw new DomainError('INVALID', 'El precio debe ser mayor que cero y menor que el precio original.');
@@ -1111,6 +1251,9 @@ function createRepo(db, {
     const item = db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId);
     if (!item) throw new DomainError('NOT_FOUND', 'Artículo de merma no encontrado.');
     if (item.status !== 'en_almacen_merma') throw new DomainError('INVALID', 'Este artículo de merma ya fue procesado.');
+    if (item.condition !== 'buen_estado') {
+      throw new DomainError('INVALID', 'Solo los artículos en buen estado pueden enviarse al almacén central.');
+    }
     const product = q.productById.get(item.product_id);
     if (!product || product.archived) throw new DomainError('NOT_FOUND', 'No se encontró el producto original.');
     db.prepare('UPDATE products SET almacen_stock = almacen_stock + ? WHERE id = ?').run(item.quantity, item.product_id);
@@ -1126,10 +1269,33 @@ function createRepo(db, {
     return mapMerma(db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId));
   });
 
+  const enviarMermaAStock = db.transaction((mermaId, note) => {
+    const item = db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId);
+    if (!item) throw new DomainError('NOT_FOUND', 'Artículo de merma no encontrado.');
+    if (item.status !== 'en_almacen_merma') throw new DomainError('INVALID', 'Este artículo de merma ya fue procesado.');
+    if (item.condition !== 'buen_estado') {
+      throw new DomainError('INVALID', 'Solo los artículos en buen estado pueden volver al stock.');
+    }
+    const product = q.productById.get(item.product_id);
+    if (!product || product.archived) throw new DomainError('NOT_FOUND', 'No se encontró el producto original.');
+    move(item.product_id, 'entrada', item.quantity, {
+      note: note || `Devolución ${item.return_number}: reincorporado al stock`,
+    });
+    db.prepare(`
+      UPDATE merma_items
+      SET status = 'reintegrado_a_stock', resolved_at = ?, resolution_note = ?
+      WHERE id = ?
+    `).run(today(), note || 'Reintegrado al stock disponible.', mermaId);
+    return mapMerma(db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId));
+  });
+
   const darDeBajaMerma = db.transaction((mermaId, note) => {
     const item = db.prepare('SELECT * FROM merma_items WHERE id = ?').get(mermaId);
     if (!item) throw new DomainError('NOT_FOUND', 'Artículo de merma no encontrado.');
     if (item.status !== 'en_almacen_merma') throw new DomainError('INVALID', 'Este artículo de merma ya fue procesado.');
+    if (item.condition !== 'mal_estado') {
+      throw new DomainError('INVALID', 'Solo los artículos en mal estado pueden darse de baja.');
+    }
     db.prepare(`
       UPDATE merma_items
       SET status = 'baja_definitiva', resolved_at = ?, resolution_note = ?
@@ -1205,6 +1371,17 @@ function createRepo(db, {
       }
       db.prepare('UPDATE products SET almacen_stock = almacen_stock - ? WHERE id = ?')
         .run(item.quantity, item.product_id);
+    } else if (item.status === 'reintegrado_a_stock') {
+      const product = q.productById.get(item.product_id);
+      if (!product || product.archived) {
+        throw new DomainError('NOT_FOUND', 'No se puede revocar: el producto original no está disponible.');
+      }
+      if (Number(product.stock) < Number(item.quantity)) {
+        throw new DomainError('INVALID', 'No se puede revocar: no hay suficiente existencia en stock para devolver la cantidad.');
+      }
+      move(item.product_id, 'ajuste', -Number(item.quantity), {
+        note: `Revocación de devolución ${item.return_number}`,
+      });
     }
 
     db.prepare(`
@@ -1232,7 +1409,8 @@ function createRepo(db, {
     getLicenseRecord, observeLicenseDate, saveLicense,
     listProducts, createProduct, updateProduct, archiveProduct, deleteProduct, addStock, reponerStock,
     recordSale, voidSale, listSales, listSalesRange,
-    recordReturn, listReturns, listMermas, venderMermaConDescuento, enviarMermaAlmacen,     darDeBajaMerma, revocarMerma,
+    recordReturn, listReturns, listMermas, venderMermaConDescuento, enviarMermaAlmacen, enviarMermaAStock,
+    darDeBajaMerma, revocarMerma,
     getIpvDay,
     getClose, listCloses, closeDay, reopenDay,
     exportAll, restoreAll, resetAll,

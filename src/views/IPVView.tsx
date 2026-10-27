@@ -89,6 +89,8 @@ export const IPVView: React.FC = () => {
   const zeroCount = ipvRows.filter((r) => r.status === 'zero').length;
   const lowCount = ipvRows.filter((r) => r.status === 'low').length;
   const activeCount = ipvRows.filter((r) => r.vendido > 0).length;
+  const netProfitForDate =
+    ipvRows.reduce((total, row) => total + row.grossProfit, 0) - returnsForDateTotal;
 
   const isClosedForSales = isCurrentDayClosed || isViewDateClosed || isViewingPastDate;
 
@@ -140,7 +142,7 @@ export const IPVView: React.FC = () => {
             )}
           </div>
           <p className="text-xs lg:text-sm text-on-surface-variant">
-            Control de movimiento de inventario calculado a partir de movimientos de stock (solo lectura)
+            Control de movimiento de inventario calculado a partir de movimientos de stock 
           </p>
         </div>
 
@@ -268,25 +270,26 @@ export const IPVView: React.FC = () => {
           </div>
         </div>
 
-        {/* KPI 4: Productos en Cero */}
+        {/* KPI 4: Ganancias del día */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative group">
           <div className="flex items-start justify-between">
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-error">
-              <span className="material-symbols-outlined text-xl">remove_shopping_cart</span>
+            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-emerald-600">
+              <span className="material-symbols-outlined text-xl">trending_up</span>
             </div>
-            <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-error-container text-on-error-container">
-              <span>Agotados</span>
+            <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700">
+              <span>CUP</span>
             </div>
           </div>
           <div className="mt-4">
             <span className="text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant">
-              Saldo Final en Cero
+              Ganancias del Día
             </span>
             <div className="flex items-baseline gap-1.5 mt-1">
-              <span className="text-2xl font-bold tracking-tight text-error font-mono">{zeroCount}</span>
-              <span className="text-xs font-medium text-on-surface-variant">artículos</span>
+              <span className={`text-2xl font-bold tracking-tight font-mono ${netProfitForDate >= 0 ? 'text-emerald-600' : 'text-error'}`}>
+                ${formatCUP(netProfitForDate)}
+              </span>
             </div>
-            <p className="text-[11px] text-on-surface-variant mt-1">Requieren reposición</p>
+            <p className="text-[11px] text-on-surface-variant mt-1">Ventas menos costo y devoluciones</p>
           </div>
         </div>
 
@@ -436,11 +439,10 @@ export const IPVView: React.FC = () => {
                 <th className="py-3.5 px-3 w-12 text-center">No.</th>
                 <th className="py-3.5 px-4 min-w-[220px]">Producto</th>
                 <th className="py-3.5 px-3 text-center w-20">U/M</th>
-                <th className="py-3.5 px-3 text-right">Saldo Ini.</th>
                 <th className="py-3.5 px-3 text-center">Entrada</th>
                 <th className="py-3.5 px-3 text-center">Vendido</th>
                 {hasAnyAjuste && <th className="py-3.5 px-3 text-center">Ajuste</th>}
-                <th className="py-3.5 px-4 text-center">Saldo Final</th>
+                <th className="py-3.5 px-4 text-center">Stock Actual</th>
                 <th className="py-3.5 px-3 text-right min-w-[110px]">Precio (CUP)</th>
                 <th className="py-3.5 px-4 text-right min-w-[130px]">Importe (CUP)</th>
               </tr>
@@ -448,7 +450,7 @@ export const IPVView: React.FC = () => {
             <tbody className="text-xs font-medium divide-y-0">
               {paginatedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={hasAnyAjuste ? 10 : 9} className="py-12 text-center text-on-surface-variant">
+                  <td colSpan={hasAnyAjuste ? 9 : 8} className="py-12 text-center text-on-surface-variant">
                     <span className="material-symbols-outlined text-4xl block mb-2 opacity-50">inventory_2</span>
                     No hay productos con movimientos para esta fecha o filtros seleccionados.
                   </td>
@@ -486,7 +488,6 @@ export const IPVView: React.FC = () => {
                         {row.um}
                       </span>
                     </td>
-                    <td className="py-4 px-3 text-right font-mono text-on-surface">{row.saldoIni}</td>
                     <td className="py-4 px-3 text-center">
                       {row.entrada > 0 ? (
                         <div className="inline-flex items-center justify-center min-w-[48px] h-7 px-2 rounded-lg bg-surface neo-inset text-primary font-semibold font-mono text-xs">
@@ -522,7 +523,11 @@ export const IPVView: React.FC = () => {
                     )}
 
                     <td className="py-4 px-4 text-center">
-                      {row.status === 'zero' ? (
+                      {row.category === 'Defectuoso' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-surface neo-raised text-on-surface-variant">
+                          N/A
+                        </span>
+                      ) : row.status === 'zero' ? (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-surface neo-raised text-error">
                           <span className="w-1.5 h-1.5 rounded-full bg-error"></span>
                           0 Agotado

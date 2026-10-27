@@ -117,6 +117,25 @@ export const CashCloseView: React.FC = () => {
     return totalDevolucionesRefundToday + voidedSalesTotal;
   }, [totalDevolucionesRefundToday, voidedSalesToday]);
 
+  const costOfGoodsToday = useMemo(() => {
+    const activeSalesToday = sales.filter((sale) => sale.date === todayDate && !sale.voided);
+    return activeSalesToday.reduce(
+      (total, sale) =>
+        total +
+        sale.items.reduce(
+          (cost, item) => cost + (Number(item.purchasePrice) || 0) * item.quantity,
+          0
+        ),
+      0
+    );
+  }, [sales, todayDate]);
+
+  const netProfitToday = useMemo(() => {
+    const activeSalesToday = sales.filter((sale) => sale.date === todayDate && !sale.voided);
+    const grossSalesToday = activeSalesToday.reduce((total, sale) => total + sale.total, 0);
+    return grossSalesToday - costOfGoodsToday - autoDevolucionesTotal;
+  }, [sales, todayDate, costOfGoodsToday, autoDevolucionesTotal]);
+
   const damagedCountToday = useMemo(() => {
     return devolucionesToday.reduce((acc, r) => {
       const damagedInReturn = (r.items || []).filter((it) => it.condition === 'mal_estado').reduce((s, it) => s + (it.quantity || 1), 0);
@@ -221,6 +240,8 @@ export const CashCloseView: React.FC = () => {
       `Total Facturado (Ventas Brutas);${ipvTotalVendido.toFixed(2)};Importe bruto según IPV`,
       `Total Devoluciones / Reembolsos;-${totalDevolucionesRefundToday.toFixed(2)};${devolucionesToday.length} devoluciones procesadas`,
       `Ventas Netas Realizadas;${Math.max(0, ipvTotalVendido - totalDevolucionesRefundToday).toFixed(2)};Ingreso neto efectivo tras reembolsos`,
+      `Costo de Artículos Vendidos;${costOfGoodsToday.toFixed(2)};Costo de compra registrado para las ventas de la jornada`,
+      `Ganancias Netas del Día;${netProfitToday.toFixed(2)};Ventas menos costo de compra, devoluciones y anulaciones`,
       `Total Ventas Efectivo;${totalVentasEfectivo.toFixed(2)};Cobros en efectivo`,
       `Total Transferencias;${totalVentasTransferencia.toFixed(2)};EnZona / Transfermóvil`,
       `Efectivo Físico en Gaveta;${totalGeneralContado.toFixed(2)};Total del arqueo físico`,
@@ -307,6 +328,10 @@ export const CashCloseView: React.FC = () => {
           showToast('Operación Cancelada', 'No se seleccionó ninguna ruta para guardar el archivo.', 'info');
           return;
         }
+        if (!res.ok) {
+          showToast('Error al exportar cierre', res.error || 'No se pudo guardar el reporte de cierre.', 'error');
+          return;
+        }
         setIsExportCloseModalOpen(false);
         showToast(
           'Cierre Exportado con Éxito',
@@ -358,6 +383,7 @@ export const CashCloseView: React.FC = () => {
         <div class="row"><span>Ventas Efectivo:</span><span>$${formatCUP(totalVentasEfectivo)} CUP</span></div>
         <div class="row"><span>Ventas Transferencia:</span><span>$${formatCUP(totalVentasTransferencia)} CUP</span></div>
         <div class="row bold"><span>TOTAL FACTURADO IPV:</span><span>$${formatCUP(ipvTotalVendido)} CUP</span></div>
+        <div class="row bold"><span>GANANCIAS DEL DÍA:</span><span>$${formatCUP(netProfitToday)} CUP</span></div>
         <div class="divider"></div>
         <div class="center bold">DESGLOSE EFECTIVO CONTADO</div>
         ${denominations.map(d => `<div class="row"><span>${d.count}x $${d.value} CUP</span><span>$${formatCUP(d.count * d.value)}</span></div>`).join('')}
@@ -659,7 +685,7 @@ export const CashCloseView: React.FC = () => {
                   </span>
                   <span className="font-mono text-primary font-bold">${formatCUP(ipvTotalVendido)} CUP</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-xs pt-1 border-t border-outline-variant/15">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs pt-1 border-t border-outline-variant/15">
                   <div className="flex flex-col">
                     <span className="text-[10px] text-on-surface-variant flex items-center gap-1 font-medium">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Efectivo:
@@ -682,6 +708,14 @@ export const CashCloseView: React.FC = () => {
                     </span>
                     <span className="font-mono font-bold text-amber-600 mt-0.5">
                       ${formatCUP(devolucionesAmount)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-on-surface-variant flex items-center gap-1 font-medium">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Ganancias:
+                    </span>
+                    <span className={`font-mono font-bold mt-0.5 ${netProfitToday >= 0 ? 'text-emerald-600' : 'text-error'}`}>
+                      ${formatCUP(netProfitToday)}
                     </span>
                   </div>
                 </div>
@@ -988,7 +1022,7 @@ export const CashCloseView: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-headline font-bold text-sm text-on-surface">
-                    Acta Oficial de Cierre de Caja
+                    Acta de Cierre de Caja
                   </h3>
                   <p className="text-[10px] text-on-surface-variant font-mono">
                     {todayDate} • {closeTime} • <span className={isCurrentDayClosed ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'}>{isCurrentDayClosed ? 'JORNADA CERRADA' : 'POR CERRAR'}</span>
@@ -1043,6 +1077,10 @@ export const CashCloseView: React.FC = () => {
               <div className="flex justify-between font-bold bg-neutral-100/70 px-2 py-1 rounded">
                 <span>TOTAL FACTURADO IPV:</span>
                 <span>${formatCUP(ipvTotalVendido)} CUP</span>
+              </div>
+              <div className="flex justify-between font-bold text-emerald-800 bg-emerald-50 px-2 py-1 rounded">
+                <span>GANANCIAS DEL DÍA:</span>
+                <span>${formatCUP(netProfitToday)} CUP</span>
               </div>
 
               <div className="my-0.5 border-t border-dashed border-neutral-400"></div>
@@ -1339,6 +1377,12 @@ export const CashCloseView: React.FC = () => {
                   <span className="material-symbols-outlined text-emerald-600 text-[15px]">account_balance_wallet</span>
                   <span className="font-semibold text-emerald-700">
                     Ventas Netas Efectivas: ${formatCUP(Math.max(0, ipvTotalVendido - totalDevolucionesRefundToday))} CUP
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-on-surface col-span-2">
+                  <span className="material-symbols-outlined text-emerald-600 text-[15px]">trending_up</span>
+                  <span className="font-semibold text-emerald-700">
+                    Ganancias Netas del Día: ${formatCUP(netProfitToday)} CUP
                   </span>
                 </div>
               </div>

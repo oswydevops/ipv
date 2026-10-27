@@ -105,6 +105,8 @@ async function generarExcelCierre(resumenDia, outputPath) {
     ['Total Facturado (Ventas Brutas)', resumenDia.totales.totalVentas, 'Importe bruto facturado'],
     ['Total devuelto / anulado', resumenDia.totales.totalDevoluciones, `${resumenDia.totales.cantidadDevoluciones} devoluciones o ventas anuladas`],
     ['Ventas Netas Realizadas', resumenDia.totales.ventasNetas !== undefined ? resumenDia.totales.ventasNetas : (resumenDia.totales.totalVentas - resumenDia.totales.totalDevoluciones), 'Ingreso neto tras descontar reembolsos'],
+    ['Costo de artículos vendidos', resumenDia.totales.costoArticulosVendidos || 0, 'Costo de compra registrado para los artículos vendidos'],
+    ['Ganancias Netas del Día', resumenDia.totales.gananciasNetas !== undefined ? resumenDia.totales.gananciasNetas : 0, 'Ventas menos costo de compra, devoluciones y anulaciones'],
     ['Total Efectivo Ventas', resumenDia.totales.totalEfectivo, 'Pagos recibidos en efectivo'],
     ['Devoluciones en Efectivo', resumenDia.totales.totalDevolucionesEfectivo || 0, 'Reembolsos descontados de gaveta'],
     ['Total Transferencias Ventas', resumenDia.totales.totalTransferencia, 'EnZona / Transfermóvil'],
