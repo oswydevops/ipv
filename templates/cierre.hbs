@@ -85,7 +85,7 @@
     }
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       gap: 8px;
       margin-bottom: 14px;
     }
@@ -223,6 +223,11 @@
       <div class="kpi-sub">
         {{#if (eq totales.diferencia 0)}}Cuadrada exacto{{else}}{{#if (gt totales.diferencia 0)}}Sobrante{{else}}Faltante{{/if}}{{/if}}
       </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Ganancias Netas</div>
+      <div class="kpi-value">${{money totales.gananciasNetas}} CUP</div>
+      <div class="kpi-sub">Ventas menos costos y devoluciones</div>
     </div>
   </div>
 

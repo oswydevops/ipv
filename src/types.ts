@@ -18,6 +18,7 @@ export interface Product {
   category: string;
   um: string;
   price: number;
+  purchasePrice?: number;
   stock: number;
   minStock: number;
   almacenStock?: number;
@@ -44,6 +45,8 @@ export interface IPVRow {
   ajuste?: number;
   saldoFinal: number;
   price: number;
+  costOfGoods: number;
+  grossProfit: number;
   importe: number;
   status: 'normal' | 'low' | 'zero';
   icon: string;
@@ -88,6 +91,7 @@ export interface SaleItem {
   productName?: string;
   um: string;
   unitPrice: number;
+  purchasePrice?: number;
   quantity: number;
   subtotal: number;
 }
@@ -105,6 +109,7 @@ export interface SaleRecord {
   amountReceived?: number;
   change?: number;
   note?: string;
+  voided?: boolean;
 }
 
 export interface ReturnItem {
@@ -150,7 +155,8 @@ export interface MermaItem {
   quantity: number;
   originalUnitPrice: number;
   damagedReason: string;
-  status: 'en_almacen_merma' | 'reincorporado_con_precio' | 'devuelto_a_almacen' | 'baja_definitiva';
+  condition?: 'mal_estado' | 'buen_estado';
+  status: 'en_almacen_merma' | 'reincorporado_con_precio' | 'devuelto_a_almacen' | 'reintegrado_a_stock' | 'baja_definitiva';
   discountedPrice?: number;
   defectiveProductId?: string;
   resolvedAt?: string;

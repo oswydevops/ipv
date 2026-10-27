@@ -26,8 +26,8 @@ const row = (ipv, code) => ipv.rows.find((r) => r.code === code);
 let tornillo, cemento;
 
 test('crear productos: código automático y stock inicial como movimiento', () => {
-  tornillo = repo.createProduct({ name: 'Tornillo 1"', price: 10, stock: 100, um: 'u', minStock: 20 });
-  cemento = repo.createProduct({ name: 'Cemento', price: 1500.5, stock: 10, um: 'saco' });
+  tornillo = repo.createProduct({ name: 'Tornillo 1"', price: 10, purchasePrice: 4, stock: 100, um: 'u', minStock: 20 });
+  cemento = repo.createProduct({ name: 'Cemento', price: 1500.5, purchasePrice: 900, stock: 10, um: 'saco' });
   assert.strictEqual(tornillo.code, 'PROD-001');
   assert.strictEqual(cemento.code, 'PROD-002');
   assert.strictEqual(repo.listProducts().length, 2);
@@ -38,6 +38,8 @@ test('venta: descuenta stock, ticket 101, importe con precio al momento de vende
   const s = repo.recordSale({ items: [{ productId: tornillo.id, quantity: 30 }, { productId: cemento.id, quantity: 2 }], paymentMethod: 'efectivo' });
   assert.strictEqual(s.ticketNumber, 'TKT-00101');
   assert.strictEqual(s.total, 300 + 3001);
+  assert.strictEqual(s.items[0].purchasePrice, 4);
+  assert.strictEqual(s.items[1].purchasePrice, 900);
   const p = repo.listProducts().find((x) => x.id === tornillo.id);
   assert.strictEqual(p.stock, 70);
 });
@@ -74,8 +76,17 @@ test('IPV del día: saldo ini + entrada - vendido = saldo final, anuladas no cue
   assert.strictEqual(t.vendido, 32); // 30 + 1 + 1 (la de 4 se anuló)
   assert.strictEqual(t.saldoFinal, 68);
   assert.strictEqual(t.importe, 320);
+  assert.strictEqual(t.costOfGoods, 128);
+  assert.strictEqual(t.grossProfit, 192);
   assert.strictEqual(ipv.totalVendido, 320 + 3001);
   assert.strictEqual(ipv.sales.count, 3);
+});
+
+test('cambio de costo del producto no altera el costo registrado en ventas anteriores', () => {
+  repo.updateProduct(tornillo.id, { purchasePrice: 8 });
+  const sale = repo.listSalesRange(D1, D1).find((item) => item.ticketNumber === 'TKT-00101');
+  assert.strictEqual(repo.listProducts().find((item) => item.id === tornillo.id).purchasePrice, 8);
+  assert.strictEqual(sale.items.find((item) => item.productId === tornillo.id).purchasePrice, 4);
 });
 
 test('cierre de caja: calcula diferencia y bloquea el día', () => {
@@ -157,6 +168,7 @@ test('devolución: registra y consulta artículos devueltos', () => {
   const merma = repo.listMermas().find((item) => item.returnId === record.id);
   assert.ok(merma);
   assert.strictEqual(merma.status, 'en_almacen_merma');
+  assert.strictEqual(merma.damagedReason, 'Devolución de cliente');
 
   repo.venderMermaConDescuento(merma.id, 7);
   const defectiveProduct = repo.listProducts().find((product) => product.category === 'Defectuoso');
@@ -194,10 +206,13 @@ test('devolución: registra y consulta artículos devueltos', () => {
     reason: 'Devolución para almacén',
     items: [{
       productId: tornillo.id, code: tornillo.code, name: tornillo.name, um: tornillo.um,
-      quantity: 1, unitPrice: 10, condition: 'mal_estado',
+      quantity: 1, unitPrice: 10, condition: 'buen_estado',
     }],
   });
   const warehouseMerma = repo.listMermas().find((item) => item.returnId === warehouseReturn.id);
+  assert.strictEqual(warehouseMerma.damagedReason, 'Artículo en buen estado');
+  throwsCode(() => repo.venderMermaConDescuento(warehouseMerma.id, 7), 'INVALID');
+  throwsCode(() => repo.darDeBajaMerma(warehouseMerma.id), 'INVALID');
   const stockBeforeWarehouse = repo.listProducts().find((product) => product.id === tornillo.id);
   const stockBefore = stockBeforeWarehouse.stock;
   const warehouseBefore = stockBeforeWarehouse.almacenStock;
@@ -223,6 +238,8 @@ test('devolución: registra y consulta artículos devueltos', () => {
     }],
   });
   const discardedMerma = repo.listMermas().find((item) => item.returnId === discardedReturn.id);
+  assert.strictEqual(discardedMerma.damagedReason, 'Artículo inservible');
+  throwsCode(() => repo.enviarMermaAlmacen(discardedMerma.id), 'INVALID');
   repo.darDeBajaMerma(discardedMerma.id);
   assert.strictEqual(repo.listMermas().find((item) => item.id === discardedMerma.id).status, 'baja_definitiva');
   repo.revocarMerma(discardedMerma.id);
@@ -240,6 +257,38 @@ test('respaldo: exportar -> borrar cambios -> restaurar deja todo igual', () => 
   // el contador de tickets sigue funcionando tras restaurar
   const s = repo.recordSale({ items: [{ productId: tornillo.id, quantity: 1 }], paymentMethod: 'efectivo' });
   assert.ok(Number(s.ticketNumber.slice(4)) > 104);
+});
+
+test('devolución en buen estado: se envía al almacén o al stock y permanece en el historial', () => {
+  const productBefore = repo.listProducts().find((product) => product.id === tornillo.id);
+  const warehouseBefore = productBefore.almacenStock;
+  const stockBefore = productBefore.stock;
+  const returnToWarehouse = repo.recordReturn({
+    reason: 'Devolución en buen estado',
+    items: [{
+      productId: tornillo.id, code: tornillo.code, name: tornillo.name, um: tornillo.um,
+      quantity: 2, unitPrice: 10, condition: 'buen_estado',
+    }],
+  });
+  const warehouseItem = repo.listMermas().find((item) => item.returnId === returnToWarehouse.id);
+  assert.strictEqual(warehouseItem.condition, 'buen_estado');
+  repo.enviarMermaAlmacen(warehouseItem.id);
+  assert.strictEqual(repo.listProducts().find((product) => product.id === tornillo.id).almacenStock, warehouseBefore + 2);
+  assert.strictEqual(repo.listMermas().find((item) => item.id === warehouseItem.id).status, 'devuelto_a_almacen');
+
+  const returnToStock = repo.recordReturn({
+    reason: 'Devolución en buen estado',
+    items: [{
+      productId: tornillo.id, code: tornillo.code, name: tornillo.name, um: tornillo.um,
+      quantity: 3, unitPrice: 10, condition: 'buen_estado',
+    }],
+  });
+  const stockItem = repo.listMermas().find((item) => item.returnId === returnToStock.id);
+  repo.enviarMermaAStock(stockItem.id);
+  assert.strictEqual(repo.listProducts().find((product) => product.id === tornillo.id).stock, stockBefore + 3);
+  assert.strictEqual(repo.listMermas().find((item) => item.id === stockItem.id).status, 'reintegrado_a_stock');
+  assert.ok(repo.listReturns().some((record) => record.id === returnToWarehouse.id));
+  assert.ok(repo.listReturns().some((record) => record.id === returnToStock.id));
 });
 
 test('clockStatus: sin actividad devuelve lastActivityDate null y warning false', () => {
@@ -293,15 +342,31 @@ test('migración repara tablas de devoluciones ausentes', () => {
       condition: 'mal_estado',
     }],
   });
+  const goodReturn = repairedStore.repo.recordReturn({
+    totalRefund: 25,
+    refundMethod: 'efectivo',
+    items: [{
+      productId: product.id,
+      code: product.code,
+      name: product.name,
+      um: product.um,
+      quantity: 1,
+      unitPrice: product.price,
+      refundAmount: 25,
+      condition: 'buen_estado',
+    }],
+  });
 
   assert.strictEqual(record.items.length, 1);
-  assert.strictEqual(repairedStore.repo.listReturns()[0].returnNumber, record.returnNumber);
-  assert.strictEqual(repairedStore.repo.listMermas().length, 1);
+  assert.strictEqual(goodReturn.items.length, 1);
+  assert.strictEqual(repairedStore.repo.listReturns().find((entry) => entry.id === record.id).returnNumber, record.returnNumber);
+  assert.strictEqual(repairedStore.repo.listMermas().length, 2);
   repairedStore.db.exec('DROP TABLE merma_items; PRAGMA user_version = 5;');
   repairedStore.close();
   const migratedStore = openDatabase(file, { clock: () => now });
-  assert.strictEqual(migratedStore.repo.listMermas().length, 1);
-  assert.strictEqual(migratedStore.repo.listMermas()[0].status, 'en_almacen_merma');
+  assert.strictEqual(migratedStore.repo.listMermas().length, 2);
+  assert.ok(migratedStore.repo.listMermas().every((item) => item.status === 'en_almacen_merma'));
+  assert.ok(migratedStore.repo.listMermas().some((item) => item.condition === 'buen_estado'));
   migratedStore.close();
 });
 

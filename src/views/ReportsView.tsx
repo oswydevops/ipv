@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { IPVRow, ReturnRecord } from '../types';
+import { getMermaDestination, getReturnItemMermas } from '../utils/returnDestinations';
+import { saveFileWithPicker } from '../utils/fileSaver';
 
 interface BarItem {
   label: string;
@@ -44,10 +46,10 @@ const WEEKS_DEF: { key: WeekKey; label: string; startDay: number; endDay: number
 ];
 
 export const ReportsView: React.FC = () => {
-  const { showToast, sales = [], ipvRows = [], products = [], returns = [], todayDate } = useApp();
+  const { showToast, sales = [], ipvRows = [], products = [], returns = [], mermaItems = [], todayDate } = useApp();
 
   const [periodTab, setPeriodTab] = useState<'semanal' | 'mensual' | 'trimestral'>('semanal');
-  const [tableTab, setTableTab] = useState<'productos' | 'devoluciones'>('productos');
+  const [tableTab, setTableTab] = useState<'productos' | 'menos-vendidos' | 'devoluciones'>('productos');
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
   const [isWeekDropdownOpen, setIsWeekDropdownOpen] = useState(false);
   const [filterSort, setFilterSort] = useState<'recaudacion' | 'volumen'>('recaudacion');
@@ -162,16 +164,16 @@ export const ReportsView: React.FC = () => {
   const periodFilteredSales = useMemo(() => {
     if (periodTab === 'trimestral') {
       const allowedKeys = new Set(availableMonths.slice(0, 3).map((m) => m.key));
-      return sales.filter((s) => s.date && allowedKeys.has(s.date.slice(0, 7)));
+      return sales.filter((s) => s.date && !(s as any).voided && allowedKeys.has(s.date.slice(0, 7)));
     }
 
     if (periodTab === 'mensual') {
-      return sales.filter((s) => s.date && s.date.startsWith(currentMonthOption.key));
+      return sales.filter((s) => s.date && !(s as any).voided && s.date.startsWith(currentMonthOption.key));
     }
 
     // Semanal
     return sales.filter((s) => {
-      if (!s.date || !s.date.startsWith(currentMonthOption.key)) return false;
+      if (!s.date || (s as any).voided || !s.date.startsWith(currentMonthOption.key)) return false;
       const dayNum = parseInt(s.date.split('-')[2], 10);
       return dayNum >= weekStartDay && dayNum <= weekEndDay;
     });
@@ -195,6 +197,20 @@ export const ReportsView: React.FC = () => {
       return dayNum >= weekStartDay && dayNum <= weekEndDay;
     });
   }, [returns, periodTab, availableMonths, currentMonthOption.key, weekStartDay, weekEndDay]);
+
+  const periodFilteredMermas = useMemo(() => {
+    return mermaItems.filter((item) => {
+      if (!item.resolvedAt) return false;
+      if (periodTab === 'trimestral') {
+        const allowedKeys = new Set(availableMonths.slice(0, 3).map((month) => month.key));
+        return allowedKeys.has(item.resolvedAt.slice(0, 7));
+      }
+      if (!item.resolvedAt.startsWith(currentMonthOption.key)) return false;
+      if (periodTab === 'mensual') return true;
+      const dayNum = parseInt(item.resolvedAt.split('-')[2], 10);
+      return dayNum >= weekStartDay && dayNum <= weekEndDay;
+    });
+  }, [mermaItems, periodTab, availableMonths, currentMonthOption.key, weekStartDay, weekEndDay]);
 
   // Si no hay ventas registradas en sales pero hay datos en el IPV del día actual, respaldar con el IPV
   const isCurrentSelectionToday = currentMonthOption.key === defaultMonthKey;
@@ -254,6 +270,22 @@ export const ReportsView: React.FC = () => {
     };
   }, [periodFilteredReturns, periodTotalRevenue]);
 
+  const returnDestinationStats = useMemo(() => {
+    const totals = {
+      defectiveSaleUnits: 0,
+      writtenOffUnits: 0,
+      warehouseUnits: 0,
+      stockUnits: 0,
+    };
+    periodFilteredMermas.forEach((item) => {
+      if (item.status === 'reincorporado_con_precio') totals.defectiveSaleUnits += item.quantity;
+      if (item.status === 'baja_definitiva') totals.writtenOffUnits += item.quantity;
+      if (item.status === 'devuelto_a_almacen') totals.warehouseUnits += item.quantity;
+      if (item.status === 'reintegrado_a_stock') totals.stockUnits += item.quantity;
+    });
+    return totals;
+  }, [periodFilteredMermas]);
+
   // Ingreso neto real (Ventas Brutas - Devoluciones Totales)
   const periodNetRevenue = Math.max(0, periodTotalRevenue - returnsStats.totalRefund);
 
@@ -262,19 +294,24 @@ export const ReportsView: React.FC = () => {
     let totalC = 0;
     periodFilteredSales.forEach((s) => {
       (s.items || []).forEach((it) => {
-        const itemCost = it.unitPrice * 0.65;
+        const itemCost = Number(it.purchasePrice) || 0;
         totalC += itemCost * (it.quantity || 1);
       });
     });
 
-    if (totalC === 0 && periodTotalRevenue > 0) {
-      totalC = periodTotalRevenue * 0.65;
-    }
     return totalC;
-  }, [periodFilteredSales, periodTotalRevenue]);
+  }, [periodFilteredSales]);
 
-  const netProfit = Math.max(0, periodNetRevenue - periodCost);
+  const netProfit = periodNetRevenue - periodCost;
   const marginPct = periodNetRevenue > 0 ? ((netProfit / periodNetRevenue) * 100).toFixed(1) : (periodTotalRevenue > 0 ? ((netProfit / periodTotalRevenue) * 100).toFixed(1) : '0.0');
+
+  const totalInventoryInvestment = useMemo(
+    () => products.reduce((total, product) => {
+      const inventoryQuantity = (Number(product.stock) || 0) + (Number(product.almacenStock) || 0);
+      return total + (Number(product.purchasePrice) || 0) * inventoryQuantity;
+    }, 0),
+    [products]
+  );
 
   // Mapa de unidades devueltas por producto
   const returnedUnitsByProduct = useMemo(() => {
@@ -566,16 +603,17 @@ export const ReportsView: React.FC = () => {
 
     periodFilteredSales.forEach((s) => {
       (s.items || []).forEach((it) => {
-        const key = it.code || it.productId || it.name;
+        const key = it.productId || it.code || it.name;
         const existing = productStatsMap.get(key);
         if (existing) {
           existing.soldUnits += it.quantity || 0;
           existing.totalIncome += it.subtotal || 0;
         } else {
+          const product = products.find((entry) => entry.id === it.productId || entry.code === it.code);
           productStatsMap.set(key, {
             code: it.code || 'S/C',
             name: it.name || 'Producto',
-            category: 'General',
+            category: product?.category || 'General',
             soldUnits: it.quantity || 0,
             unitPrice: it.unitPrice || 0,
             totalIncome: it.subtotal || 0,
@@ -627,15 +665,23 @@ export const ReportsView: React.FC = () => {
         return b.totalIncome - a.totalIncome;
       })
       .map((p, idx) => ({ ...p, rank: idx + 1 }));
-  }, [periodFilteredSales, isCurrentSelectionToday, ipvRows, filterSort, returnedUnitsByProduct]);
+  }, [periodFilteredSales, isCurrentSelectionToday, ipvRows, filterSort, returnedUnitsByProduct, products]);
+
+  const leastSoldProducts = useMemo(
+    () => [...sortedProducts]
+      .sort((a, b) => a.soldUnits - b.soldUnits || a.totalIncome - b.totalIncome)
+      .map((product, index) => ({ ...product, rank: index + 1 })),
+    [sortedProducts]
+  );
+  const displayedProducts = tableTab === 'menos-vendidos' ? leastSoldProducts : sortedProducts;
 
   // Paginación para productos más vendidos
   const pageSize = 6;
-  const totalPages = Math.max(1, Math.ceil(sortedProducts.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(displayedProducts.length / pageSize));
   const validPage = Math.min(page, totalPages);
-  const paginatedReports = sortedProducts.slice((validPage - 1) * pageSize, validPage * pageSize);
-  const startIdx = sortedProducts.length === 0 ? 0 : (validPage - 1) * pageSize + 1;
-  const endIdx = Math.min(validPage * pageSize, sortedProducts.length);
+  const paginatedReports = displayedProducts.slice((validPage - 1) * pageSize, validPage * pageSize);
+  const startIdx = displayedProducts.length === 0 ? 0 : (validPage - 1) * pageSize + 1;
+  const endIdx = Math.min(validPage * pageSize, displayedProducts.length);
 
   // Filtrado y paginación para lista de Devoluciones en reportes
   const filteredReturnsForReport = useMemo(() => {
@@ -664,7 +710,7 @@ export const ReportsView: React.FC = () => {
   const returnsEndIdx = Math.min(validReturnsPage * returnsPageSize, filteredReturnsForReport.length);
 
   // Exportar datos reales consolidados (Ventas + Devoluciones)
-  const handleExport = () => {
+  const handleExport = async () => {
     const filename =
       periodTab === 'trimestral'
         ? `Reporte_Comercial_Trimestral_${currentMonthOption.year}.csv`
@@ -678,11 +724,12 @@ export const ReportsView: React.FC = () => {
       `Ventas Brutas Totales (CUP),${periodTotalRevenue.toFixed(2)}`,
       `Total Devoluciones / Reembolsos (CUP),${returnsStats.totalRefund.toFixed(2)}`,
       `Ventas Netas Realizadas (CUP),${periodNetRevenue.toFixed(2)}`,
+      `Costo de Compra de Artículos Vendidos (CUP),${periodCost.toFixed(2)}`,
       `Cantidad de Devoluciones Procesadas,${returnsStats.count}`,
       `Unidades Devueltas Totales,${returnsStats.returnedUnits}`,
       `Unidades en Mal Estado (Merma),${returnsStats.damagedUnits}`,
-      `Margen Bruto Estimado,${marginPct}%`,
-      `Rentabilidad Neta Estimada (CUP),${netProfit.toFixed(2)}`,
+      `Margen Bruto,${marginPct}%`,
+      `Ganancias Netas (CUP),${netProfit.toFixed(2)}`,
       '',
       '--- PRODUCTOS MÁS VENDIDOS ---',
       'Rank,Codigo,Producto,Categoria,Uds_Vendidas,Uds_Devueltas,Precio_Unitario_CUP,Total_Ingresos_CUP,Porcentaje_Ventas',
@@ -732,16 +779,17 @@ export const ReportsView: React.FC = () => {
     ].join('\n');
 
     const csvContent = '\uFEFF' + fullContent;
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
+    const result = await saveFileWithPicker(csvContent, {
+      suggestedName: filename,
+      mimeType: 'text/csv;charset=utf-8;',
+      extension: 'csv',
+      description: 'Reporte comercial (.csv / Excel)',
+    });
+    if (result.canceled) return;
+    if (!result.ok) {
+      showToast('Error al exportar reporte', result.error || 'No se pudo guardar el archivo.', 'error');
+      return;
+    }
     showToast('Reporte Completo Exportado', `Se ha generado "${filename}" con el balance de ventas y devoluciones.`);
   };
 
@@ -960,8 +1008,8 @@ export const ReportsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 4 Bento Metric Cards with Returns Integrated */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+      {/* 5 Bento Metric Cards with Returns and Inventory Investment */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5">
         {/* Card 1: Total Ventas Brutas */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative overflow-hidden group">
           <div className="flex items-start justify-between">
@@ -1005,7 +1053,7 @@ export const ReportsView: React.FC = () => {
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-rose-600 uppercase flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-                Devoluciones del Periodo
+                Devoluciones del Período
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-rose-600 tracking-tight font-mono">
@@ -1020,7 +1068,7 @@ export const ReportsView: React.FC = () => {
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15">
             <span className="text-[11px] text-on-surface-variant font-medium truncate">
-              {kpis.returnsCount} devoluciones ({kpis.returnsUnits} uds devueltas)
+              {kpis.returnsCount} devoluciones
             </span>
             <span
               className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono ${
@@ -1068,7 +1116,7 @@ export const ReportsView: React.FC = () => {
           <div className="flex items-start justify-between">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-                Margen Bruto Estimado
+                Margen Bruto
               </span>
               <span className="text-2xl font-headline font-bold text-on-surface tracking-tight font-mono mt-0.5">
                 {kpis.margin}
@@ -1086,9 +1134,32 @@ export const ReportsView: React.FC = () => {
               ></div>
             </div>
             <div className="flex justify-between items-center text-[11px] text-on-surface-variant mt-1">
-              <span>Rentabilidad neta</span>
+              <span>Ganancias netas</span>
               <span className="font-semibold text-on-surface font-mono">{kpis.netProfit}</span>
             </div>
+          </div>
+        </div>
+
+        {/* Card 5: Inversión Total en Inventario */}
+        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between group">
+          <div className="flex items-start justify-between">
+            <div className="flex min-w-0 flex-col gap-1">
+              <span className="text-xs font-semibold tracking-wide text-amber-700 uppercase">
+                Inversión Total
+              </span>
+              <span className="text-xl font-headline font-bold text-amber-800 tracking-tight font-mono mt-0.5 truncate" title={`${formatCUP(totalInventoryInvestment)} CUP`}>
+                {formatCUP(totalInventoryInvestment)}
+              </span>
+              <span className="text-[10px] font-semibold text-amber-700 font-mono">CUP</span>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-600 shrink-0">
+              <span className="material-symbols-outlined text-[22px]">inventory</span>
+            </div>
+          </div>
+          <div className="flex items-center mt-4 pt-3 border-t border-outline-variant/15">
+            <span className="text-[10px] text-on-surface-variant font-medium">
+              Precio de compra × unidades en stock y almacén
+            </span>
           </div>
         </div>
       </div>
@@ -1299,7 +1370,7 @@ export const ReportsView: React.FC = () => {
       <div className="flex flex-col gap-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/20 pb-2">
           {/* Tabs Switcher */}
-          <div className="flex items-center gap-2 p-1 rounded-xl bg-surface neo-inset">
+          <div className="flex flex-wrap items-center gap-1 p-1 rounded-xl bg-surface neo-inset">
             <button
               onClick={() => {
                 setTableTab('productos');
@@ -1316,6 +1387,25 @@ export const ReportsView: React.FC = () => {
               <span>Productos Más Vendidos</span>
               <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-primary/10 text-primary">
                 {sortedProducts.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setTableTab('menos-vendidos');
+                setPage(1);
+              }}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                tableTab === 'menos-vendidos'
+                  ? 'bg-surface neo-raised text-amber-700 shadow-sm'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[18px]">trending_down</span>
+              <span>Productos Menos Vendidos</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-amber-500/10 text-amber-700">
+                {leastSoldProducts.length}
               </span>
             </button>
 
@@ -1360,6 +1450,10 @@ export const ReportsView: React.FC = () => {
                 <span className="material-symbols-outlined text-[16px]">swap_vert</span>
               </button>
             </div>
+          ) : tableTab === 'menos-vendidos' ? (
+            <span className="text-xs font-medium text-on-surface-variant">
+              Orden ascendente por unidades vendidas
+            </span>
           ) : (
             <div className="flex items-center gap-2">
               <div className="relative">
@@ -1381,35 +1475,35 @@ export const ReportsView: React.FC = () => {
           )}
         </div>
 
-        {/* TAB 1: PRODUCTOS MÁS VENDIDOS */}
-        {tableTab === 'productos' && (
+        {/* TAB 1: PRODUCTOS VENDIDOS */}
+        {tableTab !== 'devoluciones' && (
           <div className="rounded-2xl bg-surface neo-raised p-2 overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm whitespace-nowrap">
+              <table className="w-full min-w-[900px] xl:min-w-0 table-fixed text-left text-xs">
                 <thead>
-                  <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                    <th className="py-3 px-4 text-center w-12" scope="col">
+                  <tr className="text-[9px] font-semibold uppercase tracking-wide text-on-surface-variant">
+                    <th className="py-2 px-2 text-center w-[6%]" scope="col">
                       # Rank
                     </th>
-                    <th className="py-3 px-4" scope="col">
+                    <th className="py-2 px-2 w-[23%]" scope="col">
                       Producto &amp; Especificación
                     </th>
-                    <th className="py-3 px-4" scope="col">
+                    <th className="py-2 px-2 w-[12%]" scope="col">
                       Categoría
                     </th>
-                    <th className="py-3 px-4 text-right" scope="col">
+                    <th className="py-2 px-2 text-right w-[10%]" scope="col">
                       Uds. Vendidas
                     </th>
-                    <th className="py-3 px-4 text-center" scope="col">
+                    <th className="py-2 px-2 text-center w-[10%]" scope="col">
                       Devueltas
                     </th>
-                    <th className="py-3 px-4 text-right" scope="col">
-                      Precio Unitario
+                    <th className="py-2 px-2 text-right w-[12%]" scope="col">
+                      Precio Unitario (CUP)
                     </th>
-                    <th className="py-3 px-4 text-right" scope="col">
+                    <th className="py-2 px-2 text-right w-[14%]" scope="col">
                       Total Ingresos (CUP)
                     </th>
-                    <th className="py-3 px-4 text-center w-48" scope="col">
+                    <th className="py-2 px-2 text-center w-[13%]" scope="col">
                       % Ventas Periodo
                     </th>
                   </tr>
@@ -1420,8 +1514,8 @@ export const ReportsView: React.FC = () => {
                       <td colSpan={8} className="py-12 text-center text-xs text-on-surface-variant font-medium">
                         <div className="flex flex-col items-center justify-center gap-2">
                           <span className="material-symbols-outlined text-[32px] text-on-surface-variant/70">receipt_long</span>
-                          <span>No hay registros de ventas para el periodo seleccionado</span>
-                          <p className="text-[11px] text-on-surface-variant/70 max-w-sm">
+                          <span>{tableTab === 'menos-vendidos' ? 'No hay productos vendidos para el periodo seleccionado' : 'No hay registros de ventas para el periodo seleccionado'}</span>
+                          <p className="text-[10px] text-on-surface-variant/70 max-w-sm">
                             A medida que se registren ventas en la caja o en el IPV, los datos y estadísticas se calcularán automáticamente aquí.
                           </p>
                         </div>
@@ -1430,31 +1524,31 @@ export const ReportsView: React.FC = () => {
                   ) : (
                     paginatedReports.map((p) => (
                       <tr key={p.rank} className="group hover:bg-surface-container-high/40 transition-colors">
-                        <td className="py-3.5 px-4 text-center">
-                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-surface neo-inset text-primary font-bold text-xs font-mono">
+                        <td className="py-2 px-2 text-center">
+                          <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-surface neo-inset text-primary font-bold text-[10px] font-mono">
                             {p.rank}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant">
-                              <span className="material-symbols-outlined text-[18px]">{p.icon}</span>
+                        <td className="py-2 px-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="w-7 h-7 rounded-lg bg-surface neo-raised flex items-center justify-center text-on-surface-variant shrink-0">
+                              <span className="material-symbols-outlined text-[16px]">{p.icon}</span>
                             </div>
-                            <div className="flex flex-col">
-                              <span className="font-semibold text-on-surface group-hover:text-primary transition-colors">
+                            <div className="flex min-w-0 flex-col">
+                              <span title={p.name} className="truncate font-semibold text-on-surface group-hover:text-primary transition-colors">
                                 {p.name}
                               </span>
-                              <span className="text-[11px] text-on-surface-variant font-mono">COD: {p.code}</span>
+                              <span title={p.code} className="truncate text-[9px] text-on-surface-variant font-mono">COD: {p.code}</span>
                             </div>
                           </div>
                         </td>
-                        <td className="py-3.5 px-4">
-                          <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-surface neo-inset text-on-surface-variant">
+                        <td className="py-2 px-2">
+                          <span title={p.category} className="block truncate px-2 py-1 rounded-full text-[10px] font-medium bg-surface neo-inset text-on-surface-variant">
                             {p.category}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4 text-right font-medium font-mono">{p.soldUnits} u.</td>
-                        <td className="py-3.5 px-4 text-center">
+                        <td className="py-2 px-2 text-right font-medium font-mono">{p.soldUnits} u.</td>
+                        <td className="py-2 px-2 text-center">
                           {p.returnedUnits > 0 ? (
                             <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-mono">
                               <span className="material-symbols-outlined text-[13px]">assignment_return</span>
@@ -1464,25 +1558,24 @@ export const ReportsView: React.FC = () => {
                             <span className="text-on-surface-variant/40 font-mono text-xs">-</span>
                           )}
                         </td>
-                        <td className="py-3.5 px-4 text-right text-on-surface-variant font-mono">
-                          {p.unitPrice.toFixed(2)} CUP
+                        <td className="py-2 px-2 text-right text-on-surface-variant font-mono text-[10px]">
+                          {p.unitPrice.toFixed(2)}
                         </td>
-                        <td className="py-3.5 px-4 text-right font-bold text-on-surface font-mono">
+                        <td className="py-2 px-2 text-right font-bold text-on-surface font-mono text-[10px]">
                           {p.totalIncome.toLocaleString('es-CU', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}{' '}
-                          CUP
                         </td>
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex-1 h-2 rounded-full bg-surface neo-inset overflow-hidden">
+                        <td className="py-2 px-2">
+                          <div className="flex items-center gap-1.5">
+                            <div className="flex-1 h-1.5 rounded-full bg-surface neo-inset overflow-hidden">
                               <div
                                 className="h-full rounded-full bg-primary"
                                 style={{ width: `${Math.min(100, p.percentage)}%` }}
                               ></div>
                             </div>
-                            <span className="text-xs font-bold text-on-surface w-10 text-right font-mono">
+                            <span className="text-[10px] font-bold text-on-surface w-8 text-right font-mono">
                               {p.percentage}%
                             </span>
                           </div>
@@ -1497,7 +1590,7 @@ export const ReportsView: React.FC = () => {
             <div className="p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-on-surface-variant bg-surface rounded-xl mt-2 neo-inset">
               <span className="font-medium">
                 Mostrando <strong className="text-on-surface">{startIdx} a {endIdx}</strong> de{' '}
-                <strong className="text-on-surface">{sortedProducts.length}</strong> productos analizados
+                <strong className="text-on-surface">{displayedProducts.length}</strong> productos analizados
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -1551,7 +1644,7 @@ export const ReportsView: React.FC = () => {
         {tableTab === 'devoluciones' && (
           <div className="flex flex-col gap-5">
             {/* 4 Mini Cards de Resumen de Devoluciones */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
                 <div className="flex flex-col">
                   <span className="text-[11px] font-semibold text-on-surface-variant uppercase">
@@ -1583,28 +1676,56 @@ export const ReportsView: React.FC = () => {
               <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
                 <div className="flex flex-col">
                   <span className="text-[11px] font-semibold text-emerald-700 uppercase">
-                    Reintegrados a Stock
+                    Venta como defectuoso
                   </span>
                   <span className="text-lg font-bold text-emerald-700 font-mono mt-0.5">
-                    {returnsStats.goodUnits} unidades
+                    {returnDestinationStats.defectiveSaleUnits} unidades
                   </span>
                 </div>
                 <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-emerald-600">
-                  <span className="material-symbols-outlined text-[18px]">inventory_2</span>
+                  <span className="material-symbols-outlined text-[18px]">sell</span>
                 </div>
               </div>
 
               <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
                 <div className="flex flex-col">
                   <span className="text-[11px] font-semibold text-rose-600 uppercase">
-                    Baja / Dañado (Merma)
+                    Artículos dados de baja
                   </span>
                   <span className="text-lg font-bold text-rose-600 font-mono mt-0.5">
-                    {returnsStats.damagedUnits} unidades
+                    {returnDestinationStats.writtenOffUnits} unidades
                   </span>
                 </div>
                 <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-rose-500">
                   <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-sky-700 uppercase">
+                    Buen estado al almacén
+                  </span>
+                  <span className="text-lg font-bold text-sky-700 font-mono mt-0.5">
+                    {returnDestinationStats.warehouseUnits} unidades
+                  </span>
+                </div>
+                <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-sky-600">
+                  <span className="material-symbols-outlined text-[18px]">warehouse</span>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-emerald-700 uppercase">
+                    Buen estado al stock
+                  </span>
+                  <span className="text-lg font-bold text-emerald-700 font-mono mt-0.5">
+                    {returnDestinationStats.stockUnits} unidades
+                  </span>
+                </div>
+                <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-emerald-600">
+                  <span className="material-symbols-outlined text-[18px]">inventory_2</span>
                 </div>
               </div>
             </div>
@@ -1612,25 +1733,25 @@ export const ReportsView: React.FC = () => {
             {/* Tabla Detallada de Devoluciones */}
             <div className="rounded-2xl bg-surface neo-raised p-2 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm whitespace-nowrap">
+                <table className="w-full min-w-[900px] xl:min-w-0 table-fixed text-left text-xs">
                   <thead>
-                    <tr className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                      <th className="py-3 px-4" scope="col">
+                    <tr className="text-[9px] font-semibold uppercase tracking-wide text-on-surface-variant">
+                      <th className="py-2 px-2 w-[14%]" scope="col">
                         Folio &amp; Fecha
                       </th>
-                      <th className="py-3 px-4" scope="col">
+                      <th className="py-2 px-2 w-[13%]" scope="col">
                         Ticket Origen
                       </th>
-                      <th className="py-3 px-4" scope="col">
+                      <th className="py-2 px-2 w-[19%]" scope="col">
                         Cliente / Motivo
                       </th>
-                      <th className="py-3 px-4" scope="col">
+                      <th className="py-2 px-2 w-[29%]" scope="col">
                         Artículos Devueltos
                       </th>
-                      <th className="py-3 px-4 text-center" scope="col">
+                      <th className="py-2 px-2 text-center w-[12%]" scope="col">
                         Método Reembolso
                       </th>
-                      <th className="py-3 px-4 text-right" scope="col">
+                      <th className="py-2 px-2 text-right w-[13%]" scope="col">
                         Monto Reembolsado (CUP)
                       </th>
                     </tr>
@@ -1654,38 +1775,39 @@ export const ReportsView: React.FC = () => {
                       paginatedReturns.map((r: ReturnRecord) => {
                         const totalUnits = (r.items || []).reduce((acc, it) => acc + (it.quantity || 1), 0);
                         const hasDamaged = r.hasDamagedItems || (r.items || []).some((it) => it.condition === 'mal_estado');
+                        const destinations = getReturnItemMermas(r, mermaItems);
 
                         return (
                           <tr key={r.id} className="group hover:bg-surface-container-high/40 transition-colors">
-                            <td className="py-3.5 px-4">
+                            <td className="py-2 px-2">
                               <div className="flex flex-col">
-                                <span className="font-bold text-on-surface font-mono group-hover:text-primary transition-colors">
+                                <span className="truncate font-bold text-on-surface font-mono group-hover:text-primary transition-colors">
                                   {r.returnNumber || 'DEV-N/A'}
                                 </span>
-                                <span className="text-[11px] text-on-surface-variant font-mono">
+                                <span className="text-[9px] text-on-surface-variant font-mono">
                                   {r.date} {r.timestamp ? r.timestamp.split('T')[1]?.slice(0, 5) : ''}
                                 </span>
                               </div>
                             </td>
-                            <td className="py-3.5 px-4">
-                              <span className="px-2.5 py-1 rounded-md text-xs font-mono font-medium bg-surface neo-inset text-on-surface-variant">
+                            <td className="py-2 px-2">
+                              <span className="block truncate px-2 py-1 rounded-md text-[10px] font-mono font-medium bg-surface neo-inset text-on-surface-variant">
                                 {r.ticketNumber || 'Venta directa'}
                               </span>
                             </td>
-                            <td className="py-3.5 px-4">
-                              <div className="flex flex-col max-w-xs">
-                                <span className="font-semibold text-on-surface text-xs truncate">
+                            <td className="py-2 px-2">
+                              <div className="flex min-w-0 flex-col">
+                                <span className="font-semibold text-on-surface text-[11px] truncate">
                                   {r.customerName || 'Cliente general'}
                                 </span>
-                                <span className="text-[11px] text-on-surface-variant truncate">
+                                <span className="text-[10px] text-on-surface-variant truncate">
                                   {r.reason || 'Sin motivo especificado'}
                                 </span>
                               </div>
                             </td>
-                            <td className="py-3.5 px-4">
-                              <div className="flex flex-col gap-1 max-w-sm">
+                            <td className="py-2 px-2">
+                              <div className="flex min-w-0 flex-col gap-1">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-xs font-medium text-on-surface font-mono">
+                                  <span className="text-[10px] font-medium text-on-surface font-mono">
                                     {totalUnits} {totalUnits === 1 ? 'artículo' : 'artículos'}
                                   </span>
                                   {hasDamaged ? (
@@ -1698,14 +1820,26 @@ export const ReportsView: React.FC = () => {
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-[11px] text-on-surface-variant truncate">
-                                  {(r.items || []).map((it) => `${it.name} (x${it.quantity})`).join(', ')}
+                                <div className="flex min-w-0 flex-col gap-1 mt-0.5">
+                                  {(r.items || []).map((it, idx) => {
+                                    const destination = getMermaDestination(destinations[idx]);
+                                    return (
+                                      <div key={`${it.productId}-${idx}`} className="flex items-center gap-1 min-w-0">
+                                        <span title={it.name} className="text-[10px] text-on-surface-variant truncate">
+                                          {it.name} (x{it.quantity})
+                                        </span>
+                                        <span className={`shrink-0 px-1 py-0.5 rounded text-[8px] font-bold ${destination.className}`}>
+                                          {destination.label}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             </td>
-                            <td className="py-3.5 px-4 text-center">
+                            <td className="py-2 px-2 text-center">
                               <span
-                                className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${
+                                className={`px-2 py-1 rounded-full text-[9px] font-semibold uppercase tracking-wide ${
                                   r.refundMethod === 'efectivo'
                                     ? 'bg-emerald-500/10 text-emerald-700'
                                     : r.refundMethod === 'transferencia'
@@ -1716,9 +1850,9 @@ export const ReportsView: React.FC = () => {
                                 {r.refundMethod}
                               </span>
                             </td>
-                            <td className="py-3.5 px-4 text-right">
-                              <span className="font-bold text-rose-600 font-mono text-sm">
-                                -{formatCUP(r.totalRefund)} CUP
+                            <td className="py-2 px-2 text-right">
+                              <span className="font-bold text-rose-600 font-mono text-[10px]">
+                                -{formatCUP(r.totalRefund)}
                               </span>
                             </td>
                           </tr>

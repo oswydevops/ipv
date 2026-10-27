@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { ReturnRecord, ReturnItem, MermaItem } from '../types';
+import { getMermaDestination, getReturnItemMermas } from '../utils/returnDestinations';
 
 export const ReturnsView: React.FC = () => {
   const {
@@ -11,6 +12,7 @@ export const ReturnsView: React.FC = () => {
     mermaItems = [],
     venderMermaConDescuento,
     enviarMermaAlmacen,
+    enviarMermaAStock,
     darDeBajaMermaItem,
     revocarMermaItem,
     todayDate,
@@ -107,9 +109,10 @@ export const ReturnsView: React.FC = () => {
 
   // Artículos en merma filtrados por búsqueda
   const filteredMermaItems = useMemo(() => {
-    if (!searchQuery.trim()) return mermaItems;
+    const pendingItems = mermaItems.filter((item) => item.status === 'en_almacen_merma');
+    if (!searchQuery.trim()) return pendingItems;
     const q = searchQuery.toLowerCase();
-    return mermaItems.filter(
+    return pendingItems.filter(
       (m) =>
         m.name?.toLowerCase().includes(q) ||
         m.code?.toLowerCase().includes(q) ||
@@ -141,6 +144,28 @@ export const ReturnsView: React.FC = () => {
       return acc + good;
     }, 0);
   }, [todayReturns]);
+  const todayMermaItems = useMemo(
+    () => mermaItems.filter((item) => item.resolvedAt === todayDate),
+    [mermaItems, todayDate]
+  );
+  const damagedSoldToday = todayMermaItems
+    .filter((item) => item.condition === 'mal_estado' && item.status === 'reincorporado_con_precio')
+    .reduce((total, item) => total + item.quantity, 0);
+  const damagedWrittenOffToday = todayMermaItems
+    .filter((item) => item.condition === 'mal_estado' && item.status === 'baja_definitiva')
+    .reduce((total, item) => total + item.quantity, 0);
+  const goodSentToWarehouseToday = todayMermaItems
+    .filter((item) => item.condition === 'buen_estado' && item.status === 'devuelto_a_almacen')
+    .reduce((total, item) => total + item.quantity, 0);
+  const goodSentToStockToday = todayMermaItems
+    .filter((item) => item.condition === 'buen_estado' && item.status === 'reintegrado_a_stock')
+    .reduce((total, item) => total + item.quantity, 0);
+  const resolvedReturnReason = generalReason === 'Otro motivo' && customReason.trim()
+    ? customReason.trim()
+    : generalReason;
+  const selectedReturnDestinations = selectedReturnDetail
+    ? getReturnItemMermas(selectedReturnDetail, mermaItems)
+    : [];
 
   // Agregar producto seleccionado del catálogo al borrador
   const handleAddManualProduct = (prodId: string) => {
@@ -193,6 +218,7 @@ export const ReturnsView: React.FC = () => {
       return;
     }
 
+    const finalReason = resolvedReturnReason.trim() || 'Devolución de cliente';
     const returnItems: ReturnItem[] = selectedDrafts.map((d) => ({
       productId: d.productId,
       code: d.code,
@@ -202,13 +228,9 @@ export const ReturnsView: React.FC = () => {
       unitPrice: Number(d.unitPrice),
       refundAmount: Number(d.quantity) * Number(d.unitPrice),
       condition: d.condition,
-      damagedReason: d.condition === 'mal_estado' ? (d.damagedReason || 'Mal estado / averiado') : undefined,
+      damagedReason: d.condition === 'mal_estado' ? finalReason : undefined,
       reintegrateToStock: false,
     }));
-
-    const finalReason = generalReason === 'Otro motivo' && customReason.trim()
-      ? customReason.trim()
-      : generalReason;
 
     const trAmount = refundMethod === 'mixto'
       ? Math.min(modalCalculatedRefund, Math.max(0, parseFloat(transferenciaRefundInput) || 0))
@@ -227,7 +249,7 @@ export const ReturnsView: React.FC = () => {
       refundMethod,
       transferenciaAmount: trAmount,
       efectivoAmount: efAmount,
-      reason: finalReason.trim() || 'Devolución de cliente',
+      reason: finalReason,
       totalRefund: modalCalculatedRefund,
       items: returnItems,
     };
@@ -248,9 +270,12 @@ export const ReturnsView: React.FC = () => {
     const printWindow = window.open('', '_blank', 'width=600,height=700');
     if (!printWindow) return;
 
+    const destinations = getReturnItemMermas(record, mermaItems);
     const itemsHtml = (record.items || [])
       .map(
-        (it) => `
+        (it, index) => {
+          const destination = getMermaDestination(destinations[index]);
+          return `
         <tr>
           <td style="padding: 6px 0; border-bottom: 1px dashed #ccc;">
             <strong>${it.name}</strong><br/>
@@ -258,14 +283,16 @@ export const ReturnsView: React.FC = () => {
             ${
               it.condition === 'mal_estado'
                 ? `<span style="color: #d32f2f; font-weight: bold; font-size: 11px;">⚠️ MAL ESTADO: ${it.damagedReason || 'Averiado / defecto'}</span>`
-                : `<span style="color: #2e7d32; font-weight: bold; font-size: 11px;">✓ BUEN ESTADO: Reintegrado</span>`
+                : `<span style="color: #2e7d32; font-weight: bold; font-size: 11px;">✓ BUEN ESTADO</span>`
             }
+            <br/><small><strong>Destino:</strong> ${destination.label}</small>
           </td>
           <td style="padding: 6px 0; text-align: right; border-bottom: 1px dashed #ccc; font-weight: bold;">
             $${it.refundAmount.toFixed(2)} CUP
           </td>
         </tr>
-      `
+      `;
+        }
       )
       .join('');
 
@@ -445,8 +472,9 @@ export const ReturnsView: React.FC = () => {
               <span className="material-symbols-outlined text-[22px]">broken_image</span>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-red-200/40 text-[11px] text-red-700 font-medium">
-            <span>Catalogados como merma</span>
+          <div className="flex items-center justify-between gap-1.5 mt-3 pt-2.5 border-t border-red-200/40 text-[11px] text-red-700 font-medium">
+            <span>Venta con descuento: <strong>{damagedSoldToday}</strong></span>
+            <span>Baja: <strong>{damagedWrittenOffToday}</strong></span>
           </div>
         </div>
 
@@ -469,8 +497,9 @@ export const ReturnsView: React.FC = () => {
               <span className="material-symbols-outlined text-[22px]">inventory</span>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-emerald-200/40 text-[11px] text-emerald-700 font-medium">
-            <span>Reincorporados al stock del mostrador</span>
+          <div className="flex items-center justify-between gap-1.5 mt-3 pt-2.5 border-t border-emerald-200/40 text-[11px] text-emerald-700 font-medium">
+            <span>Almacén: <strong>{goodSentToWarehouseToday}</strong></span>
+            <span>Stock: <strong>{goodSentToStockToday}</strong></span>
           </div>
         </div>
       </div>
@@ -507,7 +536,9 @@ export const ReturnsView: React.FC = () => {
             type="button"
           >
             <span className="material-symbols-outlined text-[16px]">warehouse</span>
-            <span>Almacén de Mermas ({mermaItems.length})</span>
+            <span>
+              Almacén de Mermas ({mermaItems.filter((item) => item.status === 'en_almacen_merma').length})
+            </span>
           </button>
         </div>
 
@@ -608,13 +639,17 @@ export const ReturnsView: React.FC = () => {
                           No hay artículos en el almacén de merma actualmente
                         </span>
                         <p className="text-xs text-on-surface-variant/80">
-                          Cuando registre una devolución con artículos en mal estado, se derivarán a esta sección.
+                          Los artículos de cada devolución aparecerán aquí hasta que decida su destino.
                         </p>
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  filteredMermaItems.map((item) => (
+                  filteredMermaItems.map((item) => {
+                    const isGoodCondition = item.condition
+                      ? item.condition === 'buen_estado'
+                      : item.damagedReason === 'Artículo en buen estado';
+                    return (
                     <tr
                       key={item.id}
                       className="group hover:bg-surface-container-high/40 transition-colors border-b border-outline-variant/10"
@@ -640,7 +675,10 @@ export const ReturnsView: React.FC = () => {
                         ${formatCUP(item.originalUnitPrice)} CUP
                       </td>
                       <td className="py-2 px-2">
-                        <span className="text-[10px] text-red-600 font-medium block truncate" title={item.damagedReason}>
+                        <span
+                          className={`text-[10px] font-medium block truncate ${isGoodCondition ? 'text-emerald-600' : 'text-red-600'}`}
+                          title={item.damagedReason}
+                        >
                           {item.damagedReason}
                         </span>
                       </td>
@@ -655,12 +693,7 @@ export const ReturnsView: React.FC = () => {
                             <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-bold bg-emerald-500/15 text-emerald-700 border border-emerald-500/30">
                               <span className="material-symbols-outlined text-[13px]">verified</span>
                               VENTA DEFECTUOSA
-                            </span>
-                            {item.resolvedAt && (
-                              <span className="text-[9px] text-on-surface-variant font-mono mt-0.5">
-                                {item.resolvedAt}
-                              </span>
-                            )}
+                            </span>                            
                           </div>
                         ) : item.status === 'devuelto_a_almacen' ? (
                           <div className="flex flex-col items-start">
@@ -668,28 +701,30 @@ export const ReturnsView: React.FC = () => {
                               <span className="material-symbols-outlined text-[13px]">inventory_2</span>
                               EN ALMACÉN 
                             </span>
-                            {item.resolvedAt && (
-                              <span className="text-[9px] text-on-surface-variant font-mono mt-0.5">
-                                {item.resolvedAt}
-                              </span>
-                            )}
                           </div>
                         ) : (
                           <div className="flex flex-col items-start">
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gray-500/15 text-gray-700 border border-gray-500/30">
                               <span className="material-symbols-outlined text-[13px]">delete_sweep</span>
                               BAJA DEFINITIVA
-                            </span>
-                            {item.resolvedAt && (
-                              <span className="text-[9px] text-on-surface-variant font-mono mt-0.5">
-                                {item.resolvedAt}
-                              </span>
-                            )}
+                            </span>                    
                           </div>
                         )}
                       </td>
                       <td className="py-2 px-1 text-center">
-                        {item.status === 'en_almacen_merma' ? (
+                        {isGoodCondition ? (
+                          <div className="flex items-center justify-center">
+                            <button
+                              onClick={() => setMermaItemToWarehouse(item)}
+                              className="w-7 h-7 rounded-lg bg-surface neo-raised text-sky-700 hover:text-sky-800 flex items-center justify-center cursor-pointer transition-all active:neo-inset"
+                              type="button"
+                              title="Elegir destino: almacén central o stock del mostrador"
+                              aria-label="Elegir destino del artículo en buen estado"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">warehouse</span>
+                            </button>
+                          </div>
+                        ) : item.status === 'en_almacen_merma' ? (
                           <div className="flex items-center justify-center gap-1">
                             <button
                               onClick={() => {
@@ -705,21 +740,13 @@ export const ReturnsView: React.FC = () => {
                               <span className="material-symbols-outlined text-[16px]">price_change</span>
                             </button>
                             <button
-                              onClick={() => setMermaItemToWarehouse(item)}
-                              className="w-7 h-7 rounded-lg bg-surface neo-raised text-sky-700 hover:text-sky-800 flex items-center justify-center cursor-pointer transition-all active:neo-inset"
-                              type="button"
-                              title="Enviar al almacén central para reponer después al mostrador"
-                            >
-                              <span className="material-symbols-outlined text-[16px]">warehouse</span>
-                            </button>
-                            <button
                               onClick={() => {
                                 setMermaItemToBaja(item);
                                 setBajaNote(`Baja definitiva por daño irreparable: ${item.damagedReason}`);
                               }}
                               className="w-7 h-7 rounded-lg bg-surface neo-raised text-red-600 hover:text-red-700 flex items-center justify-center cursor-pointer transition-all active:neo-inset"
                               type="button"
-                              title="Dar de baja definitiva por merma irreparable"
+                              title="Dar de baja el artículo defectuoso"
                             >
                               <span className="material-symbols-outlined text-[16px]">delete</span>
                             </button>
@@ -739,7 +766,8 @@ export const ReturnsView: React.FC = () => {
                         )}
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -780,6 +808,7 @@ export const ReturnsView: React.FC = () => {
               ) : (
                 paginatedReturns.map((ret) => {
                   const visibleItems = ret.items || [];
+                  const destinations = getReturnItemMermas(ret, mermaItems);
                   const hasDamaged = visibleItems.some((item) => item.condition === 'mal_estado');
                   const visibleRefund = ret.totalRefund;
 
@@ -810,7 +839,9 @@ export const ReturnsView: React.FC = () => {
                       {/* Artículos Devueltos */}
                       <td className="py-3.5 px-4">
                         <div className="flex flex-col max-w-sm">
-                          {visibleItems.map((it, idx) => (
+                          {visibleItems.map((it, idx) => {
+                            const destination = getMermaDestination(destinations[idx]);
+                            return (
                             <div key={idx} className="flex items-center gap-1.5 text-xs py-0.5">
                               <span className="font-mono font-bold text-primary">
                                 {it.quantity} {it.um}
@@ -818,11 +849,12 @@ export const ReturnsView: React.FC = () => {
                               <span className="font-semibold text-on-surface truncate">
                                 {it.name}
                               </span>
-                              <span className="text-[10px] text-on-surface-variant font-mono">
-                                ({it.code})
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${destination.className}`}>
+                                {destination.label}
                               </span>
                             </div>
-                          ))}
+                            );
+                          })}
                           {ret.customerName && (
                             <span className="text-[11px] text-on-surface-variant font-medium mt-0.5">
                               Cliente: <strong className="text-on-surface">{ret.customerName}</strong>
@@ -1104,22 +1136,14 @@ export const ReturnsView: React.FC = () => {
                               {item.condition === 'mal_estado' ? (
                                 <div>
                                   <label className="text-[10px] font-bold uppercase text-red-600 block mb-1">
-                                    Motivo del mal estado / Avería:
+                                    Causa registrada:
                                   </label>
-                                  <input
-                                    type="text"
-                                    value={item.damagedReason}
-                                    onChange={(e) => {
-                                      const next = [...draftItems];
-                                      next[idx].damagedReason = e.target.value;
-                                      setDraftItems(next);
-                                    }}
-                                    placeholder="Ej: Roto, defecto de fábrica, no enciende, dañado..."
-                                    className="w-full h-8 px-2.5 rounded-lg bg-surface neo-inset text-xs text-red-700 font-medium outline-none focus:ring-1 focus:ring-red-500"
-                                  />
+                                  <div className="w-full min-h-8 px-2.5 py-1.5 rounded-lg bg-surface neo-inset text-xs text-red-700 font-medium">
+                                    {resolvedReturnReason}
+                                  </div>
                                   <span className="text-[10px] text-red-600 font-semibold flex items-center gap-1 mt-1">
                                     <span className="material-symbols-outlined text-[13px]">warehouse</span>
-                                    Pasa al almacén como artículo en merma (se le podrá asignar nuevo precio o dar de baja)
+                                    Pasa al almacén de mermas para venderlo con descuento como defectuoso o darlo de baja
                                   </span>
                                 </div>
                               ) : (
@@ -1371,7 +1395,9 @@ export const ReturnsView: React.FC = () => {
                   Artículos Devueltos
                 </span>
                 <div className="flex flex-col gap-2">
-                  {(selectedReturnDetail.items || []).map((it, idx) => (
+                  {(selectedReturnDetail.items || []).map((it, idx) => {
+                    const destination = getMermaDestination(selectedReturnDestinations[idx]);
+                    return (
                     <div key={idx} className="flex items-center justify-between py-1 border-b border-outline-variant/10 last:border-0">
                       <div>
                         <div className="font-semibold text-on-surface">
@@ -1384,16 +1410,20 @@ export const ReturnsView: React.FC = () => {
                             </span>
                           ) : (
                             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded">
-                              ✓ Buen Estado: Reincorporado
+                              ✓ Buen Estado
                             </span>
                           )}
                         </div>
+                        <span className={`inline-flex mt-1 px-2 py-0.5 rounded text-[10px] font-bold ${destination.className}`}>
+                          Destino: {destination.label}
+                        </span>
                       </div>
                       <span className="font-mono font-bold text-amber-600">
                         ${it.refundAmount.toFixed(2)} CUP
                       </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1527,8 +1557,12 @@ export const ReturnsView: React.FC = () => {
                 onClick={async () => {
                   const np = parseFloat(newPriceInput);
                   if (isNaN(np) || np <= 0) return;
-                  await venderMermaConDescuento(mermaItemToReprice.id, np, repriceNote.trim() || undefined);
-                  setMermaItemToReprice(null);
+                  const success = await venderMermaConDescuento(
+                    mermaItemToReprice.id,
+                    np,
+                    repriceNote.trim() || undefined
+                  );
+                  if (success) setMermaItemToReprice(null);
                 }}
                 disabled={!newPriceInput || parseFloat(newPriceInput) <= 0 || parseFloat(newPriceInput) >= mermaItemToReprice.originalUnitPrice}
                 className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold shadow-md hover:bg-primary-container disabled:opacity-50 cursor-pointer"
@@ -1549,7 +1583,12 @@ export const ReturnsView: React.FC = () => {
                 <span className="material-symbols-outlined text-[20px]">warehouse</span>
               </div>
               <div>
-                <h3 className="text-sm font-bold text-on-surface">Enviar al almacén central</h3>
+                <h3 className="text-sm font-bold text-on-surface">
+                  {mermaItemToWarehouse.condition === 'buen_estado' ||
+                  mermaItemToWarehouse.damagedReason === 'Artículo en buen estado'
+                    ? 'Elegir destino del artículo'
+                    : 'Enviar al almacén central'}
+                </h3>
                 <span className="text-xs text-on-surface-variant font-mono">
                   {mermaItemToWarehouse.code} • {mermaItemToWarehouse.returnNumber}
                 </span>
@@ -1561,7 +1600,10 @@ export const ReturnsView: React.FC = () => {
                 <span className="text-on-surface-variant">Cantidad: {mermaItemToWarehouse.quantity} {mermaItemToWarehouse.um}</span>
               </div>
               <p className="text-on-surface-variant">
-                La cantidad se sumará al almacén del producto original, no al stock disponible para venta. Desde Productos podrá reponerla al mostrador cuando corresponda.
+                {mermaItemToWarehouse.condition === 'buen_estado' ||
+                mermaItemToWarehouse.damagedReason === 'Artículo en buen estado'
+                  ? 'Seleccione si desea guardar la cantidad en el almacén central o dejarla disponible inmediatamente en el stock del mostrador.'
+                  : 'La cantidad se sumará al almacén del producto original, no al stock disponible para venta. Desde Productos podrá reponerla al mostrador cuando corresponda.'}
               </p>
             </div>
             <div className="p-4 border-t border-outline-variant/15 flex justify-end gap-2 bg-surface-container-low/20">
@@ -1572,16 +1614,42 @@ export const ReturnsView: React.FC = () => {
               >
                 Cancelar
               </button>
-              <button
-                onClick={async () => {
-                  await enviarMermaAlmacen(mermaItemToWarehouse.id);
-                  setMermaItemToWarehouse(null);
-                }}
-                className="px-4 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold shadow-md cursor-pointer"
-                type="button"
-              >
-                Confirmar Envío
-              </button>
+              {(mermaItemToWarehouse.condition === 'buen_estado' ||
+              mermaItemToWarehouse.damagedReason === 'Artículo en buen estado') ? (
+                <>
+                  <button
+                    onClick={async () => {
+                      const success = await enviarMermaAlmacen(mermaItemToWarehouse.id);
+                      if (success) setMermaItemToWarehouse(null);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold shadow-md cursor-pointer"
+                    type="button"
+                  >
+                    Enviar al almacén central
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const success = await enviarMermaAStock(mermaItemToWarehouse.id);
+                      if (success) setMermaItemToWarehouse(null);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-md cursor-pointer"
+                    type="button"
+                  >
+                    Enviar al stock
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={async () => {
+                    const success = await enviarMermaAlmacen(mermaItemToWarehouse.id);
+                    if (success) setMermaItemToWarehouse(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold shadow-md cursor-pointer"
+                  type="button"
+                >
+                  Confirmar Envío
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1634,8 +1702,8 @@ export const ReturnsView: React.FC = () => {
               </button>
               <button
                 onClick={async () => {
-                  await revocarMermaItem(mermaItemToRevoke.id);
-                  setMermaItemToRevoke(null);
+                  const success = await revocarMermaItem(mermaItemToRevoke.id);
+                  if (success) setMermaItemToRevoke(null);
                 }}
                 className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md cursor-pointer"
                 type="button"
@@ -1708,8 +1776,8 @@ export const ReturnsView: React.FC = () => {
               </button>
               <button
                 onClick={async () => {
-                  await darDeBajaMermaItem(mermaItemToBaja.id, bajaNote.trim() || undefined);
-                  setMermaItemToBaja(null);
+                  const success = await darDeBajaMermaItem(mermaItemToBaja.id, bajaNote.trim() || undefined);
+                  if (success) setMermaItemToBaja(null);
                 }}
                 className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md cursor-pointer"
                 type="button"

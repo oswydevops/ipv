@@ -11,6 +11,9 @@ const call = async (channel, ...args) => {
 
 contextBridge.exposeInMainWorld('api', {
   today: () => call('app:today'),
+  files: {
+    save: (input) => call('files:save', input),
+  },
   license: {
     status: () => call('license:status'),
     activate: (code) => call('license:activate', code),
@@ -39,6 +42,7 @@ contextBridge.exposeInMainWorld('api', {
     list: () => call('mermas:list'),
     venderConDescuento: (id, price, note) => call('mermas:venderConDescuento', id, price, note),
     enviarAlmacen: (id, note) => call('mermas:enviarAlmacen', id, note),
+    enviarAStock: (id, note) => call('mermas:enviarAStock', id, note),
     darDeBaja: (id, note) => call('mermas:darDeBaja', id, note),
     revocar: (id) => call('mermas:revocar', id),
   },

@@ -23,7 +23,7 @@ export interface Sale {
   ticketNumber: string;
   date: string; // AAAA-MM-DD
   timestamp: string; // HH:MM
-  items: { productId: string; code: string; name: string; um: string; unitPrice: number; quantity: number; subtotal: number }[];
+  items: { productId: string; code: string; name: string; um: string; unitPrice: number; purchasePrice?: number; quantity: number; subtotal: number }[];
   total: number;
   paymentMethod: PaymentMethod;
   efectivoAmount: number;
@@ -49,6 +49,8 @@ export interface IpvDayRow {
   ajuste: number; // saldoFinal = saldoIni + entrada - vendido + ajuste
   saldoFinal: number;
   price: number;
+  costOfGoods: number;
+  grossProfit: number;
   importe: number;
   status: 'normal' | 'low' | 'zero';
 }
@@ -105,6 +107,9 @@ export interface LicenseStatus {
 
 export interface IpvApi {
   today(): Promise<string>;
+  files?: {
+    save(input: { contentBase64: string; suggestedName: string; extension: string; description: string }): Promise<FileResult>;
+  };
   license?: {
     status(): Promise<LicenseStatus>;
     activate(code: string): Promise<LicenseStatus>;
@@ -154,6 +159,7 @@ export interface IpvApi {
     list(): Promise<any[]>;
     venderConDescuento(mermaId: string, newPrice: number, note?: string): Promise<any>;
     enviarAlmacen(mermaId: string, note?: string): Promise<any>;
+    enviarAStock(mermaId: string, note?: string): Promise<any>;
     darDeBaja(mermaId: string, note?: string): Promise<any>;
     revocar(mermaId: string): Promise<any>;
   };

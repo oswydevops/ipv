@@ -10,5 +10,7 @@ export const PRODUCT_CATEGORIES = [
   'Construcción y obra',
   'Jardinería y exteriores',
   'Seguridad y protección',
+  'Tecnología y electrónica',
+  'Electrodomésticos',
   'Otra categoría',
 ] as const;

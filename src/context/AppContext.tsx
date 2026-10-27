@@ -52,7 +52,7 @@ const createMermaItemsForReturn = (
   returnRecord: Pick<ReturnRecord, 'id' | 'returnNumber' | 'date' | 'reason'>,
   items: ReturnItem[]
 ): MermaItem[] =>
-  items.filter((item) => item.condition === 'mal_estado').map((item, index) => ({
+  items.map((item, index) => ({
     id: `merma-${returnRecord.id}-${index + 1}`,
     returnId: returnRecord.id,
     returnNumber: returnRecord.returnNumber,
@@ -63,7 +63,10 @@ const createMermaItemsForReturn = (
     um: item.um,
     quantity: Number(item.quantity) || 1,
     originalUnitPrice: Number(item.unitPrice) || 0,
-    damagedReason: item.damagedReason?.trim() || returnRecord.reason || 'Devolución de cliente',
+    damagedReason: item.condition === 'buen_estado'
+      ? 'Artículo en buen estado'
+      : item.damagedReason?.trim() || returnRecord.reason,
+    condition: item.condition,
     status: 'en_almacen_merma',
   }));
 
@@ -92,6 +95,8 @@ const mapIpvDayRowToIPVRow = (r: IpvDayRow): IPVRow => ({
   ajuste: r.ajuste,
   saldoFinal: r.saldoFinal,
   price: r.price,
+  costOfGoods: r.costOfGoods,
+  grossProfit: r.grossProfit,
   importe: r.importe,
   status: r.status,
   icon: getCategoryIcon(r.category),
@@ -181,6 +186,7 @@ interface AppContextType {
   mermaItems: MermaItem[];
   venderMermaConDescuento: (mermaId: string, newPrice: number, note?: string) => Promise<boolean>;
   enviarMermaAlmacen: (mermaId: string, note?: string) => Promise<boolean>;
+  enviarMermaAStock: (mermaId: string, note?: string) => Promise<boolean>;
   darDeBajaMermaItem: (mermaId: string, note?: string) => Promise<boolean>;
   revocarMermaItem: (mermaId: string) => Promise<boolean>;
   isSaleModalOpen: boolean;
@@ -361,6 +367,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           name: it.name,
           um: it.um,
           unitPrice: it.unitPrice,
+          purchasePrice: it.purchasePrice,
           quantity: it.quantity,
           subtotal: it.subtotal,
         })),
@@ -371,6 +378,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         amountReceived: s.amountReceived,
         change: s.change,
         note: s.note,
+        voided: s.voided,
       }));
       setSales(formattedSales);
 
@@ -529,6 +537,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 name: it.name,
                 um: it.um,
                 unitPrice: it.unitPrice,
+                purchasePrice: it.purchasePrice,
                 quantity: it.quantity,
                 subtotal: it.subtotal,
               })),
@@ -539,6 +548,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               amountReceived: s.amountReceived,
               change: s.change,
               note: s.note,
+              voided: s.voided,
             }))
           );
         }).catch((e) => console.error(e));
@@ -612,7 +622,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         note,
       });
       await refreshAll();
-      showToast('Día Cerrado', `El arqueo y cierre del día ${date} fue registrado con éxito en SQLite.`);
+      showToast('Día Cerrado', `El cierre del día ${date} fue registrado con éxito.`);
       return true;
     } catch (err: any) {
       showToast('Error al cerrar el día', getFriendlyErrorMessage(err), 'error');
@@ -654,6 +664,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         detail: productData.detail,
         um: productData.um,
         price: productData.price,
+        purchasePrice: productData.purchasePrice,
         stock: productData.stock,
         minStock: productData.minStock,
         almacenStock: (productData as any).almacenStock || 0,
@@ -680,6 +691,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         detail: updated.detail,
         um: updated.um,
         price: updated.price,
+        purchasePrice: updated.purchasePrice,
         stock: updated.stock,
         minStock: updated.minStock,
         almacenStock: (updated as any).almacenStock !== undefined ? (updated as any).almacenStock : undefined,
@@ -951,6 +963,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
         const idx = mermas.findIndex((m) => m.id === mermaId);
         if (idx === -1) throw new Error('Artículo de merma no encontrado');
+        const condition = mermas[idx].condition ||
+          (mermas[idx].damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado');
+        if (condition !== 'mal_estado') throw new Error('Solo los artículos en mal estado pueden venderse con descuento como defectuosos.');
         if (newPrice <= 0 || newPrice >= mermas[idx].originalUnitPrice) {
           throw new Error('El precio debe ser mayor que cero y menor que el precio original.');
         }
@@ -1002,6 +1017,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
         const item = mermas.find((merma) => merma.id === mermaId);
         if (!item) throw new Error('Artículo de merma no encontrado');
+        const condition = item.condition || (item.damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado');
+        if (condition !== 'buen_estado') throw new Error('Solo los artículos en buen estado pueden enviarse al almacén central.');
         const product = products.find((entry) => entry.id === item.productId);
         if (!product) throw new Error('No se encontró el producto original para enviarlo al almacén.');
         product.almacenStock = (product.almacenStock || 0) + item.quantity;
@@ -1025,6 +1042,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const enviarMermaAStock = async (mermaId: string, note?: string): Promise<boolean> => {
+    try {
+      if (window.api.mermas?.enviarAStock) {
+        await window.api.mermas.enviarAStock(mermaId, note);
+      } else {
+        const raw = localStorage.getItem('ipv_mermas_v2');
+        const mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
+        const item = mermas.find((merma) => merma.id === mermaId);
+        if (!item) throw new Error('Artículo de merma no encontrado');
+        const condition = item.condition || (item.damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado');
+        if (condition !== 'buen_estado') throw new Error('Solo los artículos en buen estado pueden volver al stock.');
+        const product = products.find((entry) => entry.id === item.productId);
+        if (!product) throw new Error('No se encontró el producto original para reincorporarlo al stock.');
+        product.stock += item.quantity;
+        product.status = product.stock === 0 ? 'out' : product.stock <= product.minStock ? 'low' : 'ok';
+        item.status = 'reintegrado_a_stock';
+        item.resolvedAt = todayDate;
+        item.resolutionNote = note || 'Reintegrado al stock disponible.';
+        setMermaItems([...mermas]);
+        localStorage.setItem('ipv_mermas_v2', JSON.stringify(mermas));
+        localStorage.setItem('ipv_products_v2', JSON.stringify(products));
+      }
+      await refreshAll();
+      showToast(
+        'Artículo reincorporado al stock',
+        'La cantidad quedó disponible para la venta en el stock del mostrador.',
+        'success'
+      );
+      return true;
+    } catch (err: any) {
+      showToast('Error al reincorporar al stock', err?.message || 'No se pudo reincorporar el artículo al stock', 'error');
+      return false;
+    }
+  };
+
   const darDeBajaMermaItem = async (mermaId: string, note?: string): Promise<boolean> => {
     try {
       if (window.api.mermas) {
@@ -1034,6 +1086,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let mermas: MermaItem[] = raw ? JSON.parse(raw) : [];
         const idx = mermas.findIndex((m) => m.id === mermaId);
         if (idx === -1) throw new Error('Artículo de merma no encontrado');
+        const condition = mermas[idx].condition ||
+          (mermas[idx].damagedReason === 'Artículo en buen estado' ? 'buen_estado' : 'mal_estado');
+        if (condition !== 'mal_estado') throw new Error('Solo los artículos en mal estado pueden darse de baja.');
 
         mermas[idx].status = 'baja_definitiva';
         mermas[idx].resolvedAt = todayDate;
@@ -1322,6 +1377,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         mermaItems,
         venderMermaConDescuento,
         enviarMermaAlmacen,
+        enviarMermaAStock,
         darDeBajaMermaItem,
         revocarMermaItem,
         isSaleModalOpen,

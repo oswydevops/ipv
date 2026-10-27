@@ -140,6 +140,7 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
     'mermas:list': () => repo.listMermas(),
     'mermas:venderConDescuento': (id, price, note) => repo.venderMermaConDescuento(id, price, note),
     'mermas:enviarAlmacen': (id, note) => repo.enviarMermaAlmacen(id, note),
+    'mermas:enviarAStock': (id, note) => repo.enviarMermaAStock(id, note),
     'mermas:darDeBaja': (id, note) => repo.darDeBajaMerma(id, note),
     'mermas:revocar': (id) => repo.revocarMerma(id),
 
@@ -150,6 +151,32 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
     'cash:listCloses': (limit) => repo.listCloses(limit),
     'cash:closeDay': (date, input) => repo.closeDay(date, input),
     'cash:reopenDay': (date) => repo.reopenDay(date),
+
+    'files:save': async (input) => {
+      if (
+        !input ||
+        typeof input.contentBase64 !== 'string' ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.contentBase64) ||
+        typeof input.suggestedName !== 'string' ||
+        typeof input.extension !== 'string' ||
+        !/^[a-zA-Z0-9]+$/.test(input.extension) ||
+        typeof input.description !== 'string'
+      ) {
+        throw new DomainError('INVALID', 'Los datos del archivo para exportar no son válidos.');
+      }
+
+      const extension = input.extension.toLowerCase();
+      const suggestedName = path.basename(input.suggestedName);
+      const saveResult = await dialog.showSaveDialog(getWindow(), {
+        title: `Guardar ${input.description}`,
+        defaultPath: suggestedName,
+        filters: [{ name: input.description, extensions: [extension] }],
+      });
+      if (saveResult.canceled || !saveResult.filePath) return { canceled: true };
+
+      fs.writeFileSync(saveResult.filePath, Buffer.from(input.contentBase64, 'base64'));
+      return { canceled: false, path: saveResult.filePath };
+    },
 
     // Respaldo a archivo: el diálogo se abre en el proceso principal.
     'backup:saveSqlite': async () => {
@@ -277,6 +304,7 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
     'returns:record',
     'mermas:venderConDescuento',
     'mermas:enviarAlmacen',
+    'mermas:enviarAStock',
     'mermas:darDeBaja',
     'mermas:revocar',
     'cash:closeDay',

@@ -47,6 +47,7 @@ export const ProductsView: React.FC = () => {
   const [newCategory, setNewCategory] = useState<string>('Herramientas manuales');
   const [newUM, setNewUM] = useState('Unidad');
   const [newPrice, setNewPrice] = useState('0');
+  const [newPurchasePrice, setNewPurchasePrice] = useState('0');
   const [newStock, setNewStock] = useState('0');
   const [newMinStock, setNewMinStock] = useState('0');
   const [newAlmacenStock, setNewAlmacenStock] = useState('0');
@@ -58,6 +59,7 @@ export const ProductsView: React.FC = () => {
   const [editCategory, setEditCategory] = useState<string>('Herramientas manuales');
   const [editUM, setEditUM] = useState('Unidad');
   const [editPrice, setEditPrice] = useState<number>(0);
+  const [editPurchasePrice, setEditPurchasePrice] = useState<number>(0);
   const [editStock, setEditStock] = useState<number>(0);
   const [editMinStock, setEditMinStock] = useState<number>(0);
   const [editAlmacenStock, setEditAlmacenStock] = useState<number>(0);
@@ -106,6 +108,7 @@ export const ProductsView: React.FC = () => {
     setNewCategory('Herramientas manuales');
     setNewUM('Unidad');
     setNewPrice('0');
+    setNewPurchasePrice('0');
     setNewStock('0');
     setNewMinStock('0');
     setNewAlmacenStock('0');
@@ -137,6 +140,7 @@ export const ProductsView: React.FC = () => {
       category: newCategory,
       um: newUM,
       price: Number(newPrice) || 0,
+      purchasePrice: Number(newPurchasePrice) || 0,
       stock: stockNum,
       minStock: minStockNum,
       almacenStock: Number(newAlmacenStock) || 0,
@@ -159,6 +163,7 @@ export const ProductsView: React.FC = () => {
     setEditCategory(product.category);
     setEditUM(product.um);
     setEditPrice(product.price);
+    setEditPurchasePrice(Number(product.purchasePrice) || 0);
     setEditStock(product.stock);
     setEditMinStock(product.minStock);
     setEditAlmacenStock(product.almacenStock || 0);
@@ -181,6 +186,7 @@ export const ProductsView: React.FC = () => {
       category: editCategory,
       um: editUM,
       price: Number(editPrice) || 0,
+      purchasePrice: Number(editPurchasePrice) || 0,
       stock: stockNum,
       minStock: minStockNum,
       almacenStock: Number(editAlmacenStock) || 0,
@@ -618,7 +624,7 @@ export const ProductsView: React.FC = () => {
       {/* Modal "+ Nuevo Producto" */}
       {isNewModalOpen && (
         <div className="fixed inset-0 bg-inverse-surface/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-surface rounded-2xl p-6 neo-raised w-full max-w-lg flex flex-col gap-5 shadow-2xl">
+          <div className="bg-surface rounded-2xl p-6 neo-raised w-full max-w-lg max-h-[90vh] overflow-y-auto flex flex-col gap-5 shadow-2xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
@@ -717,6 +723,21 @@ export const ProductsView: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
+                <label className="font-semibold text-on-surface">Precio de Compra al Proveedor (CUP)</label>
+                <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newPurchasePrice}
+                    onChange={(e) => setNewPurchasePrice(e.target.value)}
+                    placeholder="0.00"
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
                 <label className="font-semibold text-on-surface">Stock Inicial (Mostrador)</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
@@ -787,7 +808,7 @@ export const ProductsView: React.FC = () => {
       {/* Modal "Editar Producto" */}
       {editingProduct && (
         <div className="fixed inset-0 bg-inverse-surface/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-surface rounded-2xl p-6 neo-raised w-full max-w-lg flex flex-col gap-5 shadow-2xl">
+          <div className="bg-surface rounded-2xl p-6 neo-raised w-full max-w-lg max-h-[90vh] overflow-y-auto flex flex-col gap-5 shadow-2xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
@@ -874,6 +895,20 @@ export const ProductsView: React.FC = () => {
                     value={editPrice}
                     onChange={(e) => setEditPrice(parseFloat(e.target.value) || 0)}
                     className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="font-semibold text-on-surface">Precio de Compra al Proveedor (CUP)</label>
+                <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editPurchasePrice}
+                    onChange={(e) => setEditPurchasePrice(parseFloat(e.target.value) || 0)}
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono text-xs"
                   />
                 </div>
               </div>

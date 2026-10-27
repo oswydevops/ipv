@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { SaleRecord, SaleItem } from '../types';
+import { saveFileWithPicker } from '../utils/fileSaver';
 
 type PeriodFilter = 'diarias' | 'semanales' | 'mensual';
 
@@ -229,7 +230,7 @@ export const SalesHistoryView: React.FC = () => {
   };
 
   // Descargar ticket en texto
-  const handleDownloadTicketTxt = (sale: SaleRecord) => {
+  const handleDownloadTicketTxt = async (sale: SaleRecord) => {
     const lines = [
       '========================================',
       '          FERRESTOCK - SISTEMA IPV      ',
@@ -255,20 +256,22 @@ export const SalesHistoryView: React.FC = () => {
       '========================================',
     ].filter(Boolean);
 
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Ticket_${sale.ticketNumber}_${sale.date}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const result = await saveFileWithPicker(lines.join('\n'), {
+      suggestedName: `Ticket_${sale.ticketNumber}_${sale.date}.txt`,
+      mimeType: 'text/plain;charset=utf-8;',
+      extension: 'txt',
+      description: 'Comprobante de venta',
+    });
+    if (result.canceled) return;
+    if (!result.ok) {
+      showToast('Error al descargar comprobante', result.error || 'No se pudo guardar el archivo.', 'error');
+      return;
+    }
     showToast('Descarga Exitosa', `Se descargó el comprobante del Ticket ${sale.ticketNumber}.`);
   };
 
   // Exportar lista de ventas a CSV
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     const headers = [
       'Ticket',
       'Fecha',
@@ -296,15 +299,17 @@ export const SalesHistoryView: React.FC = () => {
     ]);
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Historial_Ventas_${periodFilter}_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const result = await saveFileWithPicker(csvContent, {
+      suggestedName: `Historial_Ventas_${periodFilter}_${new Date().toISOString().slice(0, 10)}.csv`,
+      mimeType: 'text/csv;charset=utf-8;',
+      extension: 'csv',
+      description: 'Historial de ventas (.csv / Excel)',
+    });
+    if (result.canceled) return;
+    if (!result.ok) {
+      showToast('Error al exportar historial', result.error || 'No se pudo guardar el archivo.', 'error');
+      return;
+    }
     showToast('Historial Exportado', 'Se ha descargado el archivo CSV con los tickets filtrados.');
   };
 
@@ -874,7 +879,7 @@ export const SalesHistoryView: React.FC = () => {
       {/* MODAL DE DETALLE DEL TICKET */}
       {selectedSaleForDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-lg rounded-2xl bg-surface neo-raised border border-outline-variant/20 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="w-full max-w-xl rounded-2xl bg-surface neo-raised border border-outline-variant/20 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             {/* Modal Header */}
             <div className="p-5 border-b border-outline-variant/15 flex items-center justify-between bg-surface-container-low/40">
               <div className="flex items-center gap-3">

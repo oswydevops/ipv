@@ -43,6 +43,13 @@ function getResumenDia(fecha, dbInstance) {
     WHERE date = ? AND voided_at IS NULL
   `).get(fecha) || { ticketsCount: 0, totalVentas: 0, totalEfectivo: 0, totalTransferencia: 0 };
 
+  const costSummary = db.prepare(`
+    SELECT COALESCE(SUM(si.unit_cost * si.quantity), 0) AS costOfGoods
+    FROM sale_items si
+    JOIN sales s ON s.id = si.sale_id
+    WHERE s.date = ? AND s.voided_at IS NULL
+  `).get(fecha) || { costOfGoods: 0 };
+
   // 2. Ventas anuladas del día (devoluciones / reembolsos)
   const voidedSummary = db.prepare(`
     SELECT
@@ -219,6 +226,8 @@ function getResumenDia(fecha, dbInstance) {
 
   const totalVentasBrutas = Number(salesSummary.totalVentas || 0);
   const ventasNetas = Math.max(0, totalVentasBrutas - totalDevolucionesMonto);
+  const costoArticulosVendidos = Number(costSummary.costOfGoods || 0);
+  const gananciasNetas = totalVentasBrutas - costoArticulosVendidos - totalDevolucionesMonto;
 
   return {
     fecha,
@@ -227,6 +236,8 @@ function getResumenDia(fecha, dbInstance) {
     totales: {
       totalVentas: totalVentasBrutas,
       ventasNetas,
+      costoArticulosVendidos,
+      gananciasNetas,
       totalEfectivo: Number(salesSummary.totalEfectivo || 0),
       totalTransferencia: Number(salesSummary.totalTransferencia || 0),
       totalDevoluciones: totalDevolucionesMonto,
