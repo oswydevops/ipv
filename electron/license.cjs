@@ -83,7 +83,26 @@ function daysBetween(start, end) {
   return startDay === null || endDay === null ? 0 : endDay - startDay;
 }
 
-function validatePayload(payload, signature, installationId, today, publicKeyBytes) {
+function installationIdCandidates(installationId) {
+  if (installationId && typeof installationId === 'object') {
+    return [
+      installationId.installationId,
+      installationId.machineId,
+      installationId.volumeId,
+    ].filter((value) => typeof value === 'string' && value);
+  }
+  return typeof installationId === 'string' && installationId
+    ? installationId.split('-')
+    : [];
+}
+
+function installationIdMatches(signedId, currentInstallationId) {
+  const signedCandidates = new Set(installationIdCandidates(signedId).map((id) => id.toUpperCase()));
+  return installationIdCandidates(currentInstallationId)
+    .some((id) => signedCandidates.has(id.toUpperCase()));
+}
+
+function validatePayload(payload, signature, installationId, _today, publicKeyBytes) {
   if (!Buffer.isBuffer(payload) || payload.length < 7 || !Buffer.isBuffer(signature) || signature.length !== SIGNATURE_LENGTH) {
     return { ok: false, code: 'INVALID_SIGNATURE' };
   }
@@ -116,33 +135,25 @@ function validatePayload(payload, signature, installationId, today, publicKeyByt
   if (!Buffer.from(payloadInstallationId, 'utf8').equals(idBytes)) {
     return { ok: false, code: 'INVALID_CODE' };
   }
-  if (payloadInstallationId.toUpperCase() !== String(installationId).toUpperCase()) {
+  if (!installationIdMatches(payloadInstallationId, installationId)) {
     return { ok: false, code: 'INSTALLATION_MISMATCH' };
   }
-
-  const expiryEpochDay = issueEpochDay + validityDays;
   const issueDate = epochDayToDate(issueEpochDay);
-  const expiryDate = epochDayToDate(expiryEpochDay);
-  const todayEpochDay = dateToEpochDay(today);
-  if (todayEpochDay === null) return { ok: false, code: 'INVALID_CODE' };
-
   const details = {
     payloadInstallationId,
     issueDate,
     validityDays,
-    expiryDate,
-    daysRemaining: Math.max(0, expiryEpochDay - todayEpochDay),
+    expiryDate: null,
+    daysRemaining: 0,
+    isLifetime: true,
     licenseType,
     licenseTypeName: LICENSE_TYPES[licenseType] || `Licencia ${licenseType}`,
   };
-  if (todayEpochDay >= expiryEpochDay) {
-    return { ok: false, code: 'LICENSE_EXPIRED', ...details };
-  }
 
   return { ok: true, ...details };
 }
 
-function validateActivationCode(code, installationId, today, publicKeyBytes) {
+function validateActivationCode(code, installationId, _today, publicKeyBytes) {
   const decoded = decodeBase32Crockford(code);
   if (!decoded || decoded.length < SIGNATURE_LENGTH + 7) {
     return { ok: false, code: 'INVALID_SIGNATURE' };
@@ -151,7 +162,7 @@ function validateActivationCode(code, installationId, today, publicKeyBytes) {
   const payloadLength = decoded.length - SIGNATURE_LENGTH;
   const payload = decoded.subarray(0, payloadLength);
   const signature = decoded.subarray(payloadLength);
-  const result = validatePayload(payload, signature, installationId, today, publicKeyBytes);
+  const result = validatePayload(payload, signature, installationId, _today, publicKeyBytes);
   return result.ok ? { ...result, payload, signature } : result;
 }
 
@@ -165,6 +176,7 @@ module.exports = {
   activationCodeFromPayload,
   daysBetween,
   decodeBase32: decodeBase32Crockford,
+  installationIdMatches,
   normalizeActivationCode,
   validateActivationCode,
   validatePayload,

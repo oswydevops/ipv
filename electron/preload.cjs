@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('api', {
   license: {
     status: () => call('license:status'),
     activate: (code) => call('license:activate', code),
+    deactivate: () => call('license:deactivate'),
     trialStatus: () => call('license:trialStatus'),
   },
   products: {
@@ -60,6 +61,8 @@ contextBridge.exposeInMainWorld('api', {
     resetApplication: (password) => call('backup:resetApplication', password),
   },
   reports: {
+    exportarTabla: (input) => call('reportes:exportar-tabla', input),
+    exportarCierreFormato: (input) => call('reportes:exportar-cierre-formato', input),
     exportarCierre: (fecha) => call('reportes:exportar-cierre', fecha),
     exportarCierreExcel: (fecha) => call('reportes:exportar-cierre-excel', fecha),
     exportarIpvExcel: (input) => call('reportes:exportar-ipv-excel', input),

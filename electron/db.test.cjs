@@ -164,11 +164,12 @@ test('devolución: registra y consulta artículos devueltos', () => {
   assert.strictEqual(record.date, D2);
   assert.strictEqual(record.totalRefund, 20);
   assert.strictEqual(record.items.length, 1);
+  assert.strictEqual(record.items[0].damagedReason, 'Artículo defectuoso');
   assert.strictEqual(repo.listReturns()[0].id, record.id);
   const merma = repo.listMermas().find((item) => item.returnId === record.id);
   assert.ok(merma);
   assert.strictEqual(merma.status, 'en_almacen_merma');
-  assert.strictEqual(merma.damagedReason, 'Devolución de cliente');
+  assert.strictEqual(merma.damagedReason, 'Artículo defectuoso');
 
   repo.venderMermaConDescuento(merma.id, 7);
   const defectiveProduct = repo.listProducts().find((product) => product.category === 'Defectuoso');
@@ -244,6 +245,25 @@ test('devolución: registra y consulta artículos devueltos', () => {
   assert.strictEqual(repo.listMermas().find((item) => item.id === discardedMerma.id).status, 'baja_definitiva');
   repo.revocarMerma(discardedMerma.id);
   assert.strictEqual(repo.listMermas().find((item) => item.id === discardedMerma.id).status, 'en_almacen_merma');
+});
+
+test('devolución: el motivo específico del artículo prevalece sobre el motivo general en la BD', () => {
+  const record = repo.recordReturn({
+    reason: 'Devolución de cliente',
+    items: [{
+      productId: tornillo.id, code: tornillo.code, name: tornillo.name, um: tornillo.um,
+      quantity: 1, unitPrice: 10, condition: 'mal_estado',
+      damagedReason: 'Empaque roto',
+    }],
+  });
+  const returnItem = store.db.prepare(
+    'SELECT damaged_reason FROM return_items WHERE return_id = ?'
+  ).get(record.id);
+  const merma = repo.listMermas().find((item) => item.returnId === record.id);
+
+  assert.strictEqual(record.items[0].damagedReason, 'Empaque roto');
+  assert.strictEqual(returnItem.damaged_reason, 'Empaque roto');
+  assert.strictEqual(merma.damagedReason, 'Empaque roto');
 });
 
 test('respaldo: exportar -> borrar cambios -> restaurar deja todo igual', () => {
@@ -323,7 +343,13 @@ test('clockStatus: reloj atrasado detecta warning true', () => {
 test('migración repara tablas de devoluciones ausentes', () => {
   const file = path.join(tmp, 'returns-migration.sqlite');
   const oldStore = openDatabase(file, { clock: () => now });
-  oldStore.db.exec('DROP TABLE return_items; DROP TABLE returns; PRAGMA user_version = 3;');
+  oldStore.db.exec(`
+    ALTER TABLE products DROP COLUMN purchase_price;
+    ALTER TABLE sale_items DROP COLUMN unit_cost;
+    DROP TABLE return_items;
+    DROP TABLE returns;
+    PRAGMA user_version = 3;
+  `);
   oldStore.close();
 
   const repairedStore = openDatabase(file, { clock: () => now });
@@ -361,7 +387,11 @@ test('migración repara tablas de devoluciones ausentes', () => {
   assert.strictEqual(goodReturn.items.length, 1);
   assert.strictEqual(repairedStore.repo.listReturns().find((entry) => entry.id === record.id).returnNumber, record.returnNumber);
   assert.strictEqual(repairedStore.repo.listMermas().length, 2);
-  repairedStore.db.exec('DROP TABLE merma_items; PRAGMA user_version = 5;');
+  repairedStore.db.exec(`
+    ALTER TABLE sale_items DROP COLUMN unit_cost;
+    DROP TABLE merma_items;
+    PRAGMA user_version = 5;
+  `);
   repairedStore.close();
   const migratedStore = openDatabase(file, { clock: () => now });
   assert.strictEqual(migratedStore.repo.listMermas().length, 2);

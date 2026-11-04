@@ -1,5 +1,5 @@
 export const ACTIVATION_CODE_MIN_LENGTH = 100;
-export const ACTIVATION_CODE_LENGTH = 124;
+export const ACTIVATION_CODE_LENGTH = 140;
 
 export const normalizeActivationCode = (code: string): string =>
   (code || '').replace(/[\s-]/g, '').toUpperCase();

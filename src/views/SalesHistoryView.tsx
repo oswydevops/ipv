@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { SaleRecord, SaleItem } from '../types';
 import { saveFileWithPicker } from '../utils/fileSaver';
+import { exportReportFile, ReportFormat } from '../utils/reportExporter';
 
 type PeriodFilter = 'diarias' | 'semanales' | 'mensual';
 
@@ -271,7 +272,7 @@ export const SalesHistoryView: React.FC = () => {
   };
 
   // Exportar lista de ventas a CSV
-  const handleExportCSV = async () => {
+  const handleExportCSV = async (format: ReportFormat) => {
     const headers = [
       'Ticket',
       'Fecha',
@@ -299,18 +300,19 @@ export const SalesHistoryView: React.FC = () => {
     ]);
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const result = await saveFileWithPicker(csvContent, {
-      suggestedName: `Historial_Ventas_${periodFilter}_${new Date().toISOString().slice(0, 10)}.csv`,
-      mimeType: 'text/csv;charset=utf-8;',
-      extension: 'csv',
-      description: 'Historial de ventas (.csv / Excel)',
+    const result = await exportReportFile({
+      title: 'Historial de Ventas',
+      fileName: `Historial_Ventas_${periodFilter}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      csvContent,
+      delimiter: ',',
+      format,
     });
     if (result.canceled) return;
-    if (!result.ok) {
-      showToast('Error al exportar historial', result.error || 'No se pudo guardar el archivo.', 'error');
+    if (result.error) {
+      showToast('Error al exportar historial', result.error, 'error');
       return;
     }
-    showToast('Historial Exportado', 'Se ha descargado el archivo CSV con los tickets filtrados.');
+    showToast('Historial Exportado', `Se exportaron ${finalFilteredSales.length} tickets en ${format === 'pdf' ? 'PDF' : 'Excel'}.`);
   };
 
   return (
@@ -333,19 +335,21 @@ export const SalesHistoryView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Exportar CSV */}
           <button
-            onClick={handleExportCSV}
-            disabled={finalFilteredSales.length === 0}
-            className={`h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold transition-all cursor-pointer ${
-              finalFilteredSales.length === 0
-                ? 'opacity-40 cursor-not-allowed text-on-surface-variant'
-                : 'text-emerald-600 hover:text-emerald-700 active:neo-inset'
-            }`}
+            onClick={() => void handleExportCSV('excel')}
+            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700 active:neo-inset transition-all cursor-pointer"
             type="button"
           >
             <span className="material-symbols-outlined text-[19px]">table_view</span>
-            <span>Exportar [.csv]</span>
+            <span>Exportar Excel</span>
+          </button>
+          <button
+            disabled
+            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-orange-600 transition-all cursor-not-allowed"
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[19px]">picture_as_pdf</span>
+            <span>PDF</span>
           </button>
         </div>
       </div>

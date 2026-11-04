@@ -7,6 +7,8 @@ export const ActivationBanner: React.FC = () => {
     isTrialActive,
     licenseReadOnly,
     licenseStatus,
+    licenseErrorCode,
+    licenseLastSeenDate,
     licenseExpiryDate,
     licenseDaysRemaining,
     currentView,
@@ -24,11 +26,17 @@ export const ActivationBanner: React.FC = () => {
           <span className="material-symbols-outlined text-amber-700">lock</span>
           <div>
             <h3 className="text-sm font-bold text-on-surface">
-              {licenseStatus === 'clock_rollback' ? 'Corrija la hora del sistema' : 'Licencia vencida · Modo de solo lectura'}
+              {licenseStatus === 'clock_rollback'
+                ? 'Corrija la hora del sistema'
+                : licenseErrorCode === 'INSTALLATION_MISMATCH'
+                  ? 'La licencia no corresponde a esta instalación'
+                  : 'Licencia vencida · Modo de solo lectura'}
             </h3>
             <p className="text-xs text-on-surface-variant mt-1">
               {licenseStatus === 'clock_rollback'
-                ? 'La fecha actual es anterior a la última fecha registrada. Corrija la fecha y hora para continuar.'
+                ? `Corrija fecha y hora; última fecha registrada: ${licenseLastSeenDate || '—'}.`
+                : licenseErrorCode === 'INSTALLATION_MISMATCH'
+                  ? 'Active una licencia emitida para este equipo.'
                 : `Puede consultar y exportar sus datos. Venció el ${licenseExpiryDate || '—'}; días restantes: ${licenseDaysRemaining}.`}
             </p>
           </div>
@@ -97,7 +105,7 @@ export const ActivationBanner: React.FC = () => {
               </span>
             </div>
             <p className="text-sm text-on-surface-variant mt-1 leading-relaxed max-w-3xl">
-              Todas las funciones operativas (ventas, cierre, productos e informes) se encuentran deshabilitadas hasta validar su código de activación único.
+              Todas las funciones operativas (ventas, cierre, productos e informes) se encuentran deshabilitadas hasta validar su código de activación único, una ves active la aplicacion podrá disfrutar de todas las funciones sin limitaciones de manera permanente.
             </p>
           </div>
         </div>
@@ -120,7 +128,7 @@ export const ActivationBanner: React.FC = () => {
       {/* Separate phone contact info strip (in case user does not have WhatsApp on PC) */}
       <div className="pt-3 border-t border-outline-variant/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-sm text-on-surface-variant bg-surface-container-low/40 p-2.5 rounded-xl">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold text-on-surface">Tu prueba gratuita de 7 días ha culminado.</span>
+          <span className="font-semibold text-on-surface">Tu prueba gratuita de 7 días ha culminado, la licencia de la plataforma tiene un precio único de 3500 CUP</span>
           <span>Presione el botón de Activar Aplicación y luego continúe los pasos en la sección de activación dentro de la configuración del sistema</span>
           
         </div>

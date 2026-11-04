@@ -5,8 +5,9 @@ const { getReportPaths } = require('../src/main/reports/paths.js');
 const { generarPdfCierre } = require('../src/main/reports/pdf.js');
 const { generarExcelCierre } = require('../src/main/reports/excel.js');
 const { generarExcelIpv } = require('../src/main/reports/ipvExcel.js');
+const { buildReportHtml, parseDelimitedText } = require('./reportExport.cjs');
 const path = require('path');
-const { getTrialStatus } = require('./trial.cjs');
+const { getTrialLastSeenDate, getTrialStatus } = require('./trial.cjs');
 const {
   activationCodeFromPayload,
   normalizeActivationCode,
@@ -16,26 +17,63 @@ const {
 
 // Cada canal es "espacio:función". El renderer solo puede llamar a lo que esté aquí.
 function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, trialStatePath }) {
+  const clockRollbackMessage = (clock) =>
+    `Corrija fecha y hora; última fecha registrada: ${clock.lastSeenDate || clock.currentDate}.`;
+  const getTrialClockAnchor = () =>
+    trialStatePath ? getTrialLastSeenDate(trialStatePath) : null;
   const getLicenseStatus = () => {
-    const clock = repo.observeLicenseDate();
+    const clock = repo.observeLicenseDate(getTrialClockAnchor());
     const record = repo.getLicenseRecord();
+    const hasLicense = Boolean(record && record.payload);
+    if (hasLicense && !repo.installationMatches(record.installation_id)) {
+      return {
+        status: 'invalid',
+        hasLicense: true,
+        errorCode: 'INSTALLATION_MISMATCH',
+        installationId: repo.getInstallationIdentity().installationId,
+        issueDate: null,
+        expiryDate: null,
+        daysRemaining: 0,
+        isLifetime: false,
+        licenseType: null,
+        activationCode: '',
+        lastSeenDate: clock.lastSeenDate,
+      };
+    }
+    if (clock.clockRollback) {
+      return {
+        status: 'clock_rollback',
+        hasLicense,
+        errorCode: 'CLOCK_ROLLBACK',
+        installationId: repo.getInstallationIdentity().installationId,
+        issueDate: null,
+        expiryDate: null,
+        daysRemaining: 0,
+        isLifetime: false,
+        licenseType: null,
+        activationCode: '',
+        lastSeenDate: clock.lastSeenDate,
+      };
+    }
     if (!record || !record.payload) {
       return {
         status: 'none',
         hasLicense: false,
-        installationId: record?.installation_id || '',
+        installationId: repo.getInstallationIdentity().installationId,
         issueDate: null,
         expiryDate: null,
         daysRemaining: 0,
+        isLifetime: false,
         licenseType: null,
         activationCode: '',
+        lastSeenDate: clock.lastSeenDate,
       };
     }
 
     const result = validatePayload(
       Buffer.from(record.payload),
       Buffer.from(record.signature || []),
-      record.installation_id,
+      repo.getInstallationIdentity(),
       clock.currentDate
     );
     const code = activationCodeFromPayload(record.payload, record.signature || []);
@@ -44,39 +82,45 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         status: 'invalid',
         hasLicense: true,
         errorCode: result.code,
-        installationId: record.installation_id,
+        installationId: repo.getInstallationIdentity().installationId,
         issueDate: null,
         expiryDate: null,
         daysRemaining: 0,
+        isLifetime: false,
         licenseType: null,
         activationCode: code,
+        lastSeenDate: clock.lastSeenDate,
       };
     }
 
-    const status = clock.clockRollback
-      ? 'clock_rollback'
-      : result.code === 'LICENSE_EXPIRED'
-        ? 'expired'
-        : 'valid';
+    const status = result.code === 'LICENSE_EXPIRED' ? 'expired' : 'valid';
     return {
       status,
       hasLicense: true,
-      errorCode: clock.clockRollback ? 'CLOCK_ROLLBACK' : result.code || null,
-      installationId: record.installation_id,
+      errorCode: result.code || null,
+      installationId: repo.getInstallationIdentity().installationId,
       issueDate: result.issueDate,
       expiryDate: result.expiryDate,
       daysRemaining: result.daysRemaining,
+      isLifetime: result.isLifetime,
       licenseType: result.licenseTypeName,
       activationCode: code,
+      lastSeenDate: clock.lastSeenDate,
     };
   };
 
   const assertCanWrite = () => {
     const status = getLicenseStatus();
     if (status.status === 'valid') return;
+    if (status.status === 'clock_rollback') {
+      throw new DomainError('CLOCK_ROLLBACK', clockRollbackMessage({
+        lastSeenDate: status.lastSeenDate,
+        currentDate: repo.today(),
+      }));
+    }
     if (status.hasLicense) {
-      if (status.status === 'clock_rollback') {
-        throw new DomainError('CLOCK_ROLLBACK', 'La fecha del sistema es anterior a la última fecha registrada. Corrija la hora del sistema para continuar.');
+      if (status.errorCode === 'INSTALLATION_MISMATCH') {
+        throw new DomainError('INSTALLATION_MISMATCH', 'La licencia no corresponde a esta instalación. Active una licencia emitida para este equipo.');
       }
       if (status.status === 'expired') {
         throw new DomainError('LICENSE_EXPIRED', 'La licencia venció. FerreStock permanece en modo de solo lectura hasta renovar la licencia.');
@@ -90,20 +134,31 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
 
   const handlers = {
     'license:status': () => getLicenseStatus(),
+    'license:deactivate': () => {
+      repo.clearLicense();
+      return getLicenseStatus();
+    },
     'license:trialStatus': () => {
       if (!trialStatePath) throw new Error('No se configuró el almacenamiento de la prueba gratuita.');
       return getTrialStatus(trialStatePath);
     },
     'license:activate': (code) => {
       const record = repo.getLicenseRecord();
+      const activationClock = repo.observeLicenseDate(getTrialClockAnchor());
+      if (activationClock.clockRollback) {
+        throw new DomainError('CLOCK_ROLLBACK', clockRollbackMessage(activationClock));
+      }
       const currentStatus = getLicenseStatus();
       if (currentStatus.status === 'clock_rollback') {
-        throw new DomainError('CLOCK_ROLLBACK', 'La fecha del sistema es anterior a la última fecha registrada. Corrija la hora antes de activar.');
+        throw new DomainError('CLOCK_ROLLBACK', clockRollbackMessage(activationClock));
+      }
+      if (!repo.installationMatches(record.installation_id)) {
+        throw new DomainError('INSTALLATION_MISMATCH', 'La instalación no coincide con la licencia guardada.');
       }
 
       const result = validateActivationCode(
         normalizeActivationCode(code),
-        record.installation_id,
+        repo.getInstallationIdentity(),
         repo.today()
       );
       if (!result.ok) {
@@ -264,6 +319,129 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         fecha: targetDate,
         excelPath,
       };
+    },
+    'reportes:exportar-cierre-formato': async (input) => {
+      if (!input || !['excel', 'pdf'].includes(input.format)) {
+        throw new DomainError('INVALID', 'Seleccione Excel o PDF para guardar el reporte.');
+      }
+      const targetDate = input.date || repo.today();
+      const resumen = getResumenDia(targetDate, db);
+      const paths = getReportPaths(targetDate);
+      const format = input.format;
+      const extension = format === 'excel' ? 'xlsx' : 'pdf';
+      const saveResult = await dialog.showSaveDialog(getWindow(), {
+        title: `Guardar cierre de caja en ${format === 'excel' ? 'Excel' : 'PDF'}`,
+        defaultPath: format === 'excel' ? paths.excelPath : paths.pdfPath,
+        filters: [{
+          name: format === 'excel' ? 'Libro de Excel' : 'Documento PDF',
+          extensions: [extension],
+        }],
+      });
+      if (saveResult.canceled || !saveResult.filePath) return { canceled: true };
+      const outputPath = path.extname(saveResult.filePath).toLowerCase() === `.${extension}`
+        ? saveResult.filePath
+        : `${saveResult.filePath}.${extension}`;
+      const savedPath = format === 'excel'
+        ? await generarExcelCierre(resumen, outputPath)
+        : await generarPdfCierre(resumen, outputPath);
+      return { canceled: false, path: savedPath, fecha: targetDate, format };
+    },
+    'reportes:exportar-tabla': async (input) => {
+      if (
+        !input ||
+        typeof input.title !== 'string' ||
+        typeof input.fileName !== 'string' ||
+        typeof input.csvContent !== 'string' ||
+        !['excel', 'pdf'].includes(input.format) ||
+        ![',', ';'].includes(input.delimiter || ';') ||
+        input.csvContent.length > 20 * 1024 * 1024
+      ) {
+        throw new DomainError('INVALID', 'No se pudieron preparar los datos del reporte.');
+      }
+
+      const format = input.format;
+      const extension = format === 'excel' ? 'xlsx' : 'pdf';
+      const fileName = path.basename(input.fileName, path.extname(input.fileName));
+      const saveResult = await dialog.showSaveDialog(getWindow(), {
+        title: `Guardar reporte en ${format === 'excel' ? 'Excel' : 'PDF'}`,
+        defaultPath: `${fileName}.${extension}`,
+        filters: [{
+          name: format === 'excel' ? 'Libro de Excel' : 'Documento PDF',
+          extensions: [extension],
+        }],
+      });
+      if (saveResult.canceled || !saveResult.filePath) return { canceled: true };
+
+      const outputPath = path.extname(saveResult.filePath).toLowerCase() === `.${extension}`
+        ? saveResult.filePath
+        : `${saveResult.filePath}.${extension}`;
+      const rows = parseDelimitedText(input.csvContent, input.delimiter || ';');
+
+      if (format === 'excel') {
+        const ExcelJS = require('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'FerreStock';
+        workbook.created = new Date();
+        const sheet = workbook.addWorksheet('Reporte', {
+          views: [{ state: 'frozen', ySplit: 1 }],
+          pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+        });
+        const columnCount = Math.max(1, ...rows.map((row) => row.length));
+        sheet.columns = Array.from({ length: columnCount }, (_, index) => {
+          const width = Math.min(42, Math.max(12, ...rows.map((row) => String(row[index] || '').length + 2)));
+          return { width };
+        });
+        rows.forEach((row, index) => {
+          const excelRow = sheet.addRow(row);
+          if (index === 0) {
+            excelRow.font = { bold: true, size: 15, color: { argb: 'FFFFFFFF' } };
+            excelRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+          } else if (row.filter((cell) => cell !== '').length === 1) {
+            excelRow.font = { bold: true, color: { argb: 'FF0F172A' } };
+            excelRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+          } else if (index > 0 && rows[index - 1].filter((cell) => cell !== '').length === 1) {
+            excelRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            excelRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+          }
+          excelRow.eachCell((cell) => {
+            cell.alignment = { vertical: 'top', wrapText: true };
+            cell.border = {
+              bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            };
+          });
+        });
+        await workbook.xlsx.writeFile(outputPath);
+      } else {
+        const { BrowserWindow } = require('electron');
+        const printWindow = new BrowserWindow({
+          show: false,
+          width: 1400,
+          height: 1000,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+          },
+        });
+        try {
+          const html = buildReportHtml({
+            title: input.title,
+            csvContent: input.csvContent,
+            delimiter: input.delimiter || ';',
+          });
+          await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+          const pdf = await printWindow.webContents.printToPDF({
+            marginsType: 0,
+            printBackground: true,
+            pageSize: 'A4',
+            landscape: true,
+          });
+          fs.writeFileSync(outputPath, pdf);
+        } finally {
+          if (!printWindow.isDestroyed()) printWindow.destroy();
+        }
+      }
+      return { canceled: false, path: outputPath };
     },
     'reportes:exportar-ipv-excel': async (input) => {
       if (!input || !/^\d{4}-\d{2}-\d{2}$/.test(input.date || '')) {

@@ -108,6 +108,40 @@ interface ToastData {
   type?: 'success' | 'info' | 'error';
 }
 
+export interface ActivationContactInfo {
+  userName: string;
+  businessName: string;
+  province: string;
+  identityCard: string;
+}
+
+type SettingsTab = 'informacion' | 'reportes' | 'respaldos' | 'seguridad' | 'licencia' | 'ayuda';
+
+const ACTIVATION_CONTACT_INFO_STORAGE_KEY = 'ferrestock_activation_contact_info';
+const EMPTY_ACTIVATION_CONTACT_INFO: ActivationContactInfo = {
+  userName: '',
+  businessName: '',
+  province: '',
+  identityCard: '',
+};
+
+const loadActivationContactInfo = (): ActivationContactInfo => {
+  try {
+    const saved = localStorage.getItem(ACTIVATION_CONTACT_INFO_STORAGE_KEY);
+    if (!saved) return { ...EMPTY_ACTIVATION_CONTACT_INFO };
+
+    const parsed: Record<string, unknown> = JSON.parse(saved);
+    return {
+      userName: typeof parsed.userName === 'string' ? parsed.userName : '',
+      businessName: typeof parsed.businessName === 'string' ? parsed.businessName : '',
+      province: typeof parsed.province === 'string' ? parsed.province : '',
+      identityCard: typeof parsed.identityCard === 'string' ? parsed.identityCard : '',
+    };
+  } catch {
+    return { ...EMPTY_ACTIVATION_CONTACT_INFO };
+  }
+};
+
 export interface RecordSaleInput {
   items: SaleItem[];
   paymentMethod: 'efectivo' | 'transferencia' | 'mixto';
@@ -202,16 +236,24 @@ interface AppContextType {
   trialDaysRemaining: number;
   hasAppAccess: boolean;
   licenseStatus: LicenseStatus['status'];
+  hasLicenseRecord: boolean;
   licenseReadOnly: boolean;
+  licenseErrorCode: string;
   licenseExpiryDate: string;
   licenseDaysRemaining: number;
+  licenseIsLifetime: boolean;
   licenseType: string;
   installationId: string;
+  licenseLastSeenDate: string;
   activationKey: string;
   activatedAt: string;
   activateApp: (code: string) => Promise<{ success: boolean; message: string }>;
-  settingsTab: 'reportes' | 'respaldos' | 'seguridad' | 'licencia';
-  setSettingsTab: (tab: 'reportes' | 'respaldos' | 'seguridad' | 'licencia') => void;
+  deactivateLicense: () => Promise<boolean>;
+  activationContactInfo: ActivationContactInfo;
+  updateActivationContactInfo: (info: ActivationContactInfo) => boolean;
+  clearActivationContactInfoForTesting: () => boolean;
+  settingsTab: SettingsTab;
+  setSettingsTab: (tab: SettingsTab) => void;
   navigateToActivation: () => void;
 
   // Seguridad y Contraseña de Reinicio
@@ -273,13 +315,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isTrialActive, setIsTrialActive] = useState<boolean>(false);
   const [trialDaysRemaining, setTrialDaysRemaining] = useState<number>(0);
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus['status']>('none');
+  const [licenseLastSeenDate, setLicenseLastSeenDate] = useState<string>('');
   const [licenseHasRecord, setLicenseHasRecord] = useState<boolean>(false);
+  const [licenseErrorCode, setLicenseErrorCode] = useState<string>('');
   const [licenseExpiryDate, setLicenseExpiryDate] = useState<string>('');
   const [licenseDaysRemaining, setLicenseDaysRemaining] = useState<number>(0);
+  const [licenseIsLifetime, setLicenseIsLifetime] = useState<boolean>(false);
   const [licenseType, setLicenseType] = useState<string>('');
   const [activationKey, setActivationKey] = useState<string>('');
   const [activatedAt, setActivatedAt] = useState<string>('');
-  const [settingsTab, setSettingsTab] = useState<'reportes' | 'respaldos' | 'seguridad' | 'licencia'>('reportes');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('reportes');
+  const [activationContactInfo, setActivationContactInfo] = useState<ActivationContactInfo>(
+    loadActivationContactInfo
+  );
 
   // Seguridad y Contraseña de Reinicio
   const [resetPasswordKey, setResetPasswordKey] = useState<string>(() => {
@@ -296,13 +344,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 4500);
   }, []);
 
+  const updateActivationContactInfo = useCallback((updatedInfo: ActivationContactInfo) => {
+    const currentInfoIsComplete = Object.values(activationContactInfo).every((value) => value.trim().length > 0);
+    if (licenseHasRecord && currentInfoIsComplete) {
+      showToast(
+        'Información bloqueada',
+        'Los datos no se pueden cambiar después de completar la información y activar la licencia.',
+        'error'
+      );
+      return false;
+    }
+
+    const normalizedInfo = {
+      userName: updatedInfo.userName.trim(),
+      businessName: updatedInfo.businessName.trim(),
+      province: updatedInfo.province.trim(),
+      identityCard: updatedInfo.identityCard.trim(),
+    };
+    if (Object.values(normalizedInfo).some((value) => value.length === 0)) {
+      showToast('Información incompleta', 'Los cuatro campos son obligatorios y no pueden quedar vacíos.', 'error');
+      return false;
+    }
+
+    try {
+      localStorage.setItem(ACTIVATION_CONTACT_INFO_STORAGE_KEY, JSON.stringify(normalizedInfo));
+    } catch (error: unknown) {
+      showToast('Error al guardar la información', getFriendlyErrorMessage(error), 'error');
+      return false;
+    }
+    setActivationContactInfo(normalizedInfo);
+    return true;
+  }, [activationContactInfo, licenseHasRecord, showToast]);
+
+  const clearActivationContactInfoForTesting = useCallback(() => {
+    try {
+      localStorage.removeItem(ACTIVATION_CONTACT_INFO_STORAGE_KEY);
+      setActivationContactInfo({ ...EMPTY_ACTIVATION_CONTACT_INFO });
+      return true;
+    } catch (error: unknown) {
+      showToast('Error al borrar la información', getFriendlyErrorMessage(error), 'error');
+      return false;
+    }
+  }, [showToast]);
+
   const applyLicenseStatus = useCallback((status: LicenseStatus) => {
     setLicenseStatus(status.status);
+    setLicenseLastSeenDate(status.lastSeenDate || '');
     setLicenseHasRecord(status.hasLicense);
+    setLicenseErrorCode(status.errorCode || '');
     setInstallationId(status.installationId);
     setIsAppActivated(status.status === 'valid');
     setLicenseExpiryDate(status.expiryDate || '');
     setLicenseDaysRemaining(status.daysRemaining);
+    setLicenseIsLifetime(status.isLifetime);
     setLicenseType(status.licenseType || '');
     setActivationKey(status.activationCode ? formatActivationCode(status.activationCode) : '');
     setActivatedAt(status.issueDate || '');
@@ -1247,9 +1341,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'ferrestock_sales',
         'ferrestock_last_backup_info',
         'ferrestock_backup_history',
+        ACTIVATION_CONTACT_INFO_STORAGE_KEY,
       ]) {
         localStorage.removeItem(key);
       }
+      setActivationContactInfo({ ...EMPTY_ACTIVATION_CONTACT_INFO });
       setProducts([]);
       setSales([]);
       setReturns([]);
@@ -1284,7 +1380,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Pegue el código de activación firmado.' };
     }
     if (clean.length < 100 || clean.length > ACTIVATION_CODE_LENGTH) {
-      return { success: false, message: 'El código debe contener entre 100 y 124 caracteres.' };
+      return { success: false, message: `El código debe contener entre 100 y ${ACTIVATION_CODE_LENGTH} caracteres.` };
     }
 
     if (!window.api?.license) {
@@ -1301,12 +1397,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [applyLicenseStatus, showToast]);
 
+  const deactivateLicense = useCallback(async () => {
+    if (!window.api?.license?.deactivate) {
+      showToast('No se pudo desactivar', 'Esta opción solo está disponible en la aplicación de escritorio.', 'error');
+      return false;
+    }
+
+    try {
+      const status = await window.api.license.deactivate();
+      applyLicenseStatus(status);
+      showToast(
+        'Licencia desactivada',
+        'La aplicación quedó en estado sin licencia. Puede volver a activarla con un código válido.',
+        'info'
+      );
+      return true;
+    } catch (error: unknown) {
+      showToast('No se pudo desactivar la licencia', getFriendlyErrorMessage(error), 'error');
+      return false;
+    }
+  }, [applyLicenseStatus, showToast]);
+
   const navigateToActivation = useCallback(() => {
     setCurrentView('configuracion');
-    setSettingsTab('licencia');
-  }, []);
+    const activationInfoComplete = Object.values(activationContactInfo).every((value) => value.trim().length > 0);
+    setSettingsTab(activationInfoComplete ? 'licencia' : 'informacion');
+  }, [activationContactInfo]);
 
-  const licenseReadOnly = licenseHasRecord && licenseStatus !== 'valid';
+  const licenseReadOnly = licenseStatus === 'clock_rollback' || (licenseHasRecord && licenseStatus !== 'valid');
   const hasAppAccess = isAppActivated || isTrialActive || licenseHasRecord;
 
   const updateResetPassword = useCallback((currentPass: string, newPass: string) => {
@@ -1400,14 +1518,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         trialDaysRemaining,
         hasAppAccess,
         licenseStatus,
+        licenseLastSeenDate,
+        hasLicenseRecord: licenseHasRecord,
         licenseReadOnly,
+        licenseErrorCode,
         licenseExpiryDate,
         licenseDaysRemaining,
+        licenseIsLifetime,
         licenseType,
         installationId,
         activationKey,
         activatedAt,
         activateApp,
+        deactivateLicense,
+        activationContactInfo,
+        updateActivationContactInfo,
+        clearActivationContactInfoForTesting,
         settingsTab,
         setSettingsTab,
         navigateToActivation,

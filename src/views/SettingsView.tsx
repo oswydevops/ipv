@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { saveFileWithPicker } from '../utils/fileSaver';
+import { exportReportFile, ReportFormat } from '../utils/reportExporter';
+import paymentQrImage from '../../assets/qrpago.jpg';
 import {
   ACTIVATION_CODE_LENGTH,
   ACTIVATION_CODE_MIN_LENGTH,
@@ -41,16 +42,69 @@ export const SettingsView: React.FC = () => {
     licenseReadOnly,
     licenseExpiryDate,
     licenseDaysRemaining,
+    licenseIsLifetime,
     licenseType,
+    hasLicenseRecord,
     installationId,
     activationKey,
     activatedAt,
     activateApp,
+    activationContactInfo,
+    updateActivationContactInfo,
     resetPasswordKey,
     updateResetPassword,
     settingsTab: activeTab,
     setSettingsTab: setActiveTab,
   } = useApp();
+
+  const activationInfoComplete = Object.values(activationContactInfo).every((value) => value.trim().length > 0);
+  const activationMessage = `Hola, mi nombre es: ${activationContactInfo.userName.trim()} y solicito el código de activación de la licencia de FerreStock para mi negocio: ${activationContactInfo.businessName.trim()}, mi ID de instalación es: ${installationId}`;
+  const activationWhatsAppUrl = `https://wa.me/5363242069?text=${encodeURIComponent(activationMessage)}`;
+  const [activationInfoDraft, setActivationInfoDraft] = useState(activationContactInfo);
+  const [isPaymentQrVisible, setIsPaymentQrVisible] = useState(false);
+  const activationInfoDraftComplete = Object.values(activationInfoDraft).every((value) => value.trim().length > 0);
+  const isActivationInfoFieldMissing = (field: keyof typeof activationInfoDraft) =>
+    activationInfoDraft[field].trim().length === 0;
+  const activationInfoInputClass = (field: keyof typeof activationInfoDraft) =>
+    `h-11 px-3.5 text-sm font-normal rounded-xl bg-surface neo-inset text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70 ${
+      isActivationInfoFieldMissing(field)
+        ? 'border border-red-500 focus:ring-red-500/30'
+        : 'focus:ring-primary/40'
+    }`;
+  const activationInfoLocked = hasLicenseRecord && activationInfoComplete;
+  const activationInfoHasChanges =
+    activationInfoDraft.userName !== activationContactInfo.userName ||
+    activationInfoDraft.businessName !== activationContactInfo.businessName ||
+    activationInfoDraft.province !== activationContactInfo.province ||
+    activationInfoDraft.identityCard !== activationContactInfo.identityCard;
+  const canCreateBackup = isAppActivated || isTrialActive;
+
+  useEffect(() => {
+    setActivationInfoDraft(activationContactInfo);
+  }, [activationContactInfo]);
+
+  const handleSaveActivationContactInfo = () => {
+    if (activationInfoLocked) {
+      showToast('Información bloqueada', 'Los datos no se pueden cambiar después de completar la información y activar la licencia.', 'error');
+      return;
+    }
+
+    if (!activationInfoDraftComplete) {
+      showToast('Información incompleta', 'Complete los cuatro campos antes de guardar. Ningún campo puede quedar vacío.', 'error');
+      return;
+    }
+
+    const updatedInfo = {
+      userName: activationInfoDraft.userName.trim(),
+      businessName: activationInfoDraft.businessName.trim(),
+      province: activationInfoDraft.province.trim(),
+      identityCard: activationInfoDraft.identityCard.trim(),
+    };
+
+    if (updateActivationContactInfo(updatedInfo)) {
+      showToast('Información guardada', 'Los datos del usuario y del negocio se guardaron correctamente.', 'success');
+    }
+  };
 
   // Storage for Last Verified Backup State
   const [lastBackup, setLastBackup] = useState<LastBackupState>(() => {
@@ -78,6 +132,10 @@ export const SettingsView: React.FC = () => {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [backupFormat, setBackupFormat] = useState<'sqlite' | 'json'>('sqlite');
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const handleOpenBackupModal = () => {
+    if (!canCreateBackup) return;
+    setIsBackupModalOpen(true);
+  };
 
   // States for Reset Application Modal
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
@@ -158,6 +216,15 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleStartBackup = async () => {
+    if (!canCreateBackup) {
+      showToast(
+        'Respaldo no disponible',
+        'El respaldo está habilitado durante la prueba gratuita de 7 días o con la aplicación activada.',
+        'error'
+      );
+      return;
+    }
+
     setIsBackingUp(true);
     try {
       if (window.api && window.api.backup) {
@@ -351,7 +418,7 @@ export const SettingsView: React.FC = () => {
     e.preventDefault();
     const clean = normalizeActivationCode(activationCodeInput);
     if (clean.length < ACTIVATION_CODE_MIN_LENGTH || clean.length > ACTIVATION_CODE_LENGTH) {
-      setActivationError('El código debe contener entre 100 y 124 caracteres, sin contar espacios ni guiones.');
+      setActivationError(`El código debe contener entre 100 y ${ACTIVATION_CODE_LENGTH} caracteres, sin contar espacios ni guiones.`);
       return;
     }
     const res = await activateApp(activationCodeInput);
@@ -380,8 +447,26 @@ export const SettingsView: React.FC = () => {
   // GENERADORES DE REPORTES
   // ==========================================
 
+  const saveGeneratedReport = async (
+    input: { title: string; fileName: string; csvContent: string; format: ReportFormat; delimiter?: ',' | ';' },
+    successTitle: string,
+    successMessage: string,
+  ) => {
+    try {
+      const result = await exportReportFile(input);
+      if (result.canceled) return;
+      if (result.error) {
+        showToast('Error al exportar reporte', result.error, 'error');
+        return;
+      }
+      showToast(successTitle, `${successMessage} (${input.format === 'pdf' ? 'PDF' : 'Excel'}).`, 'success');
+    } catch (error: unknown) {
+      showToast('Error al exportar reporte', error instanceof Error ? error.message : 'No se pudo guardar el archivo.', 'error');
+    }
+  };
+
   // Reporte 1: Planilla IPV Diaria con Devoluciones
-  const handleExportDailyIPVExcel = async () => {
+  const handleExportDailyIPVExcel = async (format: ReportFormat) => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -460,23 +545,17 @@ export const SettingsView: React.FC = () => {
     );
 
     const csvContent = '\uFEFF' + rows.join('\r\n');
-    const result = await saveFileWithPicker(csvContent, {
-      suggestedName: `Planilla_IPV_Diaria_${dateFormatted}.csv`,
-      mimeType: 'text/csv;charset=utf-8;',
-      extension: 'csv',
-      description: 'Planilla IPV Diaria (.csv / Excel)',
-    });
-
-    if (result.canceled) return;
-    if (!result.ok) {
-      showToast('Error al exportar planilla', result.error || 'No se pudo guardar el archivo.', 'error');
-      return;
-    }
-    showToast('Planilla Diaria Exportada', `Se generó el archivo con ${ipvRows.length} artículos del IPV.`, 'success');
+    await saveGeneratedReport({
+      title: 'Planilla IPV Diaria',
+      fileName: `Planilla_IPV_Diaria_${dateFormatted}.xlsx`,
+      csvContent,
+      delimiter: ';',
+      format,
+    }, 'Planilla Diaria Exportada', `Se generó el archivo con ${ipvRows.length} artículos del IPV`);
   };
 
   // Reporte 2: Resumen mensual de ventas y devoluciones
-  const handleExportMonthlySummary = async () => {
+  const handleExportMonthlySummary = async (format: ReportFormat) => {
     const now = new Date();
     const monthName = now.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -541,23 +620,17 @@ export const SettingsView: React.FC = () => {
     ];
 
     const csvContent = '\uFEFF' + sections.join('\r\n');
-    const result = await saveFileWithPicker(csvContent, {
-      suggestedName: `Resumen_Mensual_Ventas_${currentYearMonth}.csv`,
-      mimeType: 'text/csv;charset=utf-8;',
-      extension: 'csv',
-      description: 'Resumen mensual de ventas (.csv / Excel)',
-    });
-
-    if (result.canceled) return;
-    if (!result.ok) {
-      showToast('Error al exportar informe', result.error || 'No se pudo guardar el archivo.', 'error');
-      return;
-    }
-    showToast('Resumen Mensual Exportado', `Se descargó el resumen de ventas y devoluciones de ${monthName}.`, 'success');
+    await saveGeneratedReport({
+      title: `Resumen Mensual de Ventas - ${monthName}`,
+      fileName: `Resumen_Mensual_Ventas_${currentYearMonth}.xlsx`,
+      csvContent,
+      delimiter: ';',
+      format,
+    }, 'Resumen Mensual Exportado', `Se generó el resumen de ventas y devoluciones de ${monthName}`);
   };
 
   // Reporte 3: Catálogo Completo de Productos y Existencias de Almacén
-  const handleExportProductsCatalog = async () => {
+  const handleExportProductsCatalog = async (format: ReportFormat) => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -606,23 +679,17 @@ export const SettingsView: React.FC = () => {
     });
 
     const csvContent = '\uFEFF' + rows.join('\r\n');
-    const result = await saveFileWithPicker(csvContent, {
-      suggestedName: `Catalogo_Productos_FerreStock_${dateFormatted}.csv`,
-      mimeType: 'text/csv;charset=utf-8;',
-      extension: 'csv',
-      description: 'Catálogo de Productos (.csv / Excel)',
-    });
-
-    if (result.canceled) return;
-    if (!result.ok) {
-      showToast('Error al exportar catálogo', result.error || 'No se pudo guardar el archivo.', 'error');
-      return;
-    }
-    showToast('Catálogo Exportado', `Se exportaron ${products.length} productos con existencias.`, 'success');
+    await saveGeneratedReport({
+      title: 'Catálogo de Productos y Stock',
+      fileName: `Catalogo_Productos_FerreStock_${dateFormatted}.xlsx`,
+      csvContent,
+      delimiter: ';',
+      format,
+    }, 'Catálogo Exportado', `Se exportaron ${products.length} productos con existencias`);
   };
 
   // Reporte 4: Historial de Ventas y Tickets de Facturación
-  const handleExportSalesHistory = async () => {
+  const handleExportSalesHistory = async (format: ReportFormat) => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -671,23 +738,17 @@ export const SettingsView: React.FC = () => {
     });
 
     const csvContent = '\uFEFF' + rows.join('\r\n');
-    const result = await saveFileWithPicker(csvContent, {
-      suggestedName: `Historial_Ventas_${dateFormatted}.csv`,
-      mimeType: 'text/csv;charset=utf-8;',
-      extension: 'csv',
-      description: 'Historial de Ventas (.csv / Excel)',
-    });
-
-    if (result.canceled) return;
-    if (!result.ok) {
-      showToast('Error al exportar historial', result.error || 'No se pudo guardar el archivo.', 'error');
-      return;
-    }
-    showToast('Historial Exportado', `Se descargaron ${sales.length} tickets de venta.`, 'success');
+    await saveGeneratedReport({
+      title: 'Historial de Ventas',
+      fileName: `Historial_Ventas_${dateFormatted}.xlsx`,
+      csvContent,
+      delimiter: ';',
+      format,
+    }, 'Historial Exportado', `Se descargaron ${sales.length} tickets de venta`);
   };
 
   // Reporte 5: Registro de Devoluciones y Mermas
-  const handleExportReturnsReport = async () => {
+  const handleExportReturnsReport = async (format: ReportFormat) => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -737,20 +798,35 @@ export const SettingsView: React.FC = () => {
     });
 
     const csvContent = '\uFEFF' + rows.join('\r\n');
-    const result = await saveFileWithPicker(csvContent, {
-      suggestedName: `Registro_Devoluciones_${dateFormatted}.csv`,
-      mimeType: 'text/csv;charset=utf-8;',
-      extension: 'csv',
-      description: 'Registro de Devoluciones (.csv / Excel)',
-    });
-
-    if (result.canceled) return;
-    if (!result.ok) {
-      showToast('Error al exportar devoluciones', result.error || 'No se pudo guardar el archivo.', 'error');
-      return;
-    }
-    showToast('Devoluciones Exportadas', `Se descargaron ${returns.length} registros de devolución.`, 'success');
+    await saveGeneratedReport({
+      title: 'Registro de Devoluciones y Mermas',
+      fileName: `Registro_Devoluciones_${dateFormatted}.xlsx`,
+      csvContent,
+      delimiter: ';',
+      format,
+    }, 'Devoluciones Exportadas', `Se descargaron ${returns.length} registros de devolución`);
   };
+
+  const reportExportButtons = (onExport: (format: ReportFormat) => Promise<void>) => (
+    <div className="grid grid-cols-2 gap-2">
+      <button
+        type="button"
+        onClick={() => void onExport('excel')}
+        className="py-2 px-3 rounded-xl bg-surface neo-raised text-green-700 text-xs font-bold hover:text-green-800 active:neo-inset transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+      >
+        <span className="material-symbols-outlined text-[16px]">table_view</span>
+        <span>Excel</span>
+      </button>
+      <button
+        type="button"
+        disabled
+        className="py-2 px-3 rounded-xl bg-surface neo-raised text-orange-600 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-not-allowed shadow-sm"
+      >
+        <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+        <span>PDF</span>
+      </button>
+    </div>
+  );
 
   return (
     <div className="flex flex-col w-full gap-8 select-none pb-14">
@@ -779,8 +855,10 @@ export const SettingsView: React.FC = () => {
         {/* Global Quick Action */}
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setIsBackupModalOpen(true)}
-            className="px-4 py-2.5 rounded-xl bg-primary text-white text-xs font-semibold shadow-md shadow-primary/25 hover:bg-primary-container transition-all flex items-center gap-2 cursor-pointer active:scale-95"
+            onClick={handleOpenBackupModal}
+            disabled={!canCreateBackup}
+            title="Disponible durante la prueba gratuita de 7 días o con la aplicación activada"
+            className="px-4 py-2.5 rounded-xl bg-primary text-white text-xs font-semibold shadow-md shadow-primary/25 hover:bg-primary-container transition-all flex items-center gap-2 enabled:cursor-pointer enabled:active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             type="button"
           >
             <span className="material-symbols-outlined text-[18px]">backup</span>
@@ -832,7 +910,20 @@ export const SettingsView: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => setActiveTab('licencia')}
+          onClick={() => setActiveTab('informacion')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'informacion'
+              ? 'bg-surface neo-raised text-primary'
+              : 'text-on-surface-variant hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">badge</span>
+          <span>Información</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab(activationInfoComplete ? 'licencia' : 'informacion')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
             activeTab === 'licencia'
               ? 'bg-surface neo-raised text-primary'
@@ -845,7 +936,223 @@ export const SettingsView: React.FC = () => {
             <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
           )}
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('ayuda')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'ayuda'
+              ? 'bg-surface neo-raised text-primary'
+              : 'text-on-surface-variant hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">help</span>
+          <span>Ayuda</span>
+        </button>
       </div>
+
+      {activeTab === 'ayuda' && (
+        <section className="flex flex-col gap-6 animate-in fade-in duration-200">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-lg font-headline font-bold text-on-surface">Ayuda y soporte técnico</h2>
+            <p className="text-sm text-on-surface-variant">
+              Contacte al equipo de soporte y consulte información sencilla sobre el uso y cuidado de sus datos.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <a
+              href="tel:+5363242069"
+              className="flex items-center gap-3 p-4 rounded-2xl bg-surface neo-raised text-on-surface hover:text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-[24px] text-primary">call</span>
+              <span className="flex flex-col gap-1">
+                <span className="text-xs font-bold">Teléfono</span>
+                <span className="text-sm">+53 63242069</span>
+              </span>
+            </a>
+            <a
+              href="https://t.me/oswydevops"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 p-4 rounded-2xl bg-surface neo-raised text-on-surface hover:text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-[24px] text-primary">send</span>
+              <span className="flex flex-col gap-1">
+                <span className="text-xs font-bold">Telegram</span>
+                <span className="text-sm">@oswydevops</span>
+              </span>
+            </a>
+            <a
+              href="mailto:ing.osvaldonavasmartinez@gmail.com"
+              className="flex items-center gap-3 p-4 rounded-2xl bg-surface neo-raised text-on-surface hover:text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-[24px] text-primary">mail</span>
+              <span className="flex flex-col gap-1 min-w-0">
+                <span className="text-xs font-bold">Correo electrónico</span>
+                <span className="text-sm break-all">ing.osvaldonavasmartinez@gmail.com</span>
+              </span>
+            </a>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <article className="p-5 rounded-2xl bg-surface neo-raised flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">shield</span>
+                <h3 className="font-bold text-base text-on-surface">Seguridad y cuidado de la información</h3>
+              </div>
+              <ul className="list-disc pl-5 flex flex-col gap-2 text-sm text-on-surface-variant leading-relaxed">
+                <li>Los productos, ventas, movimientos y cierres se guardan en la base de datos local de este equipo.</li>
+                <li>FerreStock no envía automáticamente esos registros a soporte. Al contactar o exportar un respaldo, revise qué información comparte.</li>
+                <li>Proteja su sesión de Windows y guarde las copias de seguridad en un lugar seguro. La contraseña de reinicio autoriza el borrado de datos; no cifra la base de datos.</li>
+                <li>El código de licencia está vinculado al ID de instalación que aparece en esta configuración. No lo publique ni lo comparta.</li>
+              </ul>
+            </article>
+
+            <article className="p-5 rounded-2xl bg-surface neo-raised flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">description</span>
+                <h3 className="font-bold text-base text-on-surface">Términos y condiciones</h3>
+              </div>
+              <ul className="list-disc pl-5 flex flex-col gap-2 text-sm text-on-surface-variant leading-relaxed">
+                <li>Use FerreStock para administrar información legítima de su negocio y mantenga los datos introducidos correctos y actualizados.</li>
+                <li>Usted es responsable de conservar respaldos y de proteger el acceso al equipo donde se guardan sus datos.</li>
+                <li>La licencia se valida para el ID de instalación mostrado en la aplicación. Para solicitar ayuda, facilite ese ID y describa el problema sin enviar datos innecesarios.</li>
+                <li>El reinicio de la aplicación elimina permanentemente los registros comerciales locales. Genere y compruebe un respaldo antes de restablecerla.</li>
+                <li>FerreStock ayuda a organizar registros; no sustituye el asesoramiento contable, fiscal o legal que requiera su negocio.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'informacion' && (
+        <section className="flex flex-col gap-6 animate-in fade-in duration-200">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-lg font-headline font-bold text-on-surface">Información del usuario y del negocio</h2>
+            <p className="text-sm text-on-surface-variant">
+              Complete estos datos para solicitar por WhatsApp el código de activación de su licencia.
+              Guarde los cambios para actualizar la información de contacto.
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-surface neo-raised p-6 grid grid-cols-1 md:grid-cols-2 gap-5">
+            <label className="flex flex-col gap-2 text-xs font-bold text-on-surface">
+              Nombre y Apellidos
+              <input
+                type="text"
+                autoComplete="name"
+                required
+                aria-invalid={isActivationInfoFieldMissing('userName')}
+                aria-describedby={isActivationInfoFieldMissing('userName') ? 'user-name-required' : undefined}
+                value={activationInfoDraft.userName}
+                onChange={(event) => setActivationInfoDraft((draft) => ({ ...draft, userName: event.target.value }))}
+                disabled={activationInfoLocked}
+                placeholder="Nombre y apellidos del usuario"
+                className={activationInfoInputClass('userName')}
+              />
+              {isActivationInfoFieldMissing('userName') && (
+                <span id="user-name-required" role="alert" className="text-xs font-medium text-red-600">
+                  Este campo es obligatorio.
+                </span>
+              )}
+            </label>
+
+            <label className="flex flex-col gap-2 text-xs font-bold text-on-surface">
+              Nombre del negocio
+              <input
+                type="text"
+                autoComplete="organization"
+                required
+                aria-invalid={isActivationInfoFieldMissing('businessName')}
+                aria-describedby={isActivationInfoFieldMissing('businessName') ? 'business-name-required' : undefined}
+                value={activationInfoDraft.businessName}
+                onChange={(event) => setActivationInfoDraft((draft) => ({ ...draft, businessName: event.target.value }))}
+                disabled={activationInfoLocked}
+                placeholder="Nombre del negocio"
+                className={activationInfoInputClass('businessName')}
+              />
+              {isActivationInfoFieldMissing('businessName') && (
+                <span id="business-name-required" role="alert" className="text-xs font-medium text-red-600">
+                  Este campo es obligatorio.
+                </span>
+              )}
+            </label>
+
+            <label className="flex flex-col gap-2 text-xs font-bold text-on-surface">
+              Provincia
+              <input
+                type="text"
+                autoComplete="address-level1"
+                required
+                aria-invalid={isActivationInfoFieldMissing('province')}
+                aria-describedby={isActivationInfoFieldMissing('province') ? 'province-required' : undefined}
+                value={activationInfoDraft.province}
+                onChange={(event) => setActivationInfoDraft((draft) => ({ ...draft, province: event.target.value }))}
+                disabled={activationInfoLocked}
+                placeholder="Provincia"
+                className={activationInfoInputClass('province')}
+              />
+              {isActivationInfoFieldMissing('province') && (
+                <span id="province-required" role="alert" className="text-xs font-medium text-red-600">
+                  Este campo es obligatorio.
+                </span>
+              )}
+            </label>
+
+            <label className="flex flex-col gap-2 text-xs font-bold text-on-surface">
+              CI
+              <input
+                type="text"
+                autoComplete="off"
+                required
+                aria-invalid={isActivationInfoFieldMissing('identityCard')}
+                aria-describedby={isActivationInfoFieldMissing('identityCard') ? 'identity-card-required' : undefined}
+                value={activationInfoDraft.identityCard}
+                onChange={(event) => setActivationInfoDraft((draft) => ({ ...draft, identityCard: event.target.value }))}
+                disabled={activationInfoLocked}
+                placeholder="Carné de identidad"
+                className={activationInfoInputClass('identityCard')}
+              />
+              {isActivationInfoFieldMissing('identityCard') && (
+                <span id="identity-card-required" role="alert" className="text-xs font-medium text-red-600">
+                  Este campo es obligatorio.
+                </span>
+              )}
+            </label>
+
+            <div className="md:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p
+                role="status"
+                className={`text-xs font-medium ${
+                  activationInfoLocked || (activationInfoComplete && !activationInfoHasChanges)
+                    ? 'text-emerald-700'
+                    : 'text-on-surface-variant'
+                }`}
+              >
+                {activationInfoLocked
+                  ? 'Información guardada y bloqueada porque la licencia ya está activada.'
+                  : activationInfoDraftComplete
+                    ? activationInfoHasChanges
+                      ? hasLicenseRecord
+                        ? 'Guarde los cambios completos; después quedarán bloqueados por la licencia.'
+                        : 'Los cuatro campos están completos. Guarde los cambios antes de activar la licencia.'
+                      : 'Información completa. Ya puede solicitar su código de activación por WhatsApp.'
+                    : 'Complete los cuatro campos para guardar la información. Ningún campo puede quedar vacío.'}
+              </p>
+              <button
+                type="button"
+                onClick={handleSaveActivationContactInfo}
+                disabled={activationInfoLocked || !activationInfoHasChanges || !activationInfoDraftComplete}
+                className="h-10 px-5 rounded-xl bg-primary text-white text-xs font-bold shadow-sm hover:bg-primary-container transition-all flex items-center justify-center gap-2 enabled:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                <span>Guardar</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ========================================================= */}
       {/* TAB 1: GENERAR REPORTES */}
@@ -857,7 +1164,7 @@ export const SettingsView: React.FC = () => {
               Tipos de Reportes Disponibles para Exportar
             </h2>
             <span className="text-xs text-on-surface-variant">
-              Seleccione el formato y tipo de documento que desea generar en hojas de cálculo compatibles con Microsoft Excel y LibreOffice.
+              Exporte sus reportes a Excel. La exportación a PDF está temporalmente deshabilitada.
             </span>
           </div>
 
@@ -883,17 +1190,10 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Formato: .CSV / Excel</span>
+                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
                   <span>{ipvRows.length} artículos</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleExportDailyIPVExcel}
-                  className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-primary text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[17px]">file_download</span>
-                  <span>Descargar Documento</span>
-                </button>
+                {reportExportButtons(handleExportDailyIPVExcel)}
               </div>
             </div>
 
@@ -918,17 +1218,10 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Formato: .CSV / Excel</span>
+                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
                   <span>{sales.filter((sale) => sale.date?.startsWith((todayDate || new Date().toISOString()).slice(0, 7)) && !(sale as any).voided).length} tickets mes</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleExportMonthlySummary}
-                  className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-tertiary text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[17px]">download_for_offline</span>
-                  <span>Descargar Resumen</span>
-                </button>
+                {reportExportButtons(handleExportMonthlySummary)}
               </div>
             </div>
 
@@ -953,17 +1246,10 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Formato: .CSV / Excel</span>
+                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
                   <span>{products.length} productos</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleExportProductsCatalog}
-                  className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-emerald-700 text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[17px]">output</span>
-                  <span>Exportar Catálogo</span>
-                </button>
+                {reportExportButtons(handleExportProductsCatalog)}
               </div>
             </div>
 
@@ -988,17 +1274,10 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Formato: .CSV / Excel</span>
+                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
                   <span>{sales.length} registros</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleExportSalesHistory}
-                  className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-blue-600 text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[17px]">receipt</span>
-                  <span>Exportar Tickets de Venta</span>
-                </button>
+                {reportExportButtons(handleExportSalesHistory)}
               </div>
             </div>
 
@@ -1023,17 +1302,10 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Formato: .CSV / Excel</span>
+                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
                   <span>{returns.length} devoluciones</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleExportReturnsReport}
-                  className="w-full py-2.5 px-4 rounded-xl bg-surface neo-raised text-amber-700 text-xs font-bold hover:text-on-surface active:neo-inset transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[17px]">assignment_return</span>
-                  <span>Exportar Devoluciones</span>
-                </button>
+                {reportExportButtons(handleExportReturnsReport)}
               </div>
             </div>
           </div>
@@ -1121,14 +1393,16 @@ export const SettingsView: React.FC = () => {
                 <div className="flex flex-col">
                   <h3 className="font-bold text-base text-on-surface">Crear Copia de Seguridad</h3>
                   <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
-                    Empaqueta todos los productos, ventas, movimientos del IPV, arqueos y devoluciones en un archivo seguro en disco.
+                    Empaqueta todos los productos, ventas, movimientos del IPV, arqueos y devoluciones en un archivo seguro en disco. Disponible durante la prueba gratuita de 7 días o con la aplicación activada.
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setIsBackupModalOpen(true)}
-                className="w-full py-2.5 px-4 rounded-xl bg-primary text-white text-xs font-bold shadow hover:bg-primary-container transition-all flex items-center justify-center gap-2 cursor-pointer"
+                onClick={handleOpenBackupModal}
+                disabled={!canCreateBackup}
+                title="Disponible durante la prueba gratuita de 7 días o con la aplicación activada"
+                className="w-full py-2.5 px-4 rounded-xl bg-primary text-white text-xs font-bold shadow hover:bg-primary-container transition-all flex items-center justify-center gap-2 enabled:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined text-[17px]">backup</span>
                 <span>Iniciar Respaldo Completo</span>
@@ -1313,6 +1587,31 @@ export const SettingsView: React.FC = () => {
       {/* ========================================================= */}
       {activeTab === 'licencia' && (
         <section className="flex flex-col gap-6 animate-in fade-in duration-200">
+          <div className="relative overflow-hidden rounded-2xl border border-amber-300/60 bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-100 p-5 shadow-md sm:p-6">
+            <div className="absolute -right-8 -top-10 h-36 w-36 rounded-full bg-amber-300/25" />
+            <div className="absolute -bottom-16 right-20 h-32 w-32 rounded-full bg-orange-300/20" />
+            <div className="relative flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-md shadow-amber-700/20">
+                <span className="material-symbols-outlined text-[26px]">workspace_premium</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.16em] text-amber-800">
+                    Pago único
+                  </span>
+                  <span className="rounded-full bg-emerald-600/10 px-2.5 py-1 text-[10px] font-bold text-emerald-800">
+                    Sin cuotas mensuales ni anuales
+                  </span>
+                </div>
+                <p className="text-sm leading-relaxed text-amber-950 sm:text-base">
+                  El precio de la licencia de la plataforma es único: <strong className="font-extrabold">3,500 pesos cubanos</strong>.
+                  Al realizar este pago podrá usar las funciones de la aplicación sin limitaciones de manera permanente,
+                  sin cuotas mensuales ni anuales.
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-col">
             <h2 className="text-lg font-headline font-bold text-on-surface">
               Licencia de Activación
@@ -1372,7 +1671,18 @@ export const SettingsView: React.FC = () => {
               <div className="flex flex-col gap-3 p-4 rounded-xl bg-surface neo-inset text-xs">
                 <div className="flex items-center justify-between">
                   <span className="text-on-surface-variant">ID de Instalación:</span>
-                  <span className="font-mono font-bold text-primary tracking-wider">{installationId}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-primary tracking-wider">{installationId}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText(installationId, 'ID de instalación')}
+                      title="Copiar ID de instalación"
+                      aria-label="Copiar ID de instalación"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">content_copy</span>
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-on-surface-variant">Clave Activa:</span>
@@ -1395,14 +1705,18 @@ export const SettingsView: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <span className="text-on-surface-variant">Fecha de vencimiento:</span>
                       <span className="font-mono text-on-surface-variant text-[11px]">
-                        {licenseExpiryDate
+                        {licenseIsLifetime
+                          ? 'No Expira'
+                          : licenseExpiryDate
                           ? new Date(`${licenseExpiryDate}T12:00:00`).toLocaleDateString('es-ES')
                           : '—'}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-on-surface-variant">Días restantes:</span>
-                      <span className="font-mono text-on-surface-variant text-[11px]">{licenseDaysRemaining}</span>
+                      <span className="font-mono text-on-surface-variant text-[11px]">
+                        {licenseIsLifetime ? '∞' : licenseDaysRemaining}
+                      </span>
                     </div>
                   </>
                 )}
@@ -1415,7 +1729,9 @@ export const SettingsView: React.FC = () => {
                     <span>Licencia vigente. Todas las funciones están habilitadas.</span>
                   </div>
                   <span className="text-xs text-on-surface-variant">
-                    {licenseDaysRemaining} {licenseDaysRemaining === 1 ? 'día restante' : 'días restantes'}.
+                    {licenseIsLifetime
+                      ? 'Licencia vitalicia.'
+                      : `${licenseDaysRemaining} ${licenseDaysRemaining === 1 ? 'día restante' : 'días restantes'}.`}
                   </span>
                 </div>
               ) : licenseReadOnly ? (
@@ -1447,7 +1763,7 @@ export const SettingsView: React.FC = () => {
               <div className="flex flex-col gap-1">
                 <h3 className="font-bold text-base text-on-surface">Introducir Código de Activación</h3>
                 <p className="text-xs text-on-surface-variant leading-relaxed">
-                  Código firmado asociado a este ID de instalación (100–124 caracteres). Se ignoran espacios, guiones y saltos de línea.
+                  Código firmado y vinculado al ID de instalación (100–{ACTIVATION_CODE_LENGTH} caracteres). Se ignoran espacios, guiones y saltos de línea.
                 </p>
               </div>
 
@@ -1457,7 +1773,7 @@ export const SettingsView: React.FC = () => {
                     <label className="text-xs font-bold text-on-surface">Código de activación firmado:</label>
                     <span className="text-[11px] font-mono text-on-surface-variant">
                       {normalizeActivationCode(activationCodeInput).length}
-                      {' / 100–124'}
+                      {' / 100–'}{ACTIVATION_CODE_LENGTH}
                     </span>
                   </div>
                   <div className="flex gap-2">
@@ -1510,7 +1826,7 @@ export const SettingsView: React.FC = () => {
               </form>
 
               <div className="pt-3 border-t border-outline-variant/15 text-[11px] text-on-surface-variant flex items-center justify-between">
-                <span>Firma digital</span>
+                <span>Código cifrado digitalmente</span>
                 <span className="font-mono">FerreStock v1.1.0</span>
               </div>
             </div>
@@ -1518,7 +1834,6 @@ export const SettingsView: React.FC = () => {
 
         {/* Card de Solicitud de Código y Contacto Directo */}
           <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-5">
-            {/* 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant/15 pb-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/15 neo-inset flex items-center justify-center text-emerald-700 shrink-0">
@@ -1526,10 +1841,10 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <div className="flex flex-col">
                   <h3 className="font-bold text-base text-on-surface">
-                    Solicitud de Código de Activación y Soporte Directo
+                    Solicitud de Código de Activación
                   </h3>
-                  <p className="text-xs text-on-surface-variant">
-                    Comuníquese directamente para obtener el código firmado válido para esta instalación.
+                  <p className="text-xs text-on-surface-variant ">
+                    Comuníquese directamente para obtener el código de activación de su licencia.
                   </p>
                 </div>
               </div>
@@ -1540,12 +1855,37 @@ export const SettingsView: React.FC = () => {
                   Atención Activa
                 </span>
               </div>
-            </div> */}
-            
+            </div>
+
+            <aside
+              role="note"
+              aria-labelledby="whatsapp-payment-note-title"
+              className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4"
+            >
+              <span className="material-symbols-outlined mt-0.5 text-[22px] text-amber-700" aria-hidden="true">
+                info
+              </span>
+              <div className="flex flex-col gap-1.5">
+                <h4 id="whatsapp-payment-note-title" className="text-sm font-bold text-amber-900">
+                  Importante: ¿No tiene WhatsApp en esta PC?
+                </h4>
+                <p className="text-xs leading-relaxed text-amber-950">
+                  Copie el número de confirmación del pago y escríbanos por WhatsApp desde su teléfono móvil.
+                  No debera olvidar copiar también el texto predeterminado de la opción «WhatsApp Directo» y adjuntar una captura
+                  del pago realizado para validar la transacción.
+                </p>
+                <p className="text-xs font-semibold text-amber-900">
+                  Muchas gracias por su preferencia y confianza en FerreStock.
+                </p>
+              </div>
+            </aside>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* Opción 1: WhatsApp Directo 
               <div className="p-5 rounded-xl bg-surface neo-inset flex flex-col justify-between gap-4 border border-emerald-500/20">
                 <div className="flex flex-col gap-2.5">
+                  <span className="text-[11px] uppercase font-bold tracking-wider text-emerald-700">
+                  WhatsApp Directo
+                  </span>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-lg bg-[#25D366] text-white flex items-center justify-center shadow-sm">
@@ -1558,22 +1898,44 @@ export const SettingsView: React.FC = () => {
                   </div>
 
                   <p className="text-xs text-on-surface-variant leading-relaxed">
-                    Haga clic para abrir WhatsApp directamente con el mensaje predeterminado que contiene su ID de instalación:
+                    {activationInfoComplete
+                      ? 'Haga clic para abrir WhatsApp con sus datos y el ID de instalación:'
+                      : 'Complete y guarde la información del usuario y del negocio para habilitar WhatsApp y mostrar los datos de pago.'}
                   </p>
 
-                  <div className="p-3 rounded-lg bg-surface neo-raised text-xs text-on-surface border border-outline-variant/20 italic">
-                    «Hola, solicito el código de activación para FerreStock. Mi ID de instalación es: <strong className="font-mono text-primary not-italic">{installationId}</strong>»
+                  <div className="flex items-start gap-2 p-3 rounded-lg bg-surface neo-raised text-xs text-on-surface border border-outline-variant/20">
+                    <span className="flex-1 italic">«{activationMessage}»</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText(activationMessage, 'Mensaje predeterminado')}
+                      disabled={!activationInfoComplete}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Copiar mensaje predeterminado"
+                      aria-label="Copiar mensaje predeterminado"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">content_copy</span>
+                    </button>
                   </div>
+                  <p className="text-xs text-black font-bold leading-relaxed">IMPORTANTE:
+                    No olvide adjuntar en el texto una captura de pantalla del pago realizado para verificar la transacción.
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <a
-                    href={`https://wa.me/5363242069?text=${encodeURIComponent(
-                      `Hola, solicito el código de activación para FerreStock. Mi ID de instalación es: ${installationId}`
-                    )}`}
+                    href={activationInfoComplete ? activationWhatsAppUrl : undefined}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-1 py-2.5 px-4 rounded-xl bg-[#25D366] text-white text-xs font-bold hover:brightness-105 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-sm"
+                    aria-disabled={!activationInfoComplete}
+                    tabIndex={activationInfoComplete ? 0 : -1}
+                    onClick={(event) => {
+                      if (!activationInfoComplete) event.preventDefault();
+                    }}
+                    className={`flex-1 py-2.5 px-4 rounded-xl text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm ${
+                      activationInfoComplete
+                        ? 'bg-[#25D366] hover:brightness-105 active:scale-[0.98] cursor-pointer'
+                        : 'bg-[#25D366]/50 cursor-not-allowed'
+                    }`}
                   >
                     <svg className="w-4 h-4 fill-current shrink-0" viewBox="0 0 24 24">
                       <path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.816 9.816 0 0 0 12.04 2zm0 18.15c-1.48 0-2.93-.4-4.2-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.16 8.16 0 0 1-1.25-4.38c0-4.54 3.7-8.24 8.24-8.24 2.2 0 4.27.86 5.82 2.42a8.17 8.17 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.23 8.23zm4.52-6.17c-.25-.12-1.47-.72-1.7-.81-.23-.08-.39-.12-.56.12-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.12-1.05-.39-2-1.23-.74-.66-1.24-1.47-1.39-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.29.37-.43.12-.14.17-.25.25-.41.08-.17.04-.31-.02-.43s-.56-1.34-.76-1.84c-.2-.48-.41-.42-.56-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.1 0 1.24.9 2.44 1.03 2.61.12.17 1.78 2.71 4.3 3.8.6.26 1.07.41 1.44.53.61.19 1.16.17 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.07.14-1.18-.06-.12-.22-.19-.47-.31z" />
@@ -1581,81 +1943,128 @@ export const SettingsView: React.FC = () => {
                     <span>WhatsApp</span>
                   </a>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const msg = `Hola, solicito el código de activación para FerreStock. Mi ID de instalación es: ${installationId}`;
-                      handleCopyText(msg, 'Mensaje predeterminado');
-                    }}
-                    className="p-2.5 rounded-xl bg-surface neo-raised hover:text-primary active:neo-inset text-on-surface-variant transition-all cursor-pointer"
-                    title="Copiar mensaje predeterminado"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">content_copy</span>
-                  </button>
                 </div>
-              </div> */}
+              </div>
 
-              {/* Opción 2: Sin WhatsApp en la PC (Información Telefónica Separada) 
               <div className="p-5 rounded-xl bg-surface neo-inset flex flex-col justify-between gap-4 border border-blue-500/20">
                 <div className="flex flex-col gap-2.5">
+                  <span className="text-[11px] uppercase font-bold tracking-wider text-blue-700">
+                    Método de Pago
+                  </span>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-lg bg-primary text-white flex items-center justify-center shadow-sm">
-                        <span className="material-symbols-outlined text-[18px]">phone</span>
+                        <span className="material-symbols-outlined text-[18px]">credit_card</span>
                       </div>
                       <span className="font-bold text-sm text-on-surface">
-                        ¿No tiene WhatsApp en esta PC?
+                        Datos para realizar el pago
                       </span>
                     </div>
-                    <span className="text-[11px] text-blue-700 font-bold bg-blue-500/15 px-2 py-0.5 rounded-full">
-                      Añadir de forma manual
-                    </span>
                   </div>
 
-                  <p className="text-xs text-on-surface-variant leading-relaxed">
-                    Si está utilizando una computadora sin WhatsApp instalado o web, puede copiar el número y escribir desde el whatsapp de su móvil copiando el texto predeterminado de que aparece al lado del botón de whatsapp.
-                  </p>
+                  <div className="flex justify-center [perspective:1000px]">
+                    <div
+                      className={`relative h-40 w-full max-w-[320px] rounded-xl transition-transform duration-700 [transform-style:preserve-3d] ${
+                        isPaymentQrVisible ? '[transform:rotateY(180deg)]' : ''
+                      }`}
+                    >
+                      <div
+                        className="absolute inset-0 overflow-hidden rounded-xl border border-blue-300/30 p-4 text-white shadow-lg [backface-visibility:hidden]"
+                        style={{ background: 'linear-gradient(135deg, #172554 0%, #1d4ed8 55%, #312e81 100%)' }}
+                      >
+                        <div className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-cyan-300/15" />
+                        <div className="absolute -bottom-16 -left-8 h-32 w-32 rounded-full bg-indigo-300/15" />
+                        <div className="relative flex items-start justify-between gap-3">
+                          <div className="flex flex-col gap-4">
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/70">
+                              Tarjeta de pago
+                            </span>
+                            <span className="font-mono text-base sm:text-lg font-bold tracking-wider whitespace-nowrap">
+                              {activationInfoComplete ? '9224 9598 7518 7625' : 'XXXX XXXX XXXX XXXX'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText('9224959875187625', 'Número de tarjeta')}
+                            disabled={!activationInfoComplete}
+                            className="relative shrink-0 rounded-lg bg-white/15 p-2 text-white transition-colors hover:bg-white/25 enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                            title="Copiar número de tarjeta"
+                            aria-label="Copiar número de tarjeta"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">content_copy</span>
+                          </button>
+                        </div>
+                        <div className="relative mt-4 flex items-end justify-between text-[10px] font-medium uppercase tracking-wider text-white/65">
+                          <span>Banco Metropolitano</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsPaymentQrVisible(true)}
+                            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15"
+                            aria-label="Ver QR de pago"
+                          >
+                            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">visibility</span>
+                            <span>Ver QR</span>
+                          </button>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-surface neo-raised flex-wrap gap-2">
+                      <div
+                        className="absolute inset-0 flex flex-col items-center justify-between overflow-hidden rounded-xl border border-blue-300/30 p-3 text-white shadow-lg [backface-visibility:hidden] [transform:rotateY(180deg)]"
+                        style={{ background: 'linear-gradient(135deg, #172554 0%, #1d4ed8 55%, #312e81 100%)' }}
+                      >
+                        <div className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-cyan-300/15" />
+                        <div className="absolute -bottom-16 -left-8 h-32 w-32 rounded-full bg-indigo-300/15" />
+                        <img
+                          src={paymentQrImage}
+                          alt="Código QR para realizar el pago"
+                          className="relative h-28 w-28 rounded-lg bg-white p-1 object-contain"
+                        />
+                        <div className="relative flex w-full items-end justify-between gap-2 text-[10px] font-medium uppercase tracking-wider text-white/65">
+                          <span>Escanee para pagar</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsPaymentQrVisible(false)}
+                            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15"
+                            aria-label="Volver a la tarjeta de pago"
+                          >
+                            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">visibility</span>
+                            <span>Ver Cuenta</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface neo-raised p-3">
                     <div className="flex flex-col">
                       <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">
-                        Móvil de contacto (WhatsApp):
+                        Móvil a confirmar:
                       </span>
                       <span className="font-mono text-base font-bold text-on-surface">
-                        +53 63242069
+                        {activationInfoComplete ? '+53 63242069' : '+XX XXXXXXXX'}
                       </span>
                     </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => handleCopyText('+53 63242069', 'Número de teléfono')}
-                        className="px-2.5 py-1.5 rounded-lg bg-surface neo-raised hover:text-primary active:neo-inset text-xs font-bold text-on-surface transition-all flex items-center gap-1 cursor-pointer"
-                        title="Copiar número de teléfono"
-                      >
-                        <span className="material-symbols-outlined text-[15px]">content_copy</span>
-                        <span>Copiar</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText('+5356515392', 'Móvil de confirmación')}
+                      disabled={!activationInfoComplete}
+                      className="shrink-0 px-2.5 py-1.5 rounded-lg bg-surface neo-raised hover:text-primary active:neo-inset text-xs font-bold text-on-surface transition-all flex items-center gap-1 enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Copiar móvil de confirmación"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">content_copy</span>
+                      <span>Copiar</span>
+                    </button>
                   </div>
-                </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-outline-variant/15 text-sm text-on-surface-variant">
-                  <span>No olvide mencionar en el texto su ID de instalación:</span>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyText(installationId, 'ID de instalación')}
-                    className="font-mono font-bold text-primary flex items-center gap-1 cursor-pointer"
-                    title="Haga clic para copiar su ID"
-                  >
-                    <span>{installationId}</span>
-                    <span className="material-symbols-outlined text-[14px]">content_copy</span>
-                  </button>
+                  <p className="text-[11px] leading-relaxed text-on-surface-variant">
+                    Puede realizar el pago mediante EnZona o Transfermóvil, para usar otra plataforma u otra moneda, comuníquese directamente para recibir instrucciones de pago y confirmación.
+                  </p>
                 </div>
-              </div> */}
+              </div>
             </div>
           </div>               
-        </section>
+
+          </section>
       )}
 
       {/* ========================================================= */}
@@ -1710,8 +2119,9 @@ export const SettingsView: React.FC = () => {
               <button
                 type="button"
                 onClick={handleStartBackup}
-                disabled={isBackingUp}
-                className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold shadow hover:bg-primary-container active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
+                disabled={isBackingUp || !canCreateBackup}
+                title={!canCreateBackup ? 'Disponible durante la prueba gratuita de 7 días o con la aplicación activada' : undefined}
+                className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold shadow hover:bg-primary-container active:scale-95 transition-all flex items-center gap-2 enabled:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isBackingUp ? (
                   <>

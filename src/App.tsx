@@ -20,7 +20,8 @@ const MainContent: React.FC = () => {
   const { currentView, hasAppAccess, settingsTab } = useApp();
   const isConfigView = currentView === 'configuracion' || currentView === 'respaldo-y-exportacion';
   const isLocked = !hasAppAccess;
-  const showSettings = isConfigView && (hasAppAccess || settingsTab === 'licencia');
+  const showSettings =
+    isConfigView && (hasAppAccess || settingsTab === 'licencia' || settingsTab === 'informacion' || settingsTab === 'ayuda');
 
   return (
     <div className="bg-surface font-body text-on-surface antialiased min-h-screen">

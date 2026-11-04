@@ -100,9 +100,11 @@ export interface LicenseStatus {
   issueDate: string | null;
   expiryDate: string | null;
   daysRemaining: number;
+  isLifetime: boolean;
   licenseType: string | null;
   activationCode: string;
   errorCode?: string | null;
+  lastSeenDate?: string | null;
 }
 
 export interface IpvApi {
@@ -113,6 +115,7 @@ export interface IpvApi {
   license?: {
     status(): Promise<LicenseStatus>;
     activate(code: string): Promise<LicenseStatus>;
+    deactivate(): Promise<LicenseStatus>;
     trialStatus(): Promise<{ isActive: boolean; daysRemaining: number }>;
   };
   products: {
@@ -147,6 +150,17 @@ export interface IpvApi {
     resetApplication(password: string): Promise<{ ok: boolean; cleared?: Record<string, number> }>;
   };
   reports: {
+    exportarCierreFormato(input: {
+      date: string;
+      format: 'excel' | 'pdf';
+    }): Promise<{ canceled: boolean; path?: string; fecha?: string; format?: 'excel' | 'pdf' }>;
+    exportarTabla(input: {
+      title: string;
+      fileName: string;
+      csvContent: string;
+      delimiter?: ',' | ';';
+      format: 'excel' | 'pdf';
+    }): Promise<{ canceled: boolean; path?: string }>;
     exportarCierre(date: string): Promise<{ ok: boolean; pdfPath: string; excelPath: string; directory?: string; fecha: string }>;
   };
   exportarCierre?(date: string): Promise<{ ok: boolean; pdfPath: string; excelPath: string; directory?: string; fecha: string }>;

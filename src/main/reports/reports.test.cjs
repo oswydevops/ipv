@@ -210,6 +210,8 @@ async function run() {
           today: () => fecha,
           observeLicenseDate: () => ({ clockRollback: false, currentDate: fecha }),
           getLicenseRecord: () => ({ installation_id: 'ABC234', payload: null }),
+          getInstallationIdentity: () => ({ installationId: 'ABC234' }),
+          installationMatches: () => true,
           resetAll: () => { resetCalled = true; return { cleared: { products: 1 } }; },
         },
         { trialStatePath: path.join(directory, 'trial.json') }
@@ -229,6 +231,21 @@ async function run() {
       assert.strictEqual(exported.excelPath, selectedPath);
       assert.ok(fs.existsSync(selectedPath));
       assert.ok(saveDialogOptions.defaultPath.endsWith(`cierre-${fecha}.xlsx`));
+
+      const tableExportPath = path.join(directory, 'tabla-exportada.xlsx');
+      nextSaveResult = { canceled: false, filePath: tableExportPath };
+      const exportedTable = await handlers['reportes:exportar-tabla']({
+        title: 'Reporte de prueba',
+        fileName: 'reporte.xlsx',
+        csvContent: 'Nombre,Importe\nProducto,12.5',
+        delimiter: ',',
+        format: 'excel',
+      });
+      assert.strictEqual(exportedTable.path, tableExportPath);
+      const tableWorkbook = new ExcelJS.Workbook();
+      await tableWorkbook.xlsx.readFile(tableExportPath);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(1).values.slice(1), ['Nombre', 'Importe']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(2).values.slice(1), ['Producto', '12.5']);
 
       const fileExportPath = path.join(directory, 'exportacion-elegida.csv');
       nextSaveResult = { canceled: false, filePath: fileExportPath };

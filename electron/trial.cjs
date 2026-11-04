@@ -34,4 +34,21 @@ function getTrialStatus(filePath, now = Date.now()) {
   };
 }
 
-module.exports = { getTrialStatus, TRIAL_DURATION_MS };
+function getTrialLastSeenDate(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const state = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  if (
+    !state ||
+    !Number.isFinite(state.startedAt) ||
+    !Number.isFinite(state.lastSeenAt) ||
+    state.startedAt <= 0 ||
+    state.lastSeenAt < state.startedAt
+  ) {
+    throw new Error('El estado local de la prueba gratuita no es válido.');
+  }
+  const date = new Date(state.lastSeenAt);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+module.exports = { getTrialLastSeenDate, getTrialStatus, TRIAL_DURATION_MS };

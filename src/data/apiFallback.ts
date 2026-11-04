@@ -531,6 +531,12 @@ export function createFallbackApi(): IpvApi {
     },
 
     reports: {
+      async exportarCierreFormato() {
+        throw new Error('La exportación de reportes requiere la aplicación de escritorio.');
+      },
+      async exportarTabla() {
+        throw new Error('La exportación de reportes requiere la aplicación de escritorio.');
+      },
       async exportarCierre(date: string) {
         const targetDate = date || getTodayStr();
         const [year, month] = targetDate.split('-');

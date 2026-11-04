@@ -13,6 +13,7 @@ const Database = require('better-sqlite3');
 const crypto = require('crypto');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
+const { installationIdMatches } = require('./license.cjs');
 
 class DomainError extends Error {
   constructor(code, message) {
@@ -41,6 +42,34 @@ function readMachineGuid() {
     );
     const match = output.match(/^\s*MachineGuid\s+REG_SZ\s+([^\r\n]+)\s*$/im);
     return match ? match[1].trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function readVolumeSerial() {
+  if (process.platform !== 'win32') return null;
+  const systemDrive = process.env.SystemDrive;
+  if (!/^[a-z]:$/i.test(systemDrive || '')) return null;
+
+  try {
+    const output = execFileSync(
+      'wmic.exe',
+      ['logicaldisk', 'where', `DeviceID='${systemDrive}'`, 'get', 'VolumeSerialNumber', '/value'],
+      { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    const match = output.match(/VolumeSerialNumber\s*=\s*([0-9a-f]+)/i);
+    if (match) return match[1].toUpperCase();
+  } catch {}
+
+  try {
+    const output = execFileSync(
+      'cmd.exe',
+      ['/d', '/c', 'vol', `${systemDrive}\\`],
+      { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    const match = output.match(/\b([0-9a-f]{4}-[0-9a-f]{4})\b/i);
+    return match ? match[1].replace('-', '').toUpperCase() : null;
   } catch {
     return null;
   }
@@ -100,6 +129,35 @@ function createInstallationId(machineGuidReader, fallbackGuidPath) {
     ? machineGuid.trim()
     : readFallbackGuid(fallbackGuidPath);
   return installationIdFromGuid(guid);
+}
+
+function createInstallationIdentity(machineGuidReader, volumeSerialReader, fallbackGuidPath) {
+  let machineGuid = null;
+  let volumeSerial = null;
+  try {
+    machineGuid = machineGuidReader();
+  } catch {
+    machineGuid = null;
+  }
+  try {
+    volumeSerial = volumeSerialReader();
+  } catch {
+    volumeSerial = null;
+  }
+
+  const machineId = typeof machineGuid === 'string' && machineGuid.trim()
+    ? installationIdFromGuid(machineGuid.trim())
+    : createInstallationId(() => null, fallbackGuidPath);
+  const volumeId = typeof volumeSerial === 'string' && volumeSerial.trim()
+    ? installationIdFromGuid(`volume:${volumeSerial.trim().toUpperCase()}`)
+    : null;
+  const factors = [machineId, volumeId].filter(Boolean);
+
+  return {
+    machineId,
+    volumeId,
+    installationId: factors.length > 1 ? factors.join('-') : factors[0],
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -531,6 +589,7 @@ const ticketLabel = (n) => `TKT-${String(n).padStart(5, '0')}`;
 function createRepo(db, {
   clock = () => new Date(),
   machineGuidReader = readMachineGuid,
+  volumeSerialReader = readVolumeSerial,
   fallbackGuidPath,
 } = {}) {
   const today = () => localDate(clock());
@@ -543,34 +602,60 @@ function createRepo(db, {
     return d;
   };
   const isClosed = (date) => !!db.prepare('SELECT 1 FROM day_closes WHERE date = ?').get(date);
+  const installationIdentity = createInstallationIdentity(
+    machineGuidReader,
+    volumeSerialReader,
+    fallbackGuidPath
+  );
   const existingLicenseState = db.prepare('SELECT installation_id FROM license_state WHERE id = 1').get();
   if (!existingLicenseState) {
-    const installationId = createInstallationId(machineGuidReader, fallbackGuidPath);
-    db.prepare('INSERT INTO license_state (id, installation_id) VALUES (1, ?)').run(installationId);
+    db.prepare('INSERT INTO license_state (id, installation_id) VALUES (1, ?)').run(installationIdentity.installationId);
   }
   const getLicenseRecord = () => db.prepare('SELECT * FROM license_state WHERE id = 1').get();
-  const observeLicenseDate = () => {
+  const installationMatches = (id) => installationIdMatches(id, installationIdentity);
+  const dateIsMoreThanOneDayBefore = (date, anchor) => {
+    const dateValue = Date.parse(`${date}T00:00:00.000Z`);
+    const anchorValue = Date.parse(`${anchor}T00:00:00.000Z`);
+    return Number.isFinite(dateValue) && Number.isFinite(anchorValue) &&
+      dateValue < anchorValue - 86_400_000;
+  };
+  const observeLicenseDate = (trialLastSeenDate = null) => {
     const record = getLicenseRecord();
     const currentDate = today();
-    if (!record || !record.payload) return { clockRollback: false, currentDate, lastSeenDate: null };
-    if (record.ultima_fecha_vista && currentDate < record.ultima_fecha_vista) {
-      return { clockRollback: true, currentDate, lastSeenDate: record.ultima_fecha_vista };
+    if (!record) return { clockRollback: false, currentDate, lastSeenDate: null };
+    const lastActivityDate = clockStatus().lastActivityDate;
+    const anchors = [record.ultima_fecha_vista, lastActivityDate, trialLastSeenDate].filter(Boolean).sort();
+    const anchorDate = anchors.length ? anchors[anchors.length - 1] : null;
+    if (anchorDate && dateIsMoreThanOneDayBefore(currentDate, anchorDate)) {
+      return { clockRollback: true, currentDate, lastSeenDate: anchorDate };
     }
-    db.prepare('UPDATE license_state SET ultima_fecha_vista = ? WHERE id = 1').run(currentDate);
-    return { clockRollback: false, currentDate, lastSeenDate: currentDate };
+    const shouldTrackLicenseDate = Boolean(record.payload || record.ultima_fecha_vista || lastActivityDate || trialLastSeenDate);
+    if (shouldTrackLicenseDate) {
+      db.prepare('UPDATE license_state SET ultima_fecha_vista = ? WHERE id = 1')
+        .run(anchorDate && anchorDate > currentDate ? anchorDate : currentDate);
+    }
+    return {
+      clockRollback: false,
+      currentDate,
+      lastSeenDate: shouldTrackLicenseDate ? (anchorDate && anchorDate > currentDate ? anchorDate : currentDate) : null,
+    };
   };
   const saveLicense = (payload, signature, issueDate) => {
-    const record = getLicenseRecord();
     const currentDate = today();
-    if (record.payload && record.ultima_fecha_vista && currentDate < record.ultima_fecha_vista) {
-      throw new DomainError('CLOCK_ROLLBACK', 'La fecha del sistema es anterior a la última fecha registrada. Corrija la hora antes de activar.');
+    const clock = observeLicenseDate();
+    if (clock.clockRollback) {
+      throw new DomainError('CLOCK_ROLLBACK', 'Corrija fecha y hora; última fecha registrada: ' + clock.lastSeenDate);
     }
     if (typeof issueDate !== 'string' || !DATE_RE.test(issueDate)) {
       throw new DomainError('INVALID', 'La fecha de emisión de la licencia no es válida.');
     }
     db.prepare(
       'UPDATE license_state SET payload = ?, signature = ?, ultima_fecha_vista = ? WHERE id = 1'
-    ).run(payload, signature, currentDate);
+    ).run(payload, signature, clock.lastSeenDate && clock.lastSeenDate > currentDate ? clock.lastSeenDate : currentDate);
+    return getLicenseRecord();
+  };
+  const clearLicense = () => {
+    db.prepare('UPDATE license_state SET payload = NULL, signature = NULL WHERE id = 1').run();
     return getLicenseRecord();
   };
   const clockStatus = () => {
@@ -589,7 +674,7 @@ function createRepo(db, {
     return {
       today: currentDate,
       lastActivityDate,
-      warning: Boolean(lastActivityDate && currentDate < lastActivityDate),
+      warning: Boolean(lastActivityDate && dateIsMoreThanOneDayBefore(currentDate, lastActivityDate)),
     };
   };
 
@@ -1149,7 +1234,7 @@ function createRepo(db, {
 insItem.run(
   id, it.productId, it.code || '', it.name || '', it.um || 'Unidad',
   q, uPrice, refAmt, it.condition || 'mal_estado',
-  it.condition === 'buen_estado' ? null : input.reason || it.damagedReason || null, 0
+  it.condition === 'buen_estado' ? null : it.damagedReason || input.reason || null, 0
 );
 db.prepare(`
   INSERT INTO merma_items (
@@ -1406,7 +1491,9 @@ db.prepare(`
 
   return {
     today, clockStatus,
-    getLicenseRecord, observeLicenseDate, saveLicense,
+    getLicenseRecord, observeLicenseDate, saveLicense, clearLicense,
+    getInstallationIdentity: () => installationIdentity,
+    installationMatches,
     listProducts, createProduct, updateProduct, archiveProduct, deleteProduct, addStock, reponerStock,
     recordSale, voidSale, listSales, listSalesRange,
     recordReturn, listReturns, listMermas, venderMermaConDescuento, enviarMermaAlmacen, enviarMermaAStock,

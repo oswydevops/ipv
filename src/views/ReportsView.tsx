@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { IPVRow, ReturnRecord } from '../types';
 import { getMermaDestination, getReturnItemMermas } from '../utils/returnDestinations';
-import { saveFileWithPicker } from '../utils/fileSaver';
+import { exportReportFile, ReportFormat } from '../utils/reportExporter';
 
 interface BarItem {
   label: string;
@@ -710,13 +710,13 @@ export const ReportsView: React.FC = () => {
   const returnsEndIdx = Math.min(validReturnsPage * returnsPageSize, filteredReturnsForReport.length);
 
   // Exportar datos reales consolidados (Ventas + Devoluciones)
-  const handleExport = async () => {
+  const handleExport = async (format: ReportFormat) => {
     const filename =
       periodTab === 'trimestral'
-        ? `Reporte_Comercial_Trimestral_${currentMonthOption.year}.csv`
+          ? `Reporte_Comercial_Trimestral_${currentMonthOption.year}.xlsx`
         : periodTab === 'mensual'
-        ? `Reporte_Comercial_${currentMonthOption.name.replace(' ', '_')}.csv`
-        : `Reporte_Comercial_${currentMonthOption.name.replace(' ', '_')}_${selectedWeekKey.toUpperCase()}.csv`;
+          ? `Reporte_Comercial_${currentMonthOption.name.replace(' ', '_')}.xlsx`
+          : `Reporte_Comercial_${currentMonthOption.name.replace(' ', '_')}_${selectedWeekKey.toUpperCase()}.xlsx`;
 
     const summaryLines = [
       '--- RESUMEN EJECUTIVO DEL PERIODO ---',
@@ -779,18 +779,19 @@ export const ReportsView: React.FC = () => {
     ].join('\n');
 
     const csvContent = '\uFEFF' + fullContent;
-    const result = await saveFileWithPicker(csvContent, {
-      suggestedName: filename,
-      mimeType: 'text/csv;charset=utf-8;',
-      extension: 'csv',
-      description: 'Reporte comercial (.csv / Excel)',
+    const result = await exportReportFile({
+      title: 'Reporte Comercial',
+      fileName: filename,
+      csvContent,
+      delimiter: ',',
+      format,
     });
     if (result.canceled) return;
-    if (!result.ok) {
-      showToast('Error al exportar reporte', result.error || 'No se pudo guardar el archivo.', 'error');
+    if (result.error) {
+      showToast('Error al exportar reporte', result.error, 'error');
       return;
     }
-    showToast('Reporte Completo Exportado', `Se ha generado "${filename}" con el balance de ventas y devoluciones.`);
+    showToast('Reporte Completo Exportado', `Se ha generado "${filename.replace(/\.xlsx$/i, format === 'pdf' ? '.pdf' : '.xlsx')}" con el balance de ventas y devoluciones.`);
   };
 
   const handlePeriodTabChange = (tab: 'semanal' | 'mensual' | 'trimestral') => {
@@ -981,9 +982,7 @@ export const ReportsView: React.FC = () => {
                               ></span>
                               {w.label}
                             </span>
-                            <span className="text-[10px] text-on-surface-variant font-mono">
-                              {rangeStr}
-                            </span>
+                            
                           </button>
                         );
                       })}
@@ -994,17 +993,24 @@ export const ReportsView: React.FC = () => {
             </div>
           )}
 
-          {/* Export to Excel / CSV */}
-          <button
-            onClick={handleExport}
-            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700 active:neo-inset transition-all group cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[19px] transition-transform group-hover:-translate-y-0.5">
-              table_view
-            </span>
-            <span>Exportar Reporte Completo [.csv]</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => void handleExport('excel')}
+              className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700 active:neo-inset transition-all group cursor-pointer"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[19px]">table_view</span>
+              <span>Excel</span>
+            </button>
+            <button
+              disabled
+              className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-orange-600 transition-all group cursor-not-allowed"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[19px]">picture_as_pdf</span>
+              <span>PDF</span>
+            </button>
+          </div>
         </div>
       </div>
 

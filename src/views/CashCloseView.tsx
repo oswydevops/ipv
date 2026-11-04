@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { DayClose } from '../data/api';
 import { APP_NAME } from '../config';
-import { saveFileWithPicker } from '../utils/fileSaver';
+import { exportReportFile, ReportFormat } from '../utils/reportExporter';
 
 export const CashCloseView: React.FC = () => {
   const {
@@ -40,10 +40,7 @@ export const CashCloseView: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportCloseModalOpen, setIsExportCloseModalOpen] = useState(false);
-  const [exportDestinationPath, setExportDestinationPath] = useState(() => {
-    const [year, month] = (todayDate || new Date().toISOString().slice(0, 10)).split('-');
-    return `Documentos/IPV/Reportes/${year}/${month}`;
-  });
+  const [exportFormat, setExportFormat] = useState<ReportFormat>('excel');
 
   // Set real current time and update every minute
   useEffect(() => {
@@ -224,8 +221,8 @@ export const CashCloseView: React.FC = () => {
     setIsExportCloseModalOpen(true);
   };
 
-  // Generar y guardar planilla Excel / CSV completa con arqueo, ventas y devoluciones preguntando la ruta
-  const generateWebCloseExportExcel = async () => {
+  // Preparar el contenido para exportar cuando la aplicación se ejecuta en navegador.
+  const generateWebCloseExport = () => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -295,13 +292,7 @@ export const CashCloseView: React.FC = () => {
       `"Ventas Netas Efectivas del Día ($)";${Math.max(0, ipvTotalVendido - totalRefundToday).toFixed(2)};;`
     );
 
-    const csvContent = '\uFEFF' + headersResumen.join('\r\n');
-    return await saveFileWithPicker(csvContent, {
-      suggestedName: `Cierre_Caja_${todayDate || dateFormatted}.csv`,
-      mimeType: 'text/csv;charset=utf-8;',
-      extension: 'csv',
-      description: 'Reporte Oficial de Cierre de Caja con Devoluciones (.csv / Excel)',
-    });
+    return '\uFEFF' + headersResumen.join('\r\n');
   };
 
   // Ejecutar exportación tras confirmar y seleccionar carpeta
@@ -310,32 +301,39 @@ export const CashCloseView: React.FC = () => {
     try {
       const isNativeElectron = typeof window !== 'undefined' && Boolean((window as any).api?._isElectron);
 
-      if (isNativeElectron && window.api?.reports?.exportarCierre) {
-        const res = await window.api.reports.exportarCierre(todayDate);
-        if (res && (res as any).canceled) {
-          showToast('Operación Cancelada', 'No se seleccionó ninguna carpeta para guardar.', 'info');
+      if (isNativeElectron && window.api?.reports?.exportarCierreFormato) {
+        const res = await window.api.reports.exportarCierreFormato({ date: todayDate, format: exportFormat });
+        if (res.canceled) {
+          showToast('Operación Cancelada', 'No se seleccionó una ubicación para guardar.', 'info');
           return;
         }
         setIsExportCloseModalOpen(false);
         showToast(
           'Cierre Exportado con Éxito',
-          `Archivos guardados en: ${res.directory || res.excelPath || 'la carpeta seleccionada'}`,
+          `Reporte ${exportFormat === 'pdf' ? 'PDF' : 'Excel'} guardado en: ${res.path || 'la ubicación seleccionada'}`,
           'success'
         );
       } else {
-        const res = await generateWebCloseExportExcel();
+        const csvContent = generateWebCloseExport();
+        const res = await exportReportFile({
+          title: 'Reporte Oficial de Cierre de Caja',
+          fileName: `Cierre_Caja_${todayDate}.${exportFormat === 'pdf' ? 'pdf' : 'xlsx'}`,
+          csvContent,
+          delimiter: ';',
+          format: exportFormat,
+        });
         if (res.canceled) {
           showToast('Operación Cancelada', 'No se seleccionó ninguna ruta para guardar el archivo.', 'info');
           return;
         }
-        if (!res.ok) {
-          showToast('Error al exportar cierre', res.error || 'No se pudo guardar el reporte de cierre.', 'error');
+        if (res.error) {
+          showToast('Error al exportar cierre', res.error, 'error');
           return;
         }
         setIsExportCloseModalOpen(false);
         showToast(
           'Cierre Exportado con Éxito',
-          `Se guardó la planilla de cierre con arqueo y devoluciones (${devolucionesToday.length} devoluciones incluidas) en: ${res.fileName || res.fullPath || 'su equipo'}.`,
+          `Se guardó el reporte ${exportFormat === 'pdf' ? 'PDF' : 'Excel'} con arqueo y devoluciones (${devolucionesToday.length} devoluciones incluidas).`,
           'success'
         );
       }
@@ -985,7 +983,7 @@ export const CashCloseView: React.FC = () => {
               disabled={isExporting}
               className="w-full py-3 px-5 rounded-2xl bg-surface neo-raised hover:text-primary active:neo-inset text-xs font-bold text-on-surface transition-all flex items-center justify-between border border-outline-variant/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm group"
               type="button"
-              title="Genera reporte en PDF y Excel en Documentos/IPV/Reportes/AAAA/MM"
+              title="Exporta el cierre en Excel. PDF está temporalmente deshabilitado."
             >
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0 group-hover:bg-emerald-500/20 transition-colors">
@@ -998,12 +996,12 @@ export const CashCloseView: React.FC = () => {
                     {isExporting ? 'Exportando cierre...' : 'Exportar cierre'}
                   </span>
                   <span className="text-[10px] text-on-surface-variant font-normal">
-                    Genera PDF y Excel (.xlsx)
+                    Excel (.xlsx) disponible · PDF temporalmente deshabilitado
                   </span>
                 </div>
               </div>
               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-surface neo-inset text-emerald-700">
-                PDF + XLSX
+                XLSX
               </span>
             </button>
           </div>
@@ -1327,36 +1325,27 @@ export const CashCloseView: React.FC = () => {
               <div className="flex flex-col flex-1">
                 <h3 className="text-base font-bold text-on-surface">Exportar Cierre de Caja del Día</h3>
                 <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
-                  Se generará el reporte oficial en Excel (.xlsx) y PDF. Al presionar continuar, se le solicitará elegir la carpeta en su computadora donde desea guardarlos.
+                  Elija un formato. Se abrirá el selector para guardar el reporte en su computadora.
                 </p>
               </div>
             </div>
 
-            {/* Campo editable de ruta donde desea guardar */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold text-on-surface flex items-center justify-between">
-                <span>Ruta y carpeta donde desea guardar:</span>
-                <span className="text-[10px] text-primary font-mono font-semibold">Selector de Sistema</span>
-              </label>
-              <div className="flex items-center gap-2 p-2.5 rounded-xl bg-surface neo-inset">
-                <span className="material-symbols-outlined text-primary text-[20px] shrink-0">folder_open</span>
-                <input
-                  type="text"
-                  value={exportDestinationPath}
-                  onChange={(e) => setExportDestinationPath(e.target.value)}
-                  placeholder="Documentos/IPV/Reportes/..."
-                  className="bg-transparent border-none text-xs font-mono text-on-surface focus:outline-none w-full"
-                />
-              </div>
-              <span className="text-[10px] text-on-surface-variant">
-                Al presionar "Seleccionar Carpeta y Guardar" se abrirá la ventana de su sistema para confirmar la carpeta y nombre final.
-              </span>
-            </div>
+            <label className="flex flex-col gap-1.5 text-xs font-bold text-on-surface">
+              Formato del reporte
+              <select
+                value={exportFormat}
+                onChange={(event) => setExportFormat(event.target.value as ReportFormat)}
+                className="h-10 px-3 rounded-xl bg-surface neo-inset text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/40"
+              >
+                <option value="pdf" disabled>PDF - temporalmente deshabilitado</option>
+                <option value="excel">Excel (.xlsx) - para analizar los datos</option>
+              </select>
+            </label>
 
-            {/* Resumen del Contenido que incluirá el Excel */}
+            {/* Resumen del contenido */}
             <div className="flex flex-col gap-2 p-3.5 rounded-xl bg-surface neo-inset text-xs">
               <span className="font-bold text-on-surface text-[11px] uppercase tracking-wider text-primary">
-                Contenido que incluirá la exportación:
+                Contenido del reporte:
               </span>
               <div className="grid grid-cols-2 gap-2 mt-1 text-[11px]">
                 <div className="flex items-center gap-1.5 text-on-surface">
@@ -1408,7 +1397,7 @@ export const CashCloseView: React.FC = () => {
                 <span className="material-symbols-outlined text-[17px]">
                   {isExporting ? 'hourglass_top' : 'folder_open'}
                 </span>
-                <span>{isExporting ? 'Exportando...' : 'Seleccionar Carpeta y Guardar'}</span>
+                <span>{isExporting ? 'Exportando...' : `Guardar reporte ${exportFormat === 'pdf' ? 'PDF' : 'Excel'}`}</span>
               </button>
             </div>
           </div>
