@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { exportReportFile, ReportFormat } from '../utils/reportExporter';
 import paymentQrImage from '../../assets/qrpago.jpg';
+import paymentQrUsdImage from '../../assets/qrpagousd.jpeg';
 import {
   ACTIVATION_CODE_LENGTH,
   ACTIVATION_CODE_MIN_LENGTH,
@@ -62,6 +63,18 @@ export const SettingsView: React.FC = () => {
   const activationWhatsAppUrl = `https://wa.me/5363242069?text=${encodeURIComponent(activationMessage)}`;
   const [activationInfoDraft, setActivationInfoDraft] = useState(activationContactInfo);
   const [isPaymentQrVisible, setIsPaymentQrVisible] = useState(false);
+  const [isPaymentQrTransitionSuppressed, setIsPaymentQrTransitionSuppressed] = useState(false);
+  const [paymentCurrency, setPaymentCurrency] = useState<'CUP' | 'USD'>('CUP');
+  const [paymentCurrencyAnimation, setPaymentCurrencyAnimation] = useState<{
+    transform: string;
+    transitioning: boolean;
+  } | null>(null);
+  const paymentCardNumber = paymentCurrency === 'CUP' ? '9224959875187625' : '9760039008092453';
+  const paymentCardRef = useRef<HTMLDivElement>(null);
+  const paymentMiniCardRefs = useRef<Record<'CUP' | 'USD', HTMLSpanElement | null>>({
+    CUP: null,
+    USD: null,
+  });
   const activationInfoDraftComplete = Object.values(activationInfoDraft).every((value) => value.trim().length > 0);
   const isActivationInfoFieldMissing = (field: keyof typeof activationInfoDraft) =>
     activationInfoDraft[field].trim().length === 0;
@@ -82,6 +95,48 @@ export const SettingsView: React.FC = () => {
   useEffect(() => {
     setActivationInfoDraft(activationContactInfo);
   }, [activationContactInfo]);
+
+  const handlePaymentCurrencySelect = (currency: 'CUP' | 'USD') => {
+    if (paymentCurrencyAnimation) return;
+
+    if (currency === paymentCurrency) {
+      if (isPaymentQrVisible) setIsPaymentQrVisible(false);
+      return;
+    }
+
+    const miniCard = paymentMiniCardRefs.current[currency];
+    const paymentCard = paymentCardRef.current;
+    if (!miniCard || !paymentCard) return;
+
+    const miniRect = miniCard.getBoundingClientRect();
+    const paymentCardRect = paymentCard.getBoundingClientRect();
+    const scaleX = miniRect.width / paymentCardRect.width;
+    const scaleY = miniRect.height / paymentCardRect.height;
+    const startTransform = `translate(${miniRect.left - paymentCardRect.left}px, ${miniRect.top - paymentCardRect.top}px) scale(${scaleX}, ${scaleY})`;
+
+    if (isPaymentQrVisible) {
+      setIsPaymentQrTransitionSuppressed(true);
+      setIsPaymentQrVisible(false);
+    }
+    setPaymentCurrency(currency);
+    setPaymentCurrencyAnimation({ transform: startTransform, transitioning: false });
+    requestAnimationFrame(() => {
+      setPaymentCurrencyAnimation({ transform: 'none', transitioning: true });
+    });
+  };
+
+  const handlePaymentCurrencyAnimationEnd = (event: React.TransitionEvent<HTMLDivElement>) => {
+    if (
+      event.target !== event.currentTarget ||
+      event.propertyName !== 'transform' ||
+      !paymentCurrencyAnimation?.transitioning
+    ) {
+      return;
+    }
+
+    setPaymentCurrencyAnimation(null);
+    setIsPaymentQrTransitionSuppressed(false);
+  };
 
   const handleSaveActivationContactInfo = () => {
     if (activationInfoLocked) {
@@ -1604,7 +1659,7 @@ export const SettingsView: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-sm leading-relaxed text-amber-950 sm:text-base">
-                  El precio de la licencia de la plataforma es único: <strong className="font-extrabold">3,500 pesos cubanos</strong>.
+                  La licencia de la plataforma tiene un precio fijo de: <strong className="font-extrabold">4.99 USD</strong> a pagar por Clásica o al cambio actual de <strong className="font-extrabold">el TOQUE</strong> en pesos cubanos.
                   Al realizar este pago podrá usar las funciones de la aplicación sin limitaciones de manera permanente,
                   sin cuotas mensuales ni anuales.
                 </p>
@@ -1951,7 +2006,7 @@ export const SettingsView: React.FC = () => {
                   <span className="text-[11px] uppercase font-bold tracking-wider text-blue-700">
                     Método de Pago
                   </span>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-lg bg-primary text-white flex items-center justify-center shadow-sm">
                         <span className="material-symbols-outlined text-[18px]">credit_card</span>
@@ -1960,77 +2015,137 @@ export const SettingsView: React.FC = () => {
                         Datos para realizar el pago
                       </span>
                     </div>
+                    <div className="flex shrink-0 items-start gap-2" aria-label="Moneda del método de pago">
+                      {(['CUP', 'USD'] as const).map((currency) => {
+                        const isSelected = paymentCurrency === currency;
+                        const miniCardColor = currency === 'CUP'
+                          ? 'linear-gradient(135deg, #064e3b 0%, #059669 55%, #065f46 100%)'
+                          : 'linear-gradient(135deg, #172554 0%, #1d4ed8 55%, #312e81 100%)';
+
+                        return (
+                          <button
+                            key={currency}
+                            type="button"
+                            onClick={() => handlePaymentCurrencySelect(currency)}
+                            disabled={Boolean(paymentCurrencyAnimation)}
+                            aria-pressed={isSelected}
+                            aria-label={`Mostrar tarjeta de pago en ${currency}`}
+                            className={`flex flex-col items-center gap-1 rounded-lg p-1 transition-all hover:bg-surface-container disabled:cursor-not-allowed disabled:opacity-60 ${
+                              isSelected ? 'ring-2 ring-primary/50' : ''
+                            }`}
+                          >
+                            <span
+                              ref={(element) => {
+                                paymentMiniCardRefs.current[currency] = element;
+                              }}
+                              className="flex h-7 w-11 items-center justify-center rounded-md border border-white/30 text-white shadow-sm transition-transform hover:scale-105"
+                              style={{ background: miniCardColor }}
+                            >
+                              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                                credit_card
+                              </span>
+                            </span>
+                            <span className="text-[10px] font-bold leading-none text-on-surface-variant">
+                              {currency}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div className="flex justify-center [perspective:1000px]">
                     <div
-                      className={`relative h-40 w-full max-w-[320px] rounded-xl transition-transform duration-700 [transform-style:preserve-3d] ${
-                        isPaymentQrVisible ? '[transform:rotateY(180deg)]' : ''
+                      ref={paymentCardRef}
+                      onTransitionEnd={handlePaymentCurrencyAnimationEnd}
+                      className={`relative h-40 w-full max-w-[320px] rounded-xl ${
+                        paymentCurrencyAnimation?.transitioning ? 'transition-transform duration-700 ease-out' : ''
                       }`}
+                      style={{
+                        transform: paymentCurrencyAnimation?.transform,
+                        transformOrigin: paymentCurrencyAnimation ? 'top left' : undefined,
+                        willChange: paymentCurrencyAnimation ? 'transform' : undefined,
+                      }}
                     >
                       <div
-                        className="absolute inset-0 overflow-hidden rounded-xl border border-blue-300/30 p-4 text-white shadow-lg [backface-visibility:hidden]"
-                        style={{ background: 'linear-gradient(135deg, #172554 0%, #1d4ed8 55%, #312e81 100%)' }}
+                          className={`absolute inset-0 [perspective:1000px] [transform-style:preserve-3d] ${
+                            isPaymentQrVisible ? '[transform:rotateY(180deg)]' : ''
+                          } ${isPaymentQrTransitionSuppressed ? 'transition-none' : 'transition-transform duration-700'}`}
                       >
-                        <div className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-cyan-300/15" />
-                        <div className="absolute -bottom-16 -left-8 h-32 w-32 rounded-full bg-indigo-300/15" />
-                        <div className="relative flex items-start justify-between gap-3">
-                          <div className="flex flex-col gap-4">
-                            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/70">
-                              Tarjeta de pago
-                            </span>
-                            <span className="font-mono text-base sm:text-lg font-bold tracking-wider whitespace-nowrap">
-                              {activationInfoComplete ? '9224 9598 7518 7625' : 'XXXX XXXX XXXX XXXX'}
-                            </span>
+                            <div
+                            className="absolute inset-0 overflow-hidden rounded-xl border border-blue-300/30 p-4 text-white shadow-lg [backface-visibility:hidden]"
+                            style={{
+                              background: paymentCurrency === 'CUP'
+                                ? 'linear-gradient(135deg, #064e3b 0%, #059669 55%, #065f46 100%)'
+                                : 'linear-gradient(135deg, #172554 0%, #1d4ed8 55%, #312e81 100%)',
+                            }}
+                          >
+                            <div className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-cyan-300/15" />
+                            <div className="absolute -bottom-16 -left-8 h-32 w-32 rounded-full bg-indigo-300/15" />
+                            <div className="relative flex items-start justify-between gap-3">
+                              <div className="flex flex-col gap-4">
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/70">
+                                  Tarjeta de pago · {paymentCurrency}
+                                </span>
+                                <span className="font-mono text-base sm:text-lg font-bold tracking-wider whitespace-nowrap">
+                                  {activationInfoComplete
+                                    ? paymentCardNumber.replace(/(\d{4})(?=\d)/g, '$1 ')
+                                    : 'XXXX XXXX XXXX XXXX'}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyText(paymentCardNumber, 'Número de tarjeta')}
+                                disabled={!activationInfoComplete}
+                                className="relative shrink-0 rounded-lg bg-white/15 p-2 text-white transition-colors hover:bg-white/25 enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                                title="Copiar número de tarjeta"
+                                aria-label="Copiar número de tarjeta"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">content_copy</span>
+                              </button>
+                            </div>
+                            <div className="relative mt-4 flex items-end justify-between text-[10px] font-medium uppercase tracking-wider text-white/65">
+                              <span>{paymentCurrency === 'CUP' ? 'Banco Metropolitano' : 'Clásica'}</span>
+                              <button
+                                type="button"
+                                onClick={() => setIsPaymentQrVisible(true)}
+                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15"
+                                aria-label="Ver QR de pago"
+                              >
+                                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">visibility</span>
+                                <span>Ver QR</span>
+                              </button>
+                            </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyText('9224959875187625', 'Número de tarjeta')}
-                            disabled={!activationInfoComplete}
-                            className="relative shrink-0 rounded-lg bg-white/15 p-2 text-white transition-colors hover:bg-white/25 enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-                            title="Copiar número de tarjeta"
-                            aria-label="Copiar número de tarjeta"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">content_copy</span>
-                          </button>
-                        </div>
-                        <div className="relative mt-4 flex items-end justify-between text-[10px] font-medium uppercase tracking-wider text-white/65">
-                          <span>Banco Metropolitano</span>
-                          <button
-                            type="button"
-                            onClick={() => setIsPaymentQrVisible(true)}
-                            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15"
-                            aria-label="Ver QR de pago"
-                          >
-                            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">visibility</span>
-                            <span>Ver QR</span>
-                          </button>
-                        </div>
-                      </div>
 
-                      <div
-                        className="absolute inset-0 flex flex-col items-center justify-between overflow-hidden rounded-xl border border-blue-300/30 p-3 text-white shadow-lg [backface-visibility:hidden] [transform:rotateY(180deg)]"
-                        style={{ background: 'linear-gradient(135deg, #172554 0%, #1d4ed8 55%, #312e81 100%)' }}
-                      >
-                        <div className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-cyan-300/15" />
-                        <div className="absolute -bottom-16 -left-8 h-32 w-32 rounded-full bg-indigo-300/15" />
-                        <img
-                          src={paymentQrImage}
-                          alt="Código QR para realizar el pago"
-                          className="relative h-28 w-28 rounded-lg bg-white p-1 object-contain"
-                        />
-                        <div className="relative flex w-full items-end justify-between gap-2 text-[10px] font-medium uppercase tracking-wider text-white/65">
-                          <span>Escanee para pagar</span>
-                          <button
-                            type="button"
-                            onClick={() => setIsPaymentQrVisible(false)}
-                            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15"
-                            aria-label="Volver a la tarjeta de pago"
+                          <div
+                            className="absolute inset-0 flex flex-col items-center justify-between overflow-hidden rounded-xl border border-blue-300/30 p-3 text-white shadow-lg [backface-visibility:hidden] [transform:rotateY(180deg)]"
+                            style={{
+                              background: paymentCurrency === 'CUP'
+                                ? 'linear-gradient(135deg, #064e3b 0%, #059669 55%, #065f46 100%)'
+                                : 'linear-gradient(135deg, #172554 0%, #1d4ed8 55%, #312e81 100%)',
+                            }}
                           >
-                            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">visibility</span>
-                            <span>Ver Cuenta</span>
-                          </button>
-                        </div>
+                            <div className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-cyan-300/15" />
+                            <div className="absolute -bottom-16 -left-8 h-32 w-32 rounded-full bg-indigo-300/15" />
+                            <img
+                              src={paymentCurrency === 'CUP' ? paymentQrImage : paymentQrUsdImage}
+                              alt={`Código QR para realizar el pago en ${paymentCurrency}`}
+                              className="relative h-28 w-28 rounded-lg bg-white p-1 object-contain"
+                            />
+                            <div className="relative flex w-full items-end justify-between gap-2 text-[10px] font-medium uppercase tracking-wider text-white/65">
+                              <span>Escanee para pagar en {paymentCurrency}</span>
+                              <button
+                                type="button"
+                                onClick={() => setIsPaymentQrVisible(false)}
+                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15"
+                                aria-label="Volver a la tarjeta de pago"
+                              >
+                                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">visibility</span>
+                                <span>Ver Cuenta</span>
+                              </button>
+                            </div>
+                          </div>
                       </div>
                     </div>
                   </div>

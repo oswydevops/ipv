@@ -128,8 +128,9 @@ export const ActivationBanner: React.FC = () => {
       {/* Separate phone contact info strip (in case user does not have WhatsApp on PC) */}
       <div className="pt-3 border-t border-outline-variant/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-sm text-on-surface-variant bg-surface-container-low/40 p-2.5 rounded-xl">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold text-on-surface">Tu prueba gratuita de 7 días ha culminado, la licencia de la plataforma tiene un precio único de 3500 CUP</span>
-          <span>Presione el botón de Activar Aplicación y luego continúe los pasos en la sección de activación dentro de la configuración del sistema</span>
+          <span className="font-semibold text-on-surface">Tu prueba gratuita de 7 días ha culminado, la licencia de la plataforma tiene un precio fijo de 4.99 USD a pagar por Clásica o al cambio actual de el TOQUE en pesos cubanos.</span>
+          
+          <span>Presione el botón de Activar Aplicación y siga las instrucciones</span>
           
         </div>
       </div>
