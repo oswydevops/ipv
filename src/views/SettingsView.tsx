@@ -1882,7 +1882,6 @@ export const SettingsView: React.FC = () => {
 
               <div className="pt-3 border-t border-outline-variant/15 text-[11px] text-on-surface-variant flex items-center justify-between">
                 <span>Código cifrado digitalmente</span>
-                <span className="font-mono">FerreStock v1.1.0</span>
               </div>
             </div>
           </div>
