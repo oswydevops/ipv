@@ -1,7 +1,7 @@
 {
   "name": "ferreStock",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Gestión de inventario y punto de venta para ferreterías y negocios de suministros.",
   "author": "La Sociedad Inc.",
   "type": "module",
@@ -65,18 +65,23 @@
     "asarUnpack": ["**/node_modules/better-sqlite3/**"],
     "extraResources": [{ "from": "templates", "to": "templates" }],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": ["nsis"],
       "icon": "assets/icono.png"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "language": "3082",
-      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+      "artifactName": "FerreStock-Setup.${ext}"
     },
-    "portable": {
-      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
-    }
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "oswydevops",
+        "repo": "offlineipvreleases",
+        "releaseType": "release"
+      }
+    ]
   },
   "allowScripts": {
     "better-sqlite3@8.7.0": true,
