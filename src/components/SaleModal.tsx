@@ -154,21 +154,20 @@ export const SaleModal: React.FC = () => {
 
   let cashToPay = 0;
   let transferToPay = 0;
-  let changeDue = 0;
 
   if (paymentMethod === 'efectivo') {
     cashToPay = totalSale;
     transferToPay = 0;
-    changeDue = Math.max(0, numReceived - totalSale);
   } else if (paymentMethod === 'transferencia') {
     cashToPay = 0;
     transferToPay = totalSale;
-    changeDue = 0;
   } else if (paymentMethod === 'mixto') {
     transferToPay = Math.min(totalSale, numTransfer);
     cashToPay = Math.max(0, totalSale - transferToPay);
-    changeDue = Math.max(0, numReceived - cashToPay);
   }
+
+  const cashDifference = Math.round((numReceived - cashToPay) * 100) / 100;
+  const changeDue = Math.max(0, cashDifference);
 
   // Filter products for left column
   const filteredProducts = products.filter((p) => {
@@ -344,7 +343,7 @@ export const SaleModal: React.FC = () => {
                     <span className="material-symbols-outlined text-[36px] text-on-surface-variant/40">
                       inventory_2
                     </span>
-                    <span>No se encontraron productos coincidentes.</span>
+                    <span>No se encontraron productos.</span>
                   </div>
                 ) : (
                   filteredProducts.map((p) => {
@@ -508,6 +507,29 @@ export const SaleModal: React.FC = () => {
                 </div>
               </div>
 
+              {(paymentMethod === 'efectivo' || paymentMethod === 'mixto') && (
+                <div className="px-3 py-2 rounded-xl bg-surface neo-inset flex items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-on-surface-variant">
+                    {cashDifference > 0
+                      ? 'A devolver:'
+                      : cashDifference < 0
+                        ? 'Falta por cobrar:'
+                        : 'Pago exacto:'}
+                  </span>
+                  <span
+                    className={`font-mono font-bold ${
+                      cashDifference > 0
+                        ? 'text-emerald-600'
+                        : cashDifference < 0
+                          ? 'text-error'
+                          : 'text-on-surface'
+                    }`}
+                  >
+                    ${formatCUP(Math.abs(cashDifference))} CUP
+                  </span>
+                </div>
+              )}
+
               {/* Payment Method Selector */}
               <div className="flex flex-col gap-2">
                 <label className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
@@ -571,27 +593,14 @@ export const SaleModal: React.FC = () => {
                         <input
                           type="number"
                           min="0"
-                          step="10"
+                          step="0.01"
                           value={amountReceived}
                           onChange={(e) => setAmountReceived(e.target.value)}
-                          placeholder={totalSale.toString()}
+                          placeholder="0.00"
                           className="w-24 bg-transparent font-mono font-bold text-xs text-on-surface focus:outline-none text-right"
                         />
-                        <span className="text-[10px] font-bold text-primary ml-0.5">CUP</span>
                       </div>
                     </div>
-                    {numReceived > 0 && (
-                      <div className="flex items-center justify-between pt-1 border-t border-outline-variant/15 text-xs font-semibold">
-                        <span className="text-on-surface-variant">Cambio / Vuelto a entregar:</span>
-                        <span
-                          className={`font-mono font-bold ${
-                            changeDue >= 0 ? 'text-emerald-600' : 'text-error'
-                          }`}
-                        >
-                          ${formatCUP(changeDue)} CUP
-                        </span>
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -638,6 +647,23 @@ export const SaleModal: React.FC = () => {
                         Resta en Efectivo:
                       </span>
                       <span className="font-mono font-bold text-on-surface">${formatCUP(cashToPay)} CUP</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-on-surface-variant font-medium">
+                        ¿Con cuánto paga en efectivo?
+                      </span>
+                      <div className="flex items-center gap-1 bg-surface neo-raised px-2 py-0.5 rounded-lg">
+                        <span className="font-mono font-bold text-on-surface-variant">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={amountReceived}
+                          onChange={(e) => setAmountReceived(e.target.value)}
+                          placeholder="0.00"
+                          className="w-20 bg-transparent font-mono font-bold text-xs text-on-surface focus:outline-none text-right"
+                        />                       
+                      </div>
                     </div>
                   </div>
                 )}

@@ -102,6 +102,7 @@ export interface LicenseStatus {
   daysRemaining: number;
   isLifetime: boolean;
   licenseType: string | null;
+  licensePeriod: 'monthly' | 'annual' | 'exclusive' | 'lifetime' | null;
   activationCode: string;
   errorCode?: string | null;
   lastSeenDate?: string | null;
@@ -153,6 +154,7 @@ export interface IpvApi {
     exportarCierreFormato(input: {
       date: string;
       format: 'excel' | 'pdf';
+      businessProfileName?: string;
     }): Promise<{ canceled: boolean; path?: string; fecha?: string; format?: 'excel' | 'pdf' }>;
     exportarTabla(input: {
       title: string;
@@ -160,6 +162,7 @@ export interface IpvApi {
       csvContent: string;
       delimiter?: ',' | ';';
       format: 'excel' | 'pdf';
+      businessProfileName?: string;
     }): Promise<{ canceled: boolean; path?: string }>;
     exportarCierre(date: string): Promise<{ ok: boolean; pdfPath: string; excelPath: string; directory?: string; fecha: string }>;
   };

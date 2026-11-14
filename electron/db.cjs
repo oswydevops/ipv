@@ -510,6 +510,9 @@ const MIGRATIONS = [
         ALTER TABLE sale_items ADD COLUMN unit_cost REAL NOT NULL DEFAULT 0 CHECK (unit_cost >= 0);
     `);
   },
+  (db) => {
+    db.exec("ALTER TABLE products ADD COLUMN subcategory TEXT NOT NULL DEFAULT '';");
+  },
 ];
 
 function migrate(db) {
@@ -547,6 +550,7 @@ const mapProduct = (r) => ({
   name: r.name,
   detail: r.detail,
   category: r.category,
+  subcategory: r.subcategory || '',
   um: r.um,
   price: r.price,
   purchasePrice: r.purchase_price || 0,
@@ -726,12 +730,13 @@ function createRepo(db, {
 
     const id = `prod-${crypto.randomUUID()}`;
     db.prepare(
-      `INSERT INTO products (id, code, name, detail, category, um, price, purchase_price, stock, min_stock, almacen_stock, provider, location, rotation, created_at)
-       VALUES (?,?,?,?,?,?,?, ?,0,?,?,?,?,?,?)`
+      `INSERT INTO products (id, code, name, detail, category, subcategory, um, price, purchase_price, stock, min_stock, almacen_stock, provider, location, rotation, created_at)
+       VALUES (?,?,?,?,?,?,?, ?, ?,0,?,?,?,?,?,?)`
     ).run(
       id, code, name,
       String(input.detail || ''),
       String(input.category || 'General'),
+      String(input.subcategory || ''),
       String(input.um || 'Unidad'),
       round2(price), round2(purchasePrice), minStock, almacenStock,
       input.provider || null, input.location || null, input.rotation || null,
@@ -750,6 +755,7 @@ function createRepo(db, {
       name: patch.name !== undefined ? String(patch.name).trim() : cur.name,
       detail: patch.detail !== undefined ? String(patch.detail) : cur.detail,
       category: patch.category !== undefined ? String(patch.category) : cur.category,
+      subcategory: patch.subcategory !== undefined ? String(patch.subcategory) : cur.subcategory || '',
       um: patch.um !== undefined ? String(patch.um) : cur.um,
       price: patch.price !== undefined ? Number(patch.price) : cur.price,
       purchase_price: patch.purchasePrice !== undefined ? Number(patch.purchasePrice) : cur.purchase_price,
@@ -769,7 +775,7 @@ function createRepo(db, {
       throw new DomainError('CODE_EXISTS', `Ya existe un producto con el código ${next.code}.`);
     }
     db.prepare(
-      `UPDATE products SET code=@code, name=@name, detail=@detail, category=@category, um=@um, price=@price, purchase_price=@purchase_price,
+      `UPDATE products SET code=@code, name=@name, detail=@detail, category=@category, subcategory=@subcategory, um=@um, price=@price, purchase_price=@purchase_price,
          min_stock=@min_stock, provider=@provider, location=@location, rotation=@rotation WHERE id=@id`
     ).run({ ...next, price: round2(next.price), purchase_price: round2(next.purchase_price), id });
 

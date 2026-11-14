@@ -26,11 +26,18 @@ const row = (ipv, code) => ipv.rows.find((r) => r.code === code);
 let tornillo, cemento;
 
 test('crear productos: código automático y stock inicial como movimiento', () => {
-  tornillo = repo.createProduct({ name: 'Tornillo 1"', price: 10, purchasePrice: 4, stock: 100, um: 'u', minStock: 20 });
+  tornillo = repo.createProduct({
+    name: 'Tornillo 1"', price: 10, purchasePrice: 4, stock: 100, um: 'u', minStock: 20,
+    category: 'Tornillería y fijaciones', subcategory: 'Tornillos y tuercas',
+  });
   cemento = repo.createProduct({ name: 'Cemento', price: 1500.5, purchasePrice: 900, stock: 10, um: 'saco' });
   assert.strictEqual(tornillo.code, 'PROD-001');
   assert.strictEqual(cemento.code, 'PROD-002');
   assert.strictEqual(repo.listProducts().length, 2);
+  assert.strictEqual(tornillo.subcategory, 'Tornillos y tuercas');
+  repo.updateProduct(tornillo.id, { subcategory: 'Clavos y puntillas' });
+  assert.strictEqual(repo.listProducts().find((product) => product.id === tornillo.id).subcategory, 'Clavos y puntillas');
+  repo.updateProduct(tornillo.id, { subcategory: 'Tornillos y tuercas' });
   throwsCode(() => repo.createProduct({ name: 'Otro', code: 'prod-001' }), 'CODE_EXISTS');
 });
 

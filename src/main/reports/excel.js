@@ -77,7 +77,7 @@ async function generarExcelCierre(resumenDia, outputPath) {
   // Fila 1: Título Principal
   wsResumen.mergeCells('A1:D1');
   const titleCell = wsResumen.getCell('A1');
-  titleCell.value = `REPORTE DE CIERRE DE CAJA DIARIO - ${resumenDia.fecha}`;
+  titleCell.value = `REPORTE DE CIERRE DE CAJA DIARIO - ${resumenDia.fecha}${resumenDia.tipoNegocio ? ` - ${resumenDia.tipoNegocio}` : ''}`;
   titleCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF0F172A' } };
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
   wsResumen.getRow(1).height = 32;
@@ -207,6 +207,7 @@ async function generarExcelCierre(resumenDia, outputPath) {
     { header: 'CÓDIGO', key: 'codigo', width: 14 },
     { header: 'DESCRIPCIÓN DEL PRODUCTO', key: 'nombre', width: 36 },
     { header: 'CATEGORÍA', key: 'categoria', width: 18 },
+    { header: 'SUBCATEGORÍA', key: 'subcategoria', width: 24 },
     { header: 'U/M', key: 'um', width: 12 },
     { header: 'PRECIO UNIT. (CUP)', key: 'precioUnitario', width: 20 },
     { header: 'CANTIDAD VENDIDA', key: 'cantidad', width: 18 },
@@ -227,6 +228,7 @@ async function generarExcelCierre(resumenDia, outputPath) {
       codigo: item.codigo,
       nombre: item.nombre,
       categoria: item.categoria,
+      subcategoria: item.subcategoria,
       um: item.um,
       precioUnitario: item.precioUnitario,
       cantidad: item.cantidad,
@@ -235,15 +237,15 @@ async function generarExcelCierre(resumenDia, outputPath) {
     });
 
     row.getCell(1).alignment = { horizontal: 'center' };
-    row.getCell(4).alignment = { horizontal: 'center' };
-    row.getCell(5).numFmt = '$#,##0.00';
-    row.getCell(5).alignment = { horizontal: 'right' };
-    row.getCell(6).numFmt = '#,##0.00';
+    row.getCell(5).alignment = { horizontal: 'center' };
+    row.getCell(6).numFmt = '$#,##0.00';
     row.getCell(6).alignment = { horizontal: 'right' };
-    row.getCell(7).numFmt = '$#,##0.00';
-    row.getCell(7).font = boldTextFont;
+    row.getCell(7).numFmt = '#,##0.00';
     row.getCell(7).alignment = { horizontal: 'right' };
-    row.getCell(8).alignment = { horizontal: 'center' };
+    row.getCell(8).numFmt = '$#,##0.00';
+    row.getCell(8).font = boldTextFont;
+    row.getCell(8).alignment = { horizontal: 'right' };
+    row.getCell(9).alignment = { horizontal: 'center' };
 
     if (idx % 2 === 1) {
       row.eachCell((c) => { c.fill = lightZebraFill; });
@@ -257,6 +259,7 @@ async function generarExcelCierre(resumenDia, outputPath) {
       codigo: 'TOTAL',
       nombre: 'TOTAL GENERAL DE VENTAS DE LA JORNADA',
       categoria: '',
+      subcategoria: '',
       um: '',
       precioUnitario: '',
       cantidad: resumenDia.totales.totalArticulosVendidos,
@@ -268,11 +271,11 @@ async function generarExcelCierre(resumenDia, outputPath) {
       c.fill = accentTotalFill;
       c.border = thinBorder;
     });
-    totalRow.getCell(6).numFmt = '#,##0.00';
-    totalRow.getCell(6).alignment = { horizontal: 'right' };
-    totalRow.getCell(7).numFmt = '$#,##0.00';
+    totalRow.getCell(7).numFmt = '#,##0.00';
     totalRow.getCell(7).alignment = { horizontal: 'right' };
-    totalRow.getCell(8).alignment = { horizontal: 'center' };
+    totalRow.getCell(8).numFmt = '$#,##0.00';
+    totalRow.getCell(8).alignment = { horizontal: 'right' };
+    totalRow.getCell(9).alignment = { horizontal: 'center' };
     totalRow.height = 22;
   }
 
@@ -324,7 +327,10 @@ async function generarExcelCierre(resumenDia, outputPath) {
   } else {
     devolucionesList.forEach((d, idx) => {
       const articulosStr = (d.items || [])
-        .map((it) => `${it.name} (x${it.quantity} ${it.um || 'u.'})`)
+        .map((it) => {
+          const category = [it.category, it.subcategory].filter(Boolean).join(' / ');
+          return `${it.name} (x${it.quantity} ${it.um || 'u.'})${category ? ` [${category}]` : ''}`;
+        })
         .join(', ');
       const condicionStr = d.hasDamagedItems ? 'Con merma / Dañado' : 'Buen estado';
 

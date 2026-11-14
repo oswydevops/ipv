@@ -599,7 +599,16 @@ export const ReportsView: React.FC = () => {
 
   // Lista de Productos más vendidos derivada de las ventas reales
   const sortedProducts = useMemo(() => {
-    const productStatsMap = new Map<string, { code: string; name: string; category: string; soldUnits: number; unitPrice: number; totalIncome: number }>();
+    const productStatsMap = new Map<string, {
+      code: string;
+      name: string;
+      category: string;
+      subcategory: string;
+      um: string;
+      soldUnits: number;
+      unitPrice: number;
+      totalIncome: number;
+    }>();
 
     periodFilteredSales.forEach((s) => {
       (s.items || []).forEach((it) => {
@@ -614,6 +623,8 @@ export const ReportsView: React.FC = () => {
             code: it.code || 'S/C',
             name: it.name || 'Producto',
             category: product?.category || 'General',
+            subcategory: product?.subcategory || '',
+            um: it.um || product?.um || '',
             soldUnits: it.quantity || 0,
             unitPrice: it.unitPrice || 0,
             totalIncome: it.subtotal || 0,
@@ -624,10 +635,13 @@ export const ReportsView: React.FC = () => {
 
     if (productStatsMap.size === 0 && isCurrentSelectionToday) {
       (ipvRows || []).filter((r: IPVRow) => (r.vendido || 0) > 0).forEach((r: IPVRow) => {
+        const product = products.find((entry) => entry.id === r.productId || entry.code === r.code);
         productStatsMap.set(r.code, {
           code: r.code,
           name: r.name,
           category: r.category || 'General',
+          subcategory: product?.subcategory || '',
+          um: r.um || product?.um || '',
           soldUnits: r.vendido,
           unitPrice: r.price,
           totalIncome: r.importe,
@@ -650,6 +664,8 @@ export const ReportsView: React.FC = () => {
           code: item.code,
           name: item.name,
           category: item.category,
+          subcategory: item.subcategory,
+          um: item.um,
           icon: 'inventory_2',
           soldUnits: item.soldUnits,
           returnedUnits: returnedQty,
@@ -732,7 +748,7 @@ export const ReportsView: React.FC = () => {
       `Ganancias Netas (CUP),${netProfit.toFixed(2)}`,
       '',
       '--- PRODUCTOS MÁS VENDIDOS ---',
-      'Rank,Codigo,Producto,Categoria,Uds_Vendidas,Uds_Devueltas,Precio_Unitario_CUP,Total_Ingresos_CUP,Porcentaje_Ventas',
+      'Rank,Codigo,Producto,Categoria,Subcategoria,Unidad,Uds_Vendidas,Uds_Devueltas,Precio_Unitario_CUP,Total_Ingresos_CUP,Porcentaje_Ventas',
     ];
 
     const productRows = sortedProducts.map((p) =>
@@ -740,7 +756,9 @@ export const ReportsView: React.FC = () => {
         p.rank,
         `"${p.code}"`,
         `"${p.name.replace(/"/g, '""')}"`,
-        `"${p.category}"`,
+        `"${p.category.replace(/"/g, '""')}"`,
+        `"${p.subcategory.replace(/"/g, '""')}"`,
+        `"${p.um.replace(/"/g, '""')}"`,
         p.soldUnits,
         p.returnedUnits,
         p.unitPrice.toFixed(2),
@@ -752,12 +770,17 @@ export const ReportsView: React.FC = () => {
     const returnHeader = [
       '',
       '--- REGISTRO DETALLADO DE DEVOLUCIONES DEL PERIODO ---',
-      'Folio_Devolucion,Fecha,Hora,Ticket_Origen,Cliente,Metodo_Reembolso,Motivo,Uds_Totales,Total_Reembolsado_CUP',
+      'Folio_Devolucion,Fecha,Hora,Ticket_Origen,Cliente,Metodo_Reembolso,Motivo,Articulos_Devueltos,Uds_Totales,Total_Reembolsado_CUP',
     ];
 
     const returnRows = periodFilteredReturns.map((r) => {
       const units = (r.items || []).reduce((s, it) => s + (it.quantity || 1), 0);
       const timePart = r.timestamp ? r.timestamp.split('T')[1]?.slice(0, 5) || '' : '';
+      const items = (r.items || []).map((item) => {
+        const product = products.find((entry) => entry.id === item.productId || entry.code === item.code);
+        const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
+        return `${item.quantity} ${item.um || product?.um || 'u'} ${item.name}${taxonomy ? ` [${taxonomy}]` : ''}`;
+      }).join('; ');
       return [
         `"${r.returnNumber || ''}"`,
         `"${r.date || ''}"`,
@@ -766,6 +789,7 @@ export const ReportsView: React.FC = () => {
         `"${(r.customerName || 'Cliente').replace(/"/g, '""')}"`,
         `"${r.refundMethod}"`,
         `"${(r.reason || '').replace(/"/g, '""')}"`,
+        `"${items.replace(/"/g, '""')}"`,
         units,
         (r.totalRefund || 0).toFixed(2),
       ].join(',');
@@ -1003,8 +1027,8 @@ export const ReportsView: React.FC = () => {
               <span>Excel</span>
             </button>
             <button
-              disabled
-              className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-orange-600 transition-all group cursor-not-allowed"
+              onClick={() => void handleExport('pdf')}
+              className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-orange-600 hover:text-orange-700 active:neo-inset transition-all group cursor-pointer"
               type="button"
             >
               <span className="material-symbols-outlined text-[19px]">picture_as_pdf</span>

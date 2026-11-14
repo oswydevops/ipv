@@ -129,7 +129,8 @@ export const DashboardView: React.FC = () => {
   const {
     ipvTotalVendido,
     ipvTotalUnidades,
-    totalGeneralContado,
+    totalVentasEfectivo,
+    totalVentasTransferencia,
     products,
     ipvRows,
     sales,
@@ -442,7 +443,7 @@ export const DashboardView: React.FC = () => {
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-on-surface tracking-tight font-mono">
-                  ${formatCUP(totalGeneralContado)}
+                  ${formatCUP(totalVentasEfectivo + totalVentasTransferencia)}
                 </span>
               </div>
             </div>
@@ -453,10 +454,7 @@ export const DashboardView: React.FC = () => {
           <div className="flex items-center gap-2 mt-4 pt-3 border-t-0">
             <span className="flex items-center text-xs font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full">
               <span className="material-symbols-outlined text-[14px]">trending_up</span>
-              En caja 
-            </span>
-            <span className="text-[11px] text-on-surface-variant font-medium">
-              Hoy: ${formatCUP(ipvTotalVendido)} CUP
+              Efectivo + Transferencias
             </span>
           </div>
         </div>
@@ -481,10 +479,8 @@ export const DashboardView: React.FC = () => {
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 text-xs text-on-surface-variant">
             <span>
-              Ticket prom.:{' '}
-              <strong>
-                {formatCUP(sales.length > 0 ? ipvTotalVendido / sales.length : 0)} CUP
-              </strong>
+              Ticket promedio:
+              
             </span>
             <span className="text-primary font-medium font-mono">{sales.length} tickets</span>
           </div>

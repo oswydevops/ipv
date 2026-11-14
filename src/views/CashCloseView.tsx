@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { DayClose } from '../data/api';
 import { APP_NAME } from '../config';
 import { exportReportFile, ReportFormat } from '../utils/reportExporter';
+import { getSelectedBusinessProfile } from '../data/productCategories';
 
 export const CashCloseView: React.FC = () => {
   const {
@@ -179,7 +180,6 @@ export const CashCloseView: React.FC = () => {
   const expectedCashInDrawer = Math.max(0, totalVentasEfectivo - efectivoDevueltoToday);
   const expectedTransfers = Math.max(0, totalVentasTransferencia - transferenciaDevueltaToday);
   const cashDifference = totalCashFisico - expectedCashInDrawer;
-  const transferDifference = transferenciasAmount - expectedTransfers;
   const netIpvExpected = Math.max(0, ipvTotalVendido - devolucionesAmount);
   const netDifference = totalGeneralContado - netIpvExpected;
   const handleResetDenominationCounts = () => {
@@ -302,7 +302,11 @@ export const CashCloseView: React.FC = () => {
       const isNativeElectron = typeof window !== 'undefined' && Boolean((window as any).api?._isElectron);
 
       if (isNativeElectron && window.api?.reports?.exportarCierreFormato) {
-        const res = await window.api.reports.exportarCierreFormato({ date: todayDate, format: exportFormat });
+        const res = await window.api.reports.exportarCierreFormato({
+          date: todayDate,
+          format: exportFormat,
+          businessProfileName: getSelectedBusinessProfile().label,
+        });
         if (res.canceled) {
           showToast('Operación Cancelada', 'No se seleccionó una ubicación para guardar.', 'info');
           return;
@@ -753,32 +757,17 @@ export const CashCloseView: React.FC = () => {
                       Monto Total de Transferencias
                     </span>
                     <span className="text-[10px] text-on-surface-variant font-medium">
-                      EnZona / Transfermóvil (Neto esperado: ${formatCUP(expectedTransfers)} CUP
+                      EnZona / Transfermóvil (Suma automática de transferencias registradas
+                      {transferenciaDevueltaToday > 0 && ` • Neto esperado: $${formatCUP(expectedTransfers)} CUP`}
                       {transferenciaDevueltaToday > 0 && ` [Ventas: $${formatCUP(totalVentasTransferencia)} - Devs: $${formatCUP(transferenciaDevueltaToday)}]`})
                     </span>
-                    {transferDifference !== 0 && !isCurrentDayClosed && (
-                      <button
-                        onClick={() => setTransferenciasAmount(expectedTransfers)}
-                        className="text-[10px] text-primary underline text-left font-semibold mt-0.5 cursor-pointer"
-                        type="button"
-                      >
-                        Sincronizar con neto esperado (${formatCUP(expectedTransfers)} CUP)
-                      </button>
-                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-1 bg-surface neo-inset px-2.5 py-1.5 rounded-xl self-end sm:self-auto">
                   <span className="text-xs font-mono text-on-surface-variant font-bold">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    disabled={isCurrentDayClosed}
-                    value={transferenciasAmount}
-                    onChange={(e) => setTransferenciasAmount(parseFloat(e.target.value) || 0)}
-                    className="w-24 bg-transparent text-right font-mono text-xs font-bold text-primary focus:outline-none disabled:opacity-60"
-                    placeholder="0.00"
-                  />
+                  <span className="w-24 text-right font-mono text-xs font-bold text-primary">
+                    {formatCUP(transferenciasAmount)}
+                  </span>
                   <span className="text-[10px] font-bold text-primary font-mono ml-0.5">CUP</span>
                 </div>
               </div>

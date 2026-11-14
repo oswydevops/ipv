@@ -45,6 +45,7 @@ export const SettingsView: React.FC = () => {
     licenseDaysRemaining,
     licenseIsLifetime,
     licenseType,
+    licensePeriod,
     hasLicenseRecord,
     installationId,
     activationKey,
@@ -58,8 +59,31 @@ export const SettingsView: React.FC = () => {
     setSettingsTab: setActiveTab,
   } = useApp();
 
+  const isExpiredLicense = hasLicenseRecord && licenseStatus === 'expired';
+  const [selectedLicense, setSelectedLicense] = useState<'mensual' | 'anual' | 'exclusiva'>(
+    licensePeriod === 'annual' || (licensePeriod === 'lifetime' && licenseType === 'Anual')
+      ? 'anual'
+      : licensePeriod === 'exclusive' && !isExpiredLicense
+        ? 'exclusiva'
+        : 'mensual'
+  );
+  const currentLicensePlan =
+    licensePeriod === 'monthly' || (licensePeriod === 'lifetime' && licenseType === 'Mensual')
+      ? 'mensual'
+      : licensePeriod === 'annual' || (licensePeriod === 'lifetime' && licenseType === 'Anual')
+        ? 'anual'
+        : licensePeriod === 'exclusive'
+          ? 'exclusiva'
+          : null;
+  const isActivationCodeDisabled = isAppActivated && selectedLicense !== 'exclusiva';
   const activationInfoComplete = Object.values(activationContactInfo).every((value) => value.trim().length > 0);
-  const activationMessage = `Hola, mi nombre es: ${activationContactInfo.userName.trim()} y solicito el código de activación de la licencia de FerreStock para mi negocio: ${activationContactInfo.businessName.trim()}, mi ID de instalación es: ${installationId}`;
+  const activationMessage = isExpiredLicense
+    ? `Hola, mi nombre es: ${activationContactInfo.userName.trim()} y quiero renovar mi Licencia ${selectedLicense === 'mensual' ? 'Mensual' : 'Anual'} de FerreStock para mi negocio: ${activationContactInfo.businessName.trim()}, mi ID de instalación es: ${installationId}`
+    : selectedLicense === 'exclusiva'
+      ? `Hola, he elegido la Licencia Exclusiva porque quiero comprar la aplicación de acuerdo con las necesidades personales que tengo para mi negocio. Mi nombre es: ${activationContactInfo.userName.trim()}, mi negocio es: ${activationContactInfo.businessName.trim()} y mi ID de instalación es: ${installationId}`
+      : `Hola, mi nombre es: ${activationContactInfo.userName.trim()} y solicito el código de activación de la Licencia ${selectedLicense === 'mensual' ? 'Mensual' : 'Anual'} de FerreStock para mi negocio: ${activationContactInfo.businessName.trim()}, mi ID de instalación es: ${installationId}`;
+  const canUseActivationWhatsApp =
+    activationInfoComplete && (!isAppActivated || selectedLicense === 'exclusiva');
   const activationWhatsAppUrl = `https://wa.me/5363242069?text=${encodeURIComponent(activationMessage)}`;
   const [activationInfoDraft, setActivationInfoDraft] = useState(activationContactInfo);
   const [isPaymentQrVisible, setIsPaymentQrVisible] = useState(false);
@@ -96,8 +120,22 @@ export const SettingsView: React.FC = () => {
     setActivationInfoDraft(activationContactInfo);
   }, [activationContactInfo]);
 
+  useEffect(() => {
+    if (isAppActivated) setIsPaymentQrVisible(false);
+  }, [isAppActivated]);
+
+  useEffect(() => {
+    if (licensePeriod === 'monthly' || (licensePeriod === 'lifetime' && licenseType === 'Mensual')) {
+      setSelectedLicense('mensual');
+    }
+    if (licensePeriod === 'annual' || (licensePeriod === 'lifetime' && licenseType === 'Anual')) {
+      setSelectedLicense('anual');
+    }
+    if (licensePeriod === 'exclusive' && !isExpiredLicense) setSelectedLicense('exclusiva');
+  }, [licensePeriod, licenseStatus, licenseType, isExpiredLicense]);
+
   const handlePaymentCurrencySelect = (currency: 'CUP' | 'USD') => {
-    if (paymentCurrencyAnimation) return;
+    if (isAppActivated || paymentCurrencyAnimation) return;
 
     if (currency === paymentCurrency) {
       if (isPaymentQrVisible) setIsPaymentQrVisible(false);
@@ -537,6 +575,7 @@ export const SettingsView: React.FC = () => {
     const refundMixtoToday = devolucionesToday
       .filter((r) => r.refundMethod === 'mixto')
       .reduce((acc, r) => acc + (r.totalRefund || 0), 0);
+    const productsById = new Map(products.map((product) => [product.id, product]));
 
     const rows: string[] = [
       `"PLANILLA OFICIAL DE CONTROL DE INVENTARIO Y VENTAS (IPV) - JORNADA DIARIA"`,
@@ -547,6 +586,7 @@ export const SettingsView: React.FC = () => {
         'Código',
         'Producto',
         'Categoría',
+        'Subcategoría',
         'Unidad',
         'Precio ($)',
         'Saldo Inicial',
@@ -567,7 +607,8 @@ export const SettingsView: React.FC = () => {
         [
           `"${item.code}"`,
           `"${item.name.replace(/"/g, '""')}"`,
-          `"${item.category || 'General'}"`,
+          `"${(item.category || 'General').replace(/"/g, '""')}"`,
+          `"${(productsById.get(item.productId)?.subcategory || '').replace(/"/g, '""')}"`,
           `"${item.um}"`,
           item.price.toFixed(2),
           item.saldoIni,
@@ -631,10 +672,23 @@ export const SettingsView: React.FC = () => {
       (acc, r) => acc + (r.items || []).reduce((sum, item) => sum + (item.quantity || 1), 0),
       0
     );
-    const soldProducts = new Map<string, { code: string; name: string; unitPrice: number; quantity: number; subtotal: number; costOfGoods: number }>();
+    const productsById = new Map(products.map((product) => [product.id, product]));
+    const productsByCode = new Map(products.map((product) => [product.code, product]));
+    const soldProducts = new Map<string, {
+      code: string;
+      name: string;
+      category: string;
+      subcategory: string;
+      um: string;
+      unitPrice: number;
+      quantity: number;
+      subtotal: number;
+      costOfGoods: number;
+    }>();
     monthSales.forEach((sale) => {
       sale.items.forEach((item) => {
         const key = item.productId || item.code;
+        const catalogProduct = productsById.get(item.productId) || productsByCode.get(item.code);
         const product = soldProducts.get(key);
         if (product) {
           product.quantity += item.quantity;
@@ -645,6 +699,9 @@ export const SettingsView: React.FC = () => {
           soldProducts.set(key, {
             code: item.code,
             name: item.name,
+            category: catalogProduct?.category || 'General',
+            subcategory: catalogProduct?.subcategory || '',
+            um: item.um || catalogProduct?.um || '',
             unitPrice: item.unitPrice,
             quantity: item.quantity,
             subtotal: item.subtotal,
@@ -668,9 +725,9 @@ export const SettingsView: React.FC = () => {
       `"Ganancias Netas";${netProfitMonth.toFixed(2)};"Ventas netas menos costo de compra"`,
       `""`,
       `"2. ARTÍCULOS VENDIDOS EN EL MES"`,
-      `"Código";"Descripción";"Precio Promedio Unit.";"Unidades Vendidas";"Subtotal ($)";"Costo de Compra ($)";"Ganancia Bruta ($)"`,
+      `"Código";"Descripción";"Categoría";"Subcategoría";"U/M";"Precio Promedio Unit.";"Unidades Vendidas";"Subtotal ($)";"Costo de Compra ($)";"Ganancia Bruta ($)"`,
       ...Array.from(soldProducts.values()).map(
-        (item) => `"${item.code}";"${item.name.replace(/"/g, '""')}";${item.unitPrice.toFixed(2)};${item.quantity};${item.subtotal.toFixed(2)};${item.costOfGoods.toFixed(2)};${(item.subtotal - item.costOfGoods).toFixed(2)}`
+        (item) => `"${item.code.replace(/"/g, '""')}";"${item.name.replace(/"/g, '""')}";"${item.category.replace(/"/g, '""')}";"${item.subcategory.replace(/"/g, '""')}";"${item.um.replace(/"/g, '""')}";${item.unitPrice.toFixed(2)};${item.quantity};${item.subtotal.toFixed(2)};${item.costOfGoods.toFixed(2)};${(item.subtotal - item.costOfGoods).toFixed(2)}`
       ),
     ];
 
@@ -698,6 +755,7 @@ export const SettingsView: React.FC = () => {
         'Código',
         'Descripción del Producto',
         'Categoría / Familia',
+        'Subcategoría',
         'Unidad de Medida',
         'Precio de Venta ($ CUP)',
         'Stock Mostrador',
@@ -719,7 +777,8 @@ export const SettingsView: React.FC = () => {
         [
           `"${p.code}"`,
           `"${p.name.replace(/"/g, '""')}"`,
-          `"${p.category || 'General'}"`,
+          `"${(p.category || 'General').replace(/"/g, '""')}"`,
+          `"${(p.subcategory || '').replace(/"/g, '""')}"`,
           `"${p.um || 'u'}"`,
           Number(p.price || 0).toFixed(2),
           p.stock,
@@ -748,6 +807,8 @@ export const SettingsView: React.FC = () => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const productsById = new Map(products.map((product) => [product.id, product]));
+    const productsByCode = new Map(products.map((product) => [product.code, product]));
 
     const rows: string[] = [
       `"HISTORIAL CONSOLIDADO DE TICKETS DE VENTA Y FACTURACIÓN"`,
@@ -770,7 +831,11 @@ export const SettingsView: React.FC = () => {
 
     sales.forEach((s) => {
       const itemsDetail = (s.items || [])
-        .map((it) => `${it.name} (x${it.quantity} @ $${it.unitPrice})`)
+        .map((it) => {
+          const product = productsById.get(it.productId) || productsByCode.get(it.code);
+          const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
+          return `${it.name} (x${it.quantity} ${it.um || product?.um || 'u'} @ $${it.unitPrice})${taxonomy ? ` [${taxonomy}]` : ''}`;
+        })
         .join(' | ');
 
       const isVoided = (s as any).voided ? 'Anulado' : 'Completado';
@@ -807,6 +872,8 @@ export const SettingsView: React.FC = () => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const productsById = new Map(products.map((product) => [product.id, product]));
+    const productsByCode = new Map(products.map((product) => [product.code, product]));
 
     const rows: string[] = [
       `"REGISTRO DETALLADO DE DEVOLUCIONES DE CLIENTES Y CONTROL DE MERMAS"`,
@@ -829,7 +896,11 @@ export const SettingsView: React.FC = () => {
 
     returns.forEach((r) => {
       const itemsStr = (r.items || [])
-        .map((it) => `${it.name} (x${it.quantity} ${it.um || 'u'}) [${it.condition === 'mal_estado' ? 'Dañado' : 'Bueno'}]`)
+        .map((it) => {
+          const product = productsById.get(it.productId) || productsByCode.get(it.code);
+          const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
+          return `${it.name} (x${it.quantity} ${it.um || product?.um || 'u'})${taxonomy ? ` [${taxonomy}]` : ''} [${it.condition === 'mal_estado' ? 'Dañado' : 'Bueno'}]`;
+        })
         .join(' | ');
 
       const totalUds = (r.items || []).reduce((acc, it) => acc + (it.quantity || 1), 0);
@@ -874,8 +945,8 @@ export const SettingsView: React.FC = () => {
       </button>
       <button
         type="button"
-        disabled
-        className="py-2 px-3 rounded-xl bg-surface neo-raised text-orange-600 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-not-allowed shadow-sm"
+        onClick={() => void onExport('pdf')}
+        className="py-2 px-3 rounded-xl bg-surface neo-raised text-orange-600 text-xs font-bold hover:text-orange-700 active:neo-inset transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
       >
         <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
         <span>PDF</span>
@@ -1642,28 +1713,145 @@ export const SettingsView: React.FC = () => {
       {/* ========================================================= */}
       {activeTab === 'licencia' && (
         <section className="flex flex-col gap-6 animate-in fade-in duration-200">
-          <div className="relative overflow-hidden rounded-2xl border border-amber-300/60 bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-100 p-5 shadow-md sm:p-6">
-            <div className="absolute -right-8 -top-10 h-36 w-36 rounded-full bg-amber-300/25" />
-            <div className="absolute -bottom-16 right-20 h-32 w-32 rounded-full bg-orange-300/20" />
-            <div className="relative flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-md shadow-amber-700/20">
-                <span className="material-symbols-outlined text-[26px]">workspace_premium</span>
-              </div>
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-bold uppercase tracking-[0.16em] text-amber-800">
-                    Pago único
-                  </span>
-                  <span className="rounded-full bg-emerald-600/10 px-2.5 py-1 text-[10px] font-bold text-emerald-800">
-                    Sin cuotas mensuales ni anuales
-                  </span>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col">
+              <h2 className="text-lg font-headline font-bold text-on-surface">Planes de Licencia</h2>
+              <span className="text-xs text-on-surface-variant">
+                Elija la licencia que mejor se adapte a las necesidades de su negocio.
+              </span>
+              {isAppActivated && (
+                <span className="mt-1 text-xs text-on-surface-variant">
+                  Mensual y Anual se habilitan cuando expire la licencia actual. La Licencia Exclusiva puede solicitarse mientras siga vigente cualquiera de las otras.
+                </span>
+              )}
+            </div>
+            <div role="radiogroup" aria-label="Selecciona una licencia" className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <label className={isAppActivated ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}>
+                <input
+                  type="radio"
+                  name="activation-license"
+                  value="mensual"
+                  checked={selectedLicense === 'mensual'}
+                  onChange={() => setSelectedLicense('mensual')}
+                  disabled={isAppActivated}
+                  className="peer sr-only"
+                />
+                <div className={`relative flex h-full flex-col gap-4 rounded-2xl border p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md peer-focus-visible:ring-2 peer-focus-visible:ring-sky-500/40 ${
+                  selectedLicense === 'mensual'
+                    ? 'border-sky-400 bg-sky-50 shadow-md ring-2 ring-sky-400/20'
+                    : 'border-sky-200/70 bg-sky-50/40 hover:border-sky-300'
+                }`}>
+                  {isAppActivated && currentLicensePlan === 'mensual' && (
+                    <span className="absolute right-4 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-full border border-sky-900 bg-sky-800 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
+                      Licencia Actual
+                    </span>
+                  )}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/15 text-sky-700">
+                        <span className="material-symbols-outlined text-[22px]">calendar_month</span>
+                      </div>
+                      <h3 className="font-bold text-on-surface">Licencia Mensual</h3>
+                    </div>
+                    <span className={`material-symbols-outlined text-xl ${selectedLicense === 'mensual' ? 'text-sky-700' : 'text-sky-400'}`} aria-hidden="true">
+                      {selectedLicense === 'mensual' ? 'check_circle' : 'radio_button_unchecked'}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-extrabold text-on-surface">$4.99</span>
+                    <span className="text-xs font-semibold text-on-surface-variant">USD/mes</span>
+                  </div>
+                  <p className="text-sm text-on-surface-variant">Incluye todas las funciones de FerreStock. Pago mensual.</p>
                 </div>
-                <p className="text-sm leading-relaxed text-amber-950 sm:text-base">
-                  La licencia de la plataforma tiene un precio fijo de: <strong className="font-extrabold">4.99 USD</strong> a pagar por Clásica o al cambio actual de <strong className="font-extrabold">el TOQUE</strong> en pesos cubanos.
-                  Al realizar este pago podrá usar las funciones de la aplicación sin limitaciones de manera permanente,
-                  sin cuotas mensuales ni anuales.
-                </p>
-              </div>
+              </label>
+
+              <label className={isAppActivated ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}>
+                <input
+                  type="radio"
+                  name="activation-license"
+                  value="anual"
+                  checked={selectedLicense === 'anual'}
+                  onChange={() => setSelectedLicense('anual')}
+                  disabled={isAppActivated}
+                  className="peer sr-only"
+                />
+                <div className={`relative flex h-full flex-col gap-4 rounded-2xl border p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-500/40 ${
+                  selectedLicense === 'anual'
+                    ? 'border-emerald-400 bg-emerald-50 shadow-md ring-2 ring-emerald-400/20'
+                    : 'border-emerald-200/70 bg-emerald-50/40 hover:border-emerald-300'
+                }`}>
+                  {isAppActivated && currentLicensePlan === 'anual' && (
+                    <span className="absolute right-4 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-full border border-emerald-900 bg-emerald-800 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
+                      Licencia Actual
+                    </span>
+                  )}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-700">
+                        <span className="material-symbols-outlined text-[22px]">event</span>
+                      </div>
+                      <h3 className="font-bold text-on-surface">Licencia Anual</h3>
+                    </div>
+                    <span className={`material-symbols-outlined text-xl ${selectedLicense === 'anual' ? 'text-emerald-700' : 'text-emerald-400'}`} aria-hidden="true">
+                      {selectedLicense === 'anual' ? 'check_circle' : 'radio_button_unchecked'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-amber-800 ring-1 ring-amber-300/70">
+                      <span className="material-symbols-outlined text-[14px]" aria-hidden="true">celebration</span>
+                      ¡50% de descuento!
+                    </span>
+                    <span className="text-xs font-semibold text-on-surface-variant">
+                      Antes <span className="line-through">$59.99</span>
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-extrabold text-on-surface">$29.99</span>
+                    <span className="text-xs font-semibold text-on-surface-variant">USD/año</span>
+                  </div>
+                  <p className="text-sm font-semibold text-emerald-800">Ahorras $30 al año. Incluye todas las funciones de FerreStock, sin cuotas mensuales.</p>
+                </div>
+              </label>
+
+              <label className={isExpiredLicense ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}>
+                <input
+                  type="radio"
+                  name="activation-license"
+                  value="exclusiva"
+                  checked={selectedLicense === 'exclusiva'}
+                  onChange={() => setSelectedLicense('exclusiva')}
+                  disabled={isExpiredLicense}
+                  className="peer sr-only"
+                />
+                <div className={`relative flex h-full flex-col gap-4 rounded-2xl border p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md peer-focus-visible:ring-2 peer-focus-visible:ring-violet-500/40 ${
+                  selectedLicense === 'exclusiva'
+                    ? 'border-violet-400 bg-violet-50 shadow-md ring-2 ring-violet-400/20'
+                    : 'border-violet-200/70 bg-violet-50/40 hover:border-violet-300'
+                }`}>
+                  {isAppActivated && currentLicensePlan === 'exclusiva' && (
+                    <span className="absolute right-4 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-full border border-violet-900 bg-violet-800 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
+                      Licencia Actual
+                    </span>
+                  )}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-700">
+                        <span className="material-symbols-outlined text-[22px]">workspace_premium</span>
+                      </div>
+                      <h3 className="font-bold text-on-surface">Licencia Exclusiva</h3>
+                    </div>
+                    <span className={`material-symbols-outlined text-xl ${selectedLicense === 'exclusiva' ? 'text-violet-700' : 'text-violet-400'}`} aria-hidden="true">
+                      {selectedLicense === 'exclusiva' ? 'check_circle' : 'radio_button_unchecked'}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-extrabold text-on-surface">Negociable</span>
+                  </div>
+                  <p className="text-sm text-on-surface-variant">
+                    Para clientes que necesitan una aplicación personalizada. Incluye licencia de activación permanente.
+                  </p>
+                </div>
+              </label>
             </div>
           </div>
 
@@ -1672,7 +1860,7 @@ export const SettingsView: React.FC = () => {
               Licencia de Activación
             </h2>
             <span className="text-xs text-on-surface-variant">
-              Gestión de la clave de activación única requerida para desbloquear todas las funciones operativas de FerreStock.
+              Gestión de la clave de activación requerida para desbloquear todas las funciones operativas de FerreStock.
             </span>
           </div>
 
@@ -1818,7 +2006,11 @@ export const SettingsView: React.FC = () => {
               <div className="flex flex-col gap-1">
                 <h3 className="font-bold text-base text-on-surface">Introducir Código de Activación</h3>
                 <p className="text-xs text-on-surface-variant leading-relaxed">
-                  Código firmado y vinculado al ID de instalación (100–{ACTIVATION_CODE_LENGTH} caracteres). Se ignoran espacios, guiones y saltos de línea.
+                  {isActivationCodeDisabled
+                    ? 'La licencia vigente debe expirar antes de activar otro plan. Seleccione la Licencia Exclusiva para habilitar su código de activación.'
+                    : isAppActivated
+                      ? 'Puede activar una Licencia Exclusiva firmada mientras su licencia actual siga vigente.'
+                    : `Código firmado y vinculado al ID de instalación (100–${ACTIVATION_CODE_LENGTH} caracteres). Se ignoran espacios, guiones y saltos de línea.`}
                 </p>
               </div>
 
@@ -1843,13 +2035,15 @@ export const SettingsView: React.FC = () => {
                       maxLength={250}
                       autoComplete="off"
                       spellCheck={false}
+                      disabled={isActivationCodeDisabled}
                       placeholder="PEGUE AQUÍ EL CÓDIGO FIRMADO"
-                      className="min-w-0 flex-1 h-12 px-4 text-center font-mono text-sm md:text-base font-bold tracking-[0.12em] uppercase rounded-xl bg-surface neo-inset text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/40 border border-transparent focus:border-primary/30"
+                      className="min-w-0 flex-1 h-12 px-4 text-center font-mono text-sm md:text-base font-bold tracking-[0.12em] uppercase rounded-xl bg-surface neo-inset text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/40 border border-transparent focus:border-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
                     />
                     <button
                       type="button"
                       onClick={handlePasteActivationCode}
-                      className="h-12 px-4 rounded-xl bg-surface neo-raised text-xs font-bold text-on-surface hover:text-primary transition-colors"
+                      disabled={isActivationCodeDisabled}
+                      className="h-12 px-4 rounded-xl bg-surface neo-raised text-xs font-bold text-on-surface hover:text-primary transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Pegar
                     </button>
@@ -1865,10 +2059,12 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="submit"
                   disabled={
+                    isActivationCodeDisabled ||
                     normalizeActivationCode(activationCodeInput).length < ACTIVATION_CODE_MIN_LENGTH ||
                     normalizeActivationCode(activationCodeInput).length > ACTIVATION_CODE_LENGTH
                   }
-                  className={`w-full h-11 rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  className={`w-full h-11 rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed disabled:opacity-70 ${
+                    !isActivationCodeDisabled &&
                     normalizeActivationCode(activationCodeInput).length >= ACTIVATION_CODE_MIN_LENGTH &&
                     normalizeActivationCode(activationCodeInput).length <= ACTIVATION_CODE_LENGTH
                       ? 'bg-primary text-white shadow-primary/25 hover:bg-primary-container active:scale-[0.99]'
@@ -1895,10 +2091,12 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <div className="flex flex-col">
                   <h3 className="font-bold text-base text-on-surface">
-                    Solicitud de Código de Activación
+                    {isExpiredLicense ? 'Renovar licencia' : 'Solicitud de Código de Activación'}
                   </h3>
                   <p className="text-xs text-on-surface-variant ">
-                    Comuníquese directamente para obtener el código de activación de su licencia.
+                    {isExpiredLicense
+                      ? `Solicite la renovación de su Licencia ${selectedLicense === 'mensual' ? 'Mensual' : selectedLicense === 'anual' ? 'Anual' : 'Exclusiva'}.`
+                      : 'Comuníquese directamente para obtener el código de activación de su licencia.'}
                   </p>
                 </div>
               </div>
@@ -1953,7 +2151,9 @@ export const SettingsView: React.FC = () => {
 
                   <p className="text-xs text-on-surface-variant leading-relaxed">
                     {activationInfoComplete
-                      ? 'Haga clic para abrir WhatsApp con sus datos y el ID de instalación:'
+                      ? isAppActivated && selectedLicense !== 'exclusiva'
+                        ? 'Su licencia está activa. Seleccione la Licencia Exclusiva para solicitar una personalización por WhatsApp.'
+                        : 'Haga clic para abrir WhatsApp con sus datos y el ID de instalación:'
                       : 'Complete y guarde la información del usuario y del negocio para habilitar WhatsApp y mostrar los datos de pago.'}
                   </p>
 
@@ -1962,7 +2162,7 @@ export const SettingsView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => handleCopyText(activationMessage, 'Mensaje predeterminado')}
-                      disabled={!activationInfoComplete}
+                      disabled={!canUseActivationWhatsApp}
                       className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                       title="Copiar mensaje predeterminado"
                       aria-label="Copiar mensaje predeterminado"
@@ -1977,16 +2177,23 @@ export const SettingsView: React.FC = () => {
 
                 <div className="flex items-center gap-2">
                   <a
-                    href={activationInfoComplete ? activationWhatsAppUrl : undefined}
+                  href={canUseActivationWhatsApp ? activationWhatsAppUrl : undefined}
                     target="_blank"
                     rel="noopener noreferrer"
-                    aria-disabled={!activationInfoComplete}
-                    tabIndex={activationInfoComplete ? 0 : -1}
+                  aria-disabled={!canUseActivationWhatsApp}
+                  aria-label={
+                    isExpiredLicense
+                      ? currentLicensePlan === selectedLicense
+                        ? 'Renovar licencia por WhatsApp'
+                        : `Pagar licencia ${selectedLicense}`
+                      : 'Abrir WhatsApp'
+                  }
+                  tabIndex={canUseActivationWhatsApp ? 0 : -1}
                     onClick={(event) => {
-                      if (!activationInfoComplete) event.preventDefault();
+                    if (!canUseActivationWhatsApp) event.preventDefault();
                     }}
                     className={`flex-1 py-2.5 px-4 rounded-xl text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm ${
-                      activationInfoComplete
+                    canUseActivationWhatsApp
                         ? 'bg-[#25D366] hover:brightness-105 active:scale-[0.98] cursor-pointer'
                         : 'bg-[#25D366]/50 cursor-not-allowed'
                     }`}
@@ -1994,7 +2201,15 @@ export const SettingsView: React.FC = () => {
                     <svg className="w-4 h-4 fill-current shrink-0" viewBox="0 0 24 24">
                       <path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.816 9.816 0 0 0 12.04 2zm0 18.15c-1.48 0-2.93-.4-4.2-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.16 8.16 0 0 1-1.25-4.38c0-4.54 3.7-8.24 8.24-8.24 2.2 0 4.27.86 5.82 2.42a8.17 8.17 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.23 8.23zm4.52-6.17c-.25-.12-1.47-.72-1.7-.81-.23-.08-.39-.12-.56.12-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.12-1.05-.39-2-1.23-.74-.66-1.24-1.47-1.39-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.29.37-.43.12-.14.17-.25.25-.41.08-.17.04-.31-.02-.43s-.56-1.34-.76-1.84c-.2-.48-.41-.42-.56-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.1 0 1.24.9 2.44 1.03 2.61.12.17 1.78 2.71 4.3 3.8.6.26 1.07.41 1.44.53.61.19 1.16.17 1.6.1.49-.07 1.47-.6 1.68-1.18.21-.58.21-1.07.14-1.18-.06-.12-.22-.19-.47-.31z" />
                     </svg>
-                    <span>WhatsApp</span>
+                    <span>
+                      {isExpiredLicense
+                        ? currentLicensePlan === selectedLicense
+                          ? 'Renovar licencia'
+                          : `Pagar licencia ${selectedLicense}`
+                        : selectedLicense === 'exclusiva'
+                          ? 'Solicitar Licencia Exclusiva'
+                          : 'WhatsApp'}
+                    </span>
                   </a>
 
                 </div>
@@ -2026,7 +2241,7 @@ export const SettingsView: React.FC = () => {
                             key={currency}
                             type="button"
                             onClick={() => handlePaymentCurrencySelect(currency)}
-                            disabled={Boolean(paymentCurrencyAnimation)}
+                            disabled={Boolean(paymentCurrencyAnimation) || isAppActivated}
                             aria-pressed={isSelected}
                             aria-label={`Mostrar tarjeta de pago en ${currency}`}
                             className={`flex flex-col items-center gap-1 rounded-lg p-1 transition-all hover:bg-surface-container disabled:cursor-not-allowed disabled:opacity-60 ${
@@ -2095,7 +2310,7 @@ export const SettingsView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => handleCopyText(paymentCardNumber, 'Número de tarjeta')}
-                                disabled={!activationInfoComplete}
+                                disabled={!activationInfoComplete || isAppActivated}
                                 className="relative shrink-0 rounded-lg bg-white/15 p-2 text-white transition-colors hover:bg-white/25 enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                                 title="Copiar número de tarjeta"
                                 aria-label="Copiar número de tarjeta"
@@ -2108,7 +2323,8 @@ export const SettingsView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => setIsPaymentQrVisible(true)}
-                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15"
+                                disabled={isAppActivated}
+                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
                                 aria-label="Ver QR de pago"
                               >
                                 <span className="material-symbols-outlined text-[16px]" aria-hidden="true">visibility</span>
@@ -2137,7 +2353,8 @@ export const SettingsView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => setIsPaymentQrVisible(false)}
-                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15"
+                                disabled={isAppActivated}
+                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
                                 aria-label="Volver a la tarjeta de pago"
                               >
                                 <span className="material-symbols-outlined text-[16px]" aria-hidden="true">visibility</span>
@@ -2161,7 +2378,7 @@ export const SettingsView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => handleCopyText('+5356515392', 'Móvil de confirmación')}
-                      disabled={!activationInfoComplete}
+                      disabled={!activationInfoComplete || isAppActivated}
                       className="shrink-0 px-2.5 py-1.5 rounded-lg bg-surface neo-raised hover:text-primary active:neo-inset text-xs font-bold text-on-surface transition-all flex items-center gap-1 enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                       title="Copiar móvil de confirmación"
                     >

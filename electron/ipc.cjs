@@ -36,6 +36,7 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         daysRemaining: 0,
         isLifetime: false,
         licenseType: null,
+        licensePeriod: null,
         activationCode: '',
         lastSeenDate: clock.lastSeenDate,
       };
@@ -51,6 +52,7 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         daysRemaining: 0,
         isLifetime: false,
         licenseType: null,
+        licensePeriod: null,
         activationCode: '',
         lastSeenDate: clock.lastSeenDate,
       };
@@ -65,6 +67,7 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         daysRemaining: 0,
         isLifetime: false,
         licenseType: null,
+        licensePeriod: null,
         activationCode: '',
         lastSeenDate: clock.lastSeenDate,
       };
@@ -88,6 +91,7 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         daysRemaining: 0,
         isLifetime: false,
         licenseType: null,
+        licensePeriod: null,
         activationCode: code,
         lastSeenDate: clock.lastSeenDate,
       };
@@ -104,6 +108,7 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
       daysRemaining: result.daysRemaining,
       isLifetime: result.isLifetime,
       licenseType: result.licenseTypeName,
+      licensePeriod: result.licensePeriod,
       activationCode: code,
       lastSeenDate: clock.lastSeenDate,
     };
@@ -169,6 +174,13 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
           INVALID_CODE: 'El código firmado tiene una versión o contenido no válido.',
         };
         throw new DomainError(result.code, messages[result.code] || 'El código de activación no es válido.');
+      }
+
+      if (currentStatus.status === 'valid' && result.licensePeriod !== 'exclusive') {
+        throw new DomainError(
+          'LICENSE_ALREADY_USED',
+          'La licencia vigente debe expirar antes de activar otro plan. Solo puede activarse una Licencia Exclusiva mientras siga vigente.'
+        );
       }
 
       if (currentStatus.hasLicense && currentStatus.issueDate && result.issueDate <= currentStatus.issueDate) {
@@ -324,8 +336,15 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
       if (!input || !['excel', 'pdf'].includes(input.format)) {
         throw new DomainError('INVALID', 'Seleccione Excel o PDF para guardar el reporte.');
       }
+      if (
+        input.businessProfileName !== undefined &&
+        (typeof input.businessProfileName !== 'string' || input.businessProfileName.length > 120)
+      ) {
+        throw new DomainError('INVALID', 'El tipo de negocio del reporte no es válido.');
+      }
       const targetDate = input.date || repo.today();
       const resumen = getResumenDia(targetDate, db);
+      resumen.tipoNegocio = input.businessProfileName || '';
       const paths = getReportPaths(targetDate);
       const format = input.format;
       const extension = format === 'excel' ? 'xlsx' : 'pdf';
@@ -354,6 +373,8 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         typeof input.csvContent !== 'string' ||
         !['excel', 'pdf'].includes(input.format) ||
         ![',', ';'].includes(input.delimiter || ';') ||
+        (input.businessProfileName !== undefined &&
+          (typeof input.businessProfileName !== 'string' || input.businessProfileName.length > 120)) ||
         input.csvContent.length > 20 * 1024 * 1024
       ) {
         throw new DomainError('INVALID', 'No se pudieron preparar los datos del reporte.');
@@ -376,6 +397,9 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         ? saveResult.filePath
         : `${saveResult.filePath}.${extension}`;
       const rows = parseDelimitedText(input.csvContent, input.delimiter || ';');
+      if (input.businessProfileName) {
+        rows.splice(1, 0, ['Tipo de negocio', input.businessProfileName]);
+      }
 
       if (format === 'excel') {
         const ExcelJS = require('exceljs');

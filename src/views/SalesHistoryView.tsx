@@ -273,6 +273,8 @@ export const SalesHistoryView: React.FC = () => {
 
   // Exportar lista de ventas a CSV
   const handleExportCSV = async (format: ReportFormat) => {
+    const productsById = new Map(products.map((product) => [product.id, product]));
+    const productsByCode = new Map(products.map((product) => [product.code, product]));
     const headers = [
       'Ticket',
       'Fecha',
@@ -295,7 +297,11 @@ export const SalesHistoryView: React.FC = () => {
       s.total.toFixed(2),
       (s.efectivoAmount || 0).toFixed(2),
       (s.transferenciaAmount || 0).toFixed(2),
-      `"${(s.items || []).map((it) => `${it.quantity}x ${it.name}`).join('; ')}"`,
+      `"${(s.items || []).map((it) => {
+        const product = productsById.get(it.productId) || productsByCode.get(it.code);
+        const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
+        return `${it.quantity} ${it.um || product?.um || 'u'} ${it.name}${taxonomy ? ` [${taxonomy}]` : ''}`;
+      }).join('; ').replace(/"/g, '""')}"`,
       `"${(s.note || '').replace(/"/g, '""')}"`,
     ]);
 
@@ -344,8 +350,8 @@ export const SalesHistoryView: React.FC = () => {
             <span>Exportar Excel</span>
           </button>
           <button
-            disabled
-            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-orange-600 transition-all cursor-not-allowed"
+            onClick={() => void handleExportCSV('pdf')}
+            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-orange-600 hover:text-orange-700 active:neo-inset transition-all cursor-pointer"
             type="button"
           >
             <span className="material-symbols-outlined text-[19px]">picture_as_pdf</span>

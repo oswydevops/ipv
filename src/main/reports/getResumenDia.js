@@ -83,6 +83,7 @@ function getResumenDia(fecha, dbInstance) {
       si.code AS codigo,
       si.name AS nombre,
       COALESCE(p.category, 'General') AS categoria,
+      COALESCE(p.subcategory, '') AS subcategoria,
       si.um AS um,
       si.unit_price AS precioUnitario,
       SUM(si.quantity) AS cantidad,
@@ -91,7 +92,7 @@ function getResumenDia(fecha, dbInstance) {
     JOIN sales s ON si.sale_id = s.id
     LEFT JOIN products p ON si.product_id = p.id
     WHERE s.date = ? AND s.voided_at IS NULL
-    GROUP BY si.code, si.name, p.category, si.um, si.unit_price
+    GROUP BY si.code, si.name, p.category, p.subcategory, si.um, si.unit_price
     ORDER BY total DESC, cantidad DESC
   `).all(fecha);
 
@@ -104,6 +105,7 @@ function getResumenDia(fecha, dbInstance) {
       codigo: p.codigo,
       nombre: p.nombre,
       categoria: p.categoria,
+      subcategoria: p.subcategoria,
       um: p.um,
       precioUnitario: Number(p.precioUnitario || 0),
       cantidad: Number(p.cantidad || 0),
@@ -174,8 +176,21 @@ function getResumenDia(fecha, dbInstance) {
   `).all(fecha);
 
   const getItemsStmt = db.prepare(`
-      SELECT product_id, code, name, um, quantity, unit_price, refund_amount, condition, damaged_reason
-      FROM return_items WHERE return_id = ?
+      SELECT
+        ri.product_id,
+        ri.code,
+        ri.name,
+        COALESCE(p.category, '') AS category,
+        COALESCE(p.subcategory, '') AS subcategory,
+        ri.um,
+        ri.quantity,
+        ri.unit_price,
+        ri.refund_amount,
+        ri.condition,
+        ri.damaged_reason
+      FROM return_items ri
+      LEFT JOIN products p ON ri.product_id = p.id
+      WHERE ri.return_id = ?
   `);
 
   const devoluciones = returnRows.map((r) => ({
@@ -192,6 +207,8 @@ function getResumenDia(fecha, dbInstance) {
       items: getItemsStmt.all(r.id).map((it) => ({
         code: it.code,
         name: it.name,
+        category: it.category,
+        subcategory: it.subcategory,
         um: it.um,
         quantity: Number(it.quantity || 0),
         unitPrice: Number(it.unit_price || 0),

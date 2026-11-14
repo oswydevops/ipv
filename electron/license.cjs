@@ -7,9 +7,14 @@ const PUBLIC_KEY_PREFIX_HEX = '302a300506032b6570032100';
 const BASE32_CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const SIGNATURE_LENGTH = 64;
 const LICENSE_TYPES = {
-  1: 'Estándar',
-  2: 'Profesional',
-  3: 'Empresarial',
+  1: 'Mensual',
+  2: 'Anual',
+  3: 'Exclusiva',
+};
+const LICENSE_PERIODS = {
+  1: 'monthly',
+  2: 'annual',
+  3: 'exclusive',
 };
 
 function normalizeActivationCode(code) {
@@ -102,7 +107,7 @@ function installationIdMatches(signedId, currentInstallationId) {
     .some((id) => signedCandidates.has(id.toUpperCase()));
 }
 
-function validatePayload(payload, signature, installationId, _today, publicKeyBytes) {
+function validatePayload(payload, signature, installationId, today, publicKeyBytes) {
   if (!Buffer.isBuffer(payload) || payload.length < 7 || !Buffer.isBuffer(signature) || signature.length !== SIGNATURE_LENGTH) {
     return { ok: false, code: 'INVALID_SIGNATURE' };
   }
@@ -124,6 +129,7 @@ function validatePayload(payload, signature, installationId, _today, publicKeyBy
   const installationIdLength = payload[6];
   if (
     version !== 1 ||
+    !Object.prototype.hasOwnProperty.call(LICENSE_TYPES, licenseType) ||
     payload.length !== 7 + installationIdLength ||
     installationIdLength === 0
   ) {
@@ -139,16 +145,29 @@ function validatePayload(payload, signature, installationId, _today, publicKeyBy
     return { ok: false, code: 'INSTALLATION_MISMATCH' };
   }
   const issueDate = epochDayToDate(issueEpochDay);
+  const expiryEpochDay = validityDays > 0 ? issueEpochDay + validityDays : null;
+  const expiryDate = expiryEpochDay === null ? null : epochDayToDate(expiryEpochDay);
+  const todayEpochDay = dateToEpochDay(today);
+  const daysRemaining =
+    expiryEpochDay === null || todayEpochDay === null
+      ? 0
+      : Math.max(0, expiryEpochDay - todayEpochDay);
   const details = {
     payloadInstallationId,
     issueDate,
     validityDays,
-    expiryDate: null,
-    daysRemaining: 0,
-    isLifetime: true,
+    expiryDate,
+    daysRemaining,
+    isLifetime: validityDays === 0,
     licenseType,
     licenseTypeName: LICENSE_TYPES[licenseType] || `Licencia ${licenseType}`,
+    licensePeriod:
+      validityDays === 0 && licenseType !== 3 ? 'lifetime' : LICENSE_PERIODS[licenseType],
   };
+
+  if (expiryEpochDay !== null && todayEpochDay !== null && todayEpochDay > expiryEpochDay) {
+    return { ok: false, code: 'LICENSE_EXPIRED', ...details };
+  }
 
   return { ok: true, ...details };
 }

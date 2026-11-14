@@ -86,6 +86,7 @@ export function createFallbackApi(): IpvApi {
           name: input.name,
           detail: input.detail || '',
           category: input.category || 'General',
+          subcategory: input.subcategory || '',
           um: input.um || 'Unidad',
           price: Number(input.price) || 0,
           purchasePrice: Number(input.purchasePrice) || 0,

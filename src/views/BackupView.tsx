@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { saveFileWithPicker } from '../utils/fileSaver';
+import { getSelectedBusinessProfile } from '../data/productCategories';
 
 interface LastBackupState {
   date: string;
@@ -216,6 +217,9 @@ export const BackupView: React.FC = () => {
   // Action 1: Export Daily IPV to Excel (Planilla Diaria con Devoluciones de la Jornada)
   const handleExportDailyIPVExcel = async () => {
     const now = new Date();
+    const businessProfile = getSelectedBusinessProfile();
+    const productsById = new Map(products.map((product) => [product.id, product]));
+    const productsByCode = new Map(products.map((product) => [product.code, product]));
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 
@@ -239,6 +243,7 @@ export const BackupView: React.FC = () => {
     // 1. Encabezado de la planilla IPV
     const rows: string[] = [
       `"PLANILLA OFICIAL DE CONTROL DE INVENTARIO Y VENTAS (IPV) - JORNADA DIARIA"`,
+      `"Tipo de negocio: ${businessProfile.label.replace(/"/g, '""')}"`,
       `"Fecha de Operación: ${dateFormatted} | Generado: ${now.toLocaleTimeString('es-CU')}"`,
       `""`,
       `"1. MOVIMIENTO DE ARTÍCULOS EN EXISTENCIA (INVENTARIO Y VENTAS)"`,
@@ -246,6 +251,7 @@ export const BackupView: React.FC = () => {
         'Código',
         'Producto',
         'Categoría',
+        'Subcategoría',
         'Unidad',
         'Precio ($)',
         'Saldo Inicial',
@@ -274,6 +280,7 @@ export const BackupView: React.FC = () => {
           `"${item.code}"`,
           `"${item.name.replace(/"/g, '""')}"`,
           `"${item.category || 'General'}"`,
+          `"${productsById.get(item.productId)?.subcategory || ''}"`,
           `"${item.um}"`,
           item.price.toFixed(2),
           item.saldoIni,
@@ -330,7 +337,11 @@ export const BackupView: React.FC = () => {
       devolucionesToday.forEach((r) => {
         const totalUnits = (r.items || []).reduce((acc, it) => acc + (it.quantity || 1), 0);
         const itemsStr = (r.items || [])
-          .map((it) => `${it.name} (x${it.quantity} ${it.um || 'u.'})`)
+          .map((it) => {
+            const product = productsById.get(it.productId) || productsByCode.get(it.code);
+            const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
+            return `${it.name} (x${it.quantity} ${it.um || product?.um || 'u.'})${taxonomy ? ` [${taxonomy}]` : ''}`;
+          })
           .join(', ');
         const conditionStr = r.hasDamagedItems ? 'Con merma / Dañado' : 'Buen estado / Reintegrado al stock';
         const clienteStr = r.customerName && r.customerName.trim() ? r.customerName.trim() : 'Cliente general (No registrado)';
@@ -393,6 +404,7 @@ export const BackupView: React.FC = () => {
   // Action 2: Export monthly sales and returns summary
   const handleExportMonthlySummary = async () => {
     const now = new Date();
+    const businessProfile = getSelectedBusinessProfile();
     const monthName = now.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
     const pad = (n: number) => String(n).padStart(2, '0');
     const currentYearMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
@@ -425,10 +437,23 @@ export const BackupView: React.FC = () => {
       0
     );
     const netProfitMonth = ventasNetasMonth - costOfGoodsMonth;
-    const soldProducts = new Map<string, { code: string; name: string; unitPrice: number; quantity: number; subtotal: number; costOfGoods: number }>();
+    const productsById = new Map(products.map((product) => [product.id, product]));
+    const productsByCode = new Map(products.map((product) => [product.code, product]));
+    const soldProducts = new Map<string, {
+      code: string;
+      name: string;
+      category: string;
+      subcategory: string;
+      um: string;
+      unitPrice: number;
+      quantity: number;
+      subtotal: number;
+      costOfGoods: number;
+    }>();
     monthSales.forEach((sale) => {
       sale.items.forEach((item) => {
         const key = item.productId || item.code;
+        const catalogProduct = productsById.get(item.productId) || productsByCode.get(item.code);
         const product = soldProducts.get(key);
         if (product) {
           product.quantity += item.quantity;
@@ -439,6 +464,9 @@ export const BackupView: React.FC = () => {
           soldProducts.set(key, {
             code: item.code,
             name: item.name,
+            category: catalogProduct?.category || 'General',
+            subcategory: catalogProduct?.subcategory || '',
+            um: item.um || catalogProduct?.um || '',
             unitPrice: item.unitPrice,
             quantity: item.quantity,
             subtotal: item.subtotal,
@@ -450,6 +478,7 @@ export const BackupView: React.FC = () => {
 
     const sections = [
       `"RESUMEN MENSUAL DE VENTAS Y DEVOLUCIONES"`,
+      `"Tipo de negocio: ${businessProfile.label.replace(/"/g, '""')}"`,
       `"Periodo: ${monthName.toUpperCase()}"`,
       `"Fecha de Generación: ${now.toLocaleDateString('es-ES')} ${now.toLocaleTimeString('es-CU')}"`,
       `""`,
@@ -462,9 +491,9 @@ export const BackupView: React.FC = () => {
       `"Ganancias Netas";${netProfitMonth.toFixed(2)};"Ventas netas menos costo de compra"`,
       `""`,
       `"2. ARTÍCULOS VENDIDOS EN EL MES"`,
-      `"Código";"Descripción";"Precio Promedio Unit.";"Unidades Vendidas";"Subtotal ($)";"Costo de Compra ($)";"Ganancia Bruta ($)"`,
+      `"Código";"Descripción";"Categoría";"Subcategoría";"U/M";"Precio Promedio Unit.";"Unidades Vendidas";"Subtotal ($)";"Costo de Compra ($)";"Ganancia Bruta ($)"`,
       ...Array.from(soldProducts.values()).map(
-        (item) => `"${item.code}";"${item.name.replace(/"/g, '""')}";${item.unitPrice.toFixed(2)};${item.quantity};${item.subtotal.toFixed(2)};${item.costOfGoods.toFixed(2)};${(item.subtotal - item.costOfGoods).toFixed(2)}`
+        (item) => `"${item.code}";"${item.name.replace(/"/g, '""')}";"${item.category}";"${item.subcategory}";"${item.um}";${item.unitPrice.toFixed(2)};${item.quantity};${item.subtotal.toFixed(2)};${item.costOfGoods.toFixed(2)};${(item.subtotal - item.costOfGoods).toFixed(2)}`
       ),
       `""`,
       `"3. HISTORIAL Y REGISTRO DETALLADO DE DEVOLUCIONES DEL MES (${monthName.toUpperCase()})"`,
@@ -477,7 +506,11 @@ export const BackupView: React.FC = () => {
       monthReturns.forEach((r) => {
         const totalUnits = (r.items || []).reduce((acc, it) => acc + (it.quantity || 1), 0);
         const itemsStr = (r.items || [])
-          .map((it) => `${it.name} (x${it.quantity} ${it.um || 'u.'})`)
+          .map((it) => {
+            const product = productsById.get(it.productId) || productsByCode.get(it.code);
+            const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
+            return `${it.name} (x${it.quantity} ${it.um || product?.um || 'u.'})${taxonomy ? ` [${taxonomy}]` : ''}`;
+          })
           .join(', ');
         const conditionStr = r.hasDamagedItems ? 'Con merma / Dañado' : 'Buen estado / Reintegrado al stock';
         const clienteStr = r.customerName && r.customerName.trim() ? r.customerName.trim() : 'Cliente general (No registrado)';

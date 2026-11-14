@@ -16,6 +16,7 @@ export interface Product {
   name: string;
   detail: string;
   category: string;
+  subcategory?: string;
   um: string;
   price: number;
   purchasePrice?: number;

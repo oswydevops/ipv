@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const ExcelJS = require('exceljs');
+const Handlebars = require('handlebars');
 const { getResumenDia } = require('./getResumenDia.js');
 const { generarExcelCierre } = require('./excel.js');
 const { generarExcelIpv } = require('./ipvExcel.js');
@@ -44,6 +45,8 @@ const fakeDb = {
             product_id: 'product-1',
             code: 'P-001',
             name: 'Artículo de prueba',
+            category: 'General',
+            subcategory: 'Accesorios',
             um: 'Unidad',
             quantity: 1,
             unit_price: 45,
@@ -91,6 +94,7 @@ const fakeDb = {
             codigo: 'P-001',
             nombre: 'Artículo de prueba',
             categoria: 'General',
+            subcategoria: 'Accesorios',
             um: 'Unidad',
             precioUnitario: 50,
             cantidad: 10,
@@ -112,6 +116,26 @@ async function run() {
   assert.strictEqual(resumen.totales.gananciasNetas, 320);
   assert.strictEqual(resumen.devoluciones.length, 1);
   assert.strictEqual(resumen.ventasAnuladas.length, 1);
+  assert.strictEqual(resumen.ventasPorProducto[0].subcategoria, 'Accesorios');
+  const renderCloseTemplate = Handlebars.compile(
+    fs.readFileSync(path.join(__dirname, '../../../templates/cierre.hbs'), 'utf8')
+  );
+  Handlebars.registerHelper('money', (value) => Number(value || 0).toFixed(2));
+  Handlebars.registerHelper('eq', (left, right) => left === right);
+  Handlebars.registerHelper('gt', (left, right) => left > right);
+  Handlebars.registerHelper('multiply', (left, right) => Number(left) * Number(right));
+  const closeHtml = renderCloseTemplate({
+    fecha,
+    fechaFormateada: '17/10/2026',
+    generadoEn: '17/10/2026, 17:00',
+    tipoNegocio: 'Mipyme (comercio mixto)',
+    totales: { estaCerrado: false, diferencia: 0 },
+    porMetodoPago: [],
+    denominaciones: [],
+    ventasPorProducto: [{ codigo: 'P-001', nombre: 'Artículo de prueba', categoria: 'General', subcategoria: 'Accesorios', um: 'Unidad', cantidad: 1, precioUnitario: 50, total: 50, porcentajeStr: '100%' }],
+  });
+  assert.match(closeHtml, /Tipo de negocio: <strong>Mipyme \(comercio mixto\)<\/strong>/);
+  assert.match(closeHtml, /<td>Accesorios<\/td>/);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ipv-report-'));
   const output = path.join(directory, `cierre-${fecha}.xlsx`);
@@ -123,6 +147,9 @@ async function run() {
     const summary = workbook.getWorksheet('Resumen');
     const summaryRows = [];
     summary.eachRow((row) => summaryRows.push(row.values));
+    const detail = workbook.getWorksheet('Detalle');
+    assert.ok(detail.getRow(1).values.includes('SUBCATEGORÍA'));
+    assert.ok(detail.getRow(2).values.includes('Accesorios'));
     assert.ok(summaryRows.some((row) => row.includes('Efectivo contado en gaveta') && row.includes(320)));
     assert.ok(summaryRows.some((row) => row.includes('Transferencias contadas') && row.includes(100)));
     assert.ok(summaryRows.some((row) => row.includes('Total devuelto / anulado') && row.includes(60)));
@@ -136,6 +163,7 @@ async function run() {
     assert.ok(returnValues.includes('TKT-00123'));
     assert.ok(returnValues.some((value) => typeof value === 'string' && value.includes('Artículo de prueba')));
     assert.ok(returnValues.includes('Venta anulada'));
+    assert.ok(returnValues.some((value) => typeof value === 'string' && value.includes('General / Accesorios')));
 
     const ipvOutput = path.join(directory, 'reporte-ipv.xlsx');
     await generarExcelIpv({
@@ -232,6 +260,17 @@ async function run() {
       assert.ok(fs.existsSync(selectedPath));
       assert.ok(saveDialogOptions.defaultPath.endsWith(`cierre-${fecha}.xlsx`));
 
+      const businessClosePath = path.join(directory, 'cierre-mipyme.xlsx');
+      nextSaveResult = { canceled: false, filePath: businessClosePath };
+      await handlers['reportes:exportar-cierre-formato']({
+        date: fecha,
+        format: 'excel',
+        businessProfileName: 'Mipyme (comercio mixto)',
+      });
+      const businessCloseWorkbook = new ExcelJS.Workbook();
+      await businessCloseWorkbook.xlsx.readFile(businessClosePath);
+      assert.match(businessCloseWorkbook.getWorksheet('Resumen').getCell('A1').value, /Mipyme \(comercio mixto\)/);
+
       const tableExportPath = path.join(directory, 'tabla-exportada.xlsx');
       nextSaveResult = { canceled: false, filePath: tableExportPath };
       const exportedTable = await handlers['reportes:exportar-tabla']({
@@ -240,12 +279,14 @@ async function run() {
         csvContent: 'Nombre,Importe\nProducto,12.5',
         delimiter: ',',
         format: 'excel',
+        businessProfileName: 'Mipyme (comercio mixto)',
       });
       assert.strictEqual(exportedTable.path, tableExportPath);
       const tableWorkbook = new ExcelJS.Workbook();
       await tableWorkbook.xlsx.readFile(tableExportPath);
       assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(1).values.slice(1), ['Nombre', 'Importe']);
-      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(2).values.slice(1), ['Producto', '12.5']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(2).values.slice(1), ['Tipo de negocio', 'Mipyme (comercio mixto)']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(3).values.slice(1), ['Producto', '12.5']);
 
       const fileExportPath = path.join(directory, 'exportacion-elegida.csv');
       nextSaveResult = { canceled: false, filePath: fileExportPath };

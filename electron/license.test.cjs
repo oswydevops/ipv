@@ -30,17 +30,69 @@ function makeLicense(keyPair, installationId, issueDate, validityDays, type = 1)
 function run() {
   const keyPair = nacl.sign.keyPair();
   const installationId = 'ABC234';
-  const license = makeLicense(keyPair, installationId, '2026-10-20', 10, 2);
+  const license = makeLicense(keyPair, installationId, '2026-10-20', 10, 1);
   assert.strictEqual(license.code.length, 124);
   assert.strictEqual(decodeBase32(license.code).length, license.payload.length + 64);
 
   const valid = validateActivationCode(license.code, installationId, '2026-10-23', keyPair.publicKey);
   assert.strictEqual(valid.ok, true);
   assert.strictEqual(valid.issueDate, '2026-10-20');
-  assert.strictEqual(valid.expiryDate, null);
-  assert.strictEqual(valid.daysRemaining, 0);
-  assert.strictEqual(valid.isLifetime, true);
-  assert.strictEqual(valid.licenseTypeName, 'Profesional');
+  assert.strictEqual(valid.expiryDate, '2026-10-30');
+  assert.strictEqual(valid.daysRemaining, 7);
+  assert.strictEqual(valid.isLifetime, false);
+  assert.strictEqual(valid.licenseTypeName, 'Mensual');
+  assert.strictEqual(valid.licensePeriod, 'monthly');
+  const expiresToday = validateActivationCode(license.code, installationId, '2026-10-30', keyPair.publicKey);
+  assert.strictEqual(expiresToday.ok, true);
+  assert.strictEqual(expiresToday.daysRemaining, 0);
+
+  const expiredMonthly = validateActivationCode(license.code, installationId, '2026-10-31', keyPair.publicKey);
+  assert.strictEqual(expiredMonthly.ok, false);
+  assert.strictEqual(expiredMonthly.code, 'LICENSE_EXPIRED');
+  assert.strictEqual(expiredMonthly.daysRemaining, 0);
+
+  const annualLicense = makeLicense(keyPair, installationId, '2026-01-01', 365, 2);
+  const annualMonthReminder = validateActivationCode(
+    annualLicense.code,
+    installationId,
+    '2026-12-02',
+    keyPair.publicKey
+  );
+  assert.strictEqual(annualMonthReminder.daysRemaining, 30);
+  assert.strictEqual(annualMonthReminder.licensePeriod, 'annual');
+  const annualReminder = validateActivationCode(
+    annualLicense.code,
+    installationId,
+    '2026-12-18',
+    keyPair.publicKey
+  );
+  assert.strictEqual(annualReminder.ok, true);
+  assert.strictEqual(annualReminder.expiryDate, '2027-01-01');
+  assert.strictEqual(annualReminder.daysRemaining, 14);
+  assert.strictEqual(annualReminder.licensePeriod, 'annual');
+
+  const exclusiveLicense = makeLicense(keyPair, installationId, '2026-10-20', 0, 3);
+  const exclusive = validateActivationCode(
+    exclusiveLicense.code,
+    installationId,
+    '2026-10-23',
+    keyPair.publicKey
+  );
+  assert.strictEqual(exclusive.ok, true);
+  assert.strictEqual(exclusive.licenseTypeName, 'Exclusiva');
+  assert.strictEqual(exclusive.licensePeriod, 'exclusive');
+
+  const lifetimeLicense = makeLicense(keyPair, installationId, '2026-10-20', 0);
+  const lifetime = validateActivationCode(
+    lifetimeLicense.code,
+    installationId,
+    '2026-10-23',
+    keyPair.publicKey
+  );
+  assert.strictEqual(lifetime.ok, true);
+  assert.strictEqual(lifetime.expiryDate, null);
+  assert.strictEqual(lifetime.isLifetime, true);
+  assert.strictEqual(lifetime.licensePeriod, 'lifetime');
 
   const portableLicense = validateActivationCode(
     license.code,

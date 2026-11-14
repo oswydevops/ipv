@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { SearchableSelect } from '../components/SearchableSelect';
-import { PRODUCT_CATEGORIES } from '../data/productCategories';
 import { Product } from '../types';
 
 export const StockAlertsView: React.FC = () => {
@@ -23,6 +22,8 @@ export const StockAlertsView: React.FC = () => {
   const zeroItems = products.filter((p) => p.stock === 0);
   const lowItems = products.filter((p) => p.stock > 0 && p.stock <= p.minStock);
   const availableItems = products.filter((p) => p.stock > p.minStock);
+  const productCategories = Array.from(new Set(products.map((product) => product.category).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, 'es'));
 
   const displayedList = products.filter((p) => {
     if (activeTab === 'agotados' && p.stock !== 0) return false;
@@ -311,7 +312,7 @@ export const StockAlertsView: React.FC = () => {
               placeholder="Buscar categoría..."
               options={[
                 { value: 'all', label: 'Todas las categorías' },
-                ...PRODUCT_CATEGORIES.map((category) => ({ value: category, label: category })),
+                ...productCategories.map((category) => ({ value: category, label: category })),
               ]}
               className="h-10 pl-3.5 rounded-xl bg-surface neo-inset text-xs font-semibold"
             />

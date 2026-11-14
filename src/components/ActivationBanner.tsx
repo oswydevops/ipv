@@ -11,6 +11,7 @@ export const ActivationBanner: React.FC = () => {
     licenseLastSeenDate,
     licenseExpiryDate,
     licenseDaysRemaining,
+    licensePeriod,
     currentView,
     settingsTab,
     navigateToActivation,
@@ -37,7 +38,7 @@ export const ActivationBanner: React.FC = () => {
                 ? `Corrija fecha y hora; última fecha registrada: ${licenseLastSeenDate || '—'}.`
                 : licenseErrorCode === 'INSTALLATION_MISMATCH'
                   ? 'Active una licencia emitida para este equipo.'
-                : `Puede consultar y exportar sus datos. Venció el ${licenseExpiryDate || '—'}; días restantes: ${licenseDaysRemaining}.`}
+                : `Puede consultar y exportar sus datos. La licencia venció el ${licenseExpiryDate || '—'}.`}
             </p>
           </div>
         </div>
@@ -46,14 +47,77 @@ export const ActivationBanner: React.FC = () => {
           onClick={navigateToActivation}
           className="px-4 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-container transition-colors"
         >
+          Volver activar licencia
+        </button>
+      </div>
+    );
+  }
+
+  if (isAppActivated) {
+    const expiryDate = licenseExpiryDate ? new Date(`${licenseExpiryDate}T12:00:00`) : null;
+    const oneMonthBeforeExpiry = expiryDate
+      ? new Date(
+          expiryDate.getFullYear(),
+          expiryDate.getMonth() - 1,
+          Math.min(
+            expiryDate.getDate(),
+            new Date(expiryDate.getFullYear(), expiryDate.getMonth(), 0).getDate()
+          ),
+          12
+        )
+      : null;
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const isAnnualMonthReminder =
+      licensePeriod === 'annual' && oneMonthBeforeExpiry !== null && today >= oneMonthBeforeExpiry;
+    const isAnnualSecondReminder = licensePeriod === 'annual' && licenseDaysRemaining <= 14;
+    const shouldShowReminder =
+      (licensePeriod === 'monthly' && licenseDaysRemaining <= 7) ||
+      isAnnualMonthReminder ||
+      isAnnualSecondReminder;
+
+    if (!shouldShowReminder) return null;
+
+    const expiryLabel = expiryDate?.toLocaleDateString('es-ES') || '—';
+    const remainingLabel = licenseDaysRemaining === 0
+      ? 'vence hoy'
+      : `vence en ${licenseDaysRemaining} ${licenseDaysRemaining === 1 ? 'día' : 'días'}`;
+    const reminderMessage = isAnnualSecondReminder
+      ? 'Segundo aviso: tu licencia anual está por vencer.'
+      : isAnnualMonthReminder
+        ? 'Tu licencia anual vencerá dentro de un mes.'
+        : licensePeriod === 'monthly' && shouldShowReminder
+          ? 'Tu licencia mensual está por vencer.'
+          : '';
+
+    return (
+      <div
+        role="status"
+        className="mb-6 flex flex-col gap-3 rounded-2xl border border-amber-300/60 bg-amber-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="flex items-start gap-3">
+          <span className="material-symbols-outlined text-amber-700" aria-hidden="true">
+            schedule
+          </span>
+          <div>
+            <h3 className="text-sm font-bold text-on-surface">{reminderMessage}</h3>
+            <p className="mt-1 text-xs text-on-surface-variant">
+              La licencia {licensePeriod === 'annual' ? 'anual' : 'mensual'} vence el {expiryLabel}; {remainingLabel}.
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={navigateToActivation}
+          className="shrink-0 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-primary-container"
+        >
           Renovar licencia
         </button>
       </div>
     );
   }
 
-  // Si la aplicación ya está activada, no se muestra el banner
-  if (isAppActivated || isTrialActive) return null;
+  if (isTrialActive) return null;
 
   // Si ya se encuentra en la sección de activación dentro de configuración, no duplicar el aviso
   const isAlreadyOnActivationSection =

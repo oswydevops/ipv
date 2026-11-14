@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { ViewType, Product, IPVRow, Denomination, BackupRecord, SaleRecord, SaleItem, ReturnRecord, ReturnItem, MermaItem } from '../types';
 import { IpvDay, IpvDayRow, SaleInput, DayClose, LicenseStatus } from '../data/api';
+import { BUSINESS_PROFILE_LOCKED_STORAGE_KEY } from '../data/productCategories';
 import {
   ACTIVATION_CODE_LENGTH,
   formatActivationCode,
@@ -243,6 +244,7 @@ interface AppContextType {
   licenseDaysRemaining: number;
   licenseIsLifetime: boolean;
   licenseType: string;
+  licensePeriod: LicenseStatus['licensePeriod'];
   installationId: string;
   licenseLastSeenDate: string;
   activationKey: string;
@@ -322,6 +324,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [licenseDaysRemaining, setLicenseDaysRemaining] = useState<number>(0);
   const [licenseIsLifetime, setLicenseIsLifetime] = useState<boolean>(false);
   const [licenseType, setLicenseType] = useState<string>('');
+  const [licensePeriod, setLicensePeriod] = useState<LicenseStatus['licensePeriod']>(null);
   const [activationKey, setActivationKey] = useState<string>('');
   const [activatedAt, setActivatedAt] = useState<string>('');
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('reportes');
@@ -398,6 +401,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLicenseDaysRemaining(status.daysRemaining);
     setLicenseIsLifetime(status.isLifetime);
     setLicenseType(status.licenseType || '');
+    setLicensePeriod(status.licensePeriod);
     setActivationKey(status.activationCode ? formatActivationCode(status.activationCode) : '');
     setActivatedAt(status.issueDate || '');
   }, []);
@@ -755,6 +759,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         name: productData.name,
         code: productData.code,
         category: productData.category,
+        subcategory: productData.subcategory,
         detail: productData.detail,
         um: productData.um,
         price: productData.price,
@@ -782,6 +787,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         name: updated.name,
         code: updated.code,
         category: updated.category,
+        subcategory: updated.subcategory,
         detail: updated.detail,
         um: updated.um,
         price: updated.price,
@@ -1339,6 +1345,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'ipv_fallback_date_v1',
         'ferrestock_products',
         'ferrestock_sales',
+        BUSINESS_PROFILE_LOCKED_STORAGE_KEY,
         'ferrestock_last_backup_info',
         'ferrestock_backup_history',
         ACTIVATION_CONTACT_INFO_STORAGE_KEY,
@@ -1526,6 +1533,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         licenseDaysRemaining,
         licenseIsLifetime,
         licenseType,
+        licensePeriod,
         installationId,
         activationKey,
         activatedAt,

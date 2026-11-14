@@ -1,4 +1,5 @@
 import { saveFileWithPicker } from './fileSaver';
+import { getSelectedBusinessProfile } from '../data/productCategories';
 
 export type ReportFormat = 'excel' | 'pdf';
 
@@ -17,13 +18,20 @@ export async function exportReportFile({
   delimiter = ';',
   format,
 }: ExportReportInput): Promise<{ canceled: boolean; path?: string; error?: string }> {
+  const businessProfile = getSelectedBusinessProfile();
+  const reportTitle = `${title} - ${businessProfile.label}`;
+  const bom = csvContent.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const csvBody = bom ? csvContent.slice(1) : csvContent;
+  const profileRow = `"Tipo de negocio"${delimiter}"${businessProfile.label.replace(/"/g, '""')}"`;
+
   if (window.api?._isElectron && window.api.reports?.exportarTabla) {
     return window.api.reports.exportarTabla({
-      title,
+      title: reportTitle,
       fileName,
       csvContent,
       delimiter,
       format,
+      businessProfileName: businessProfile.label,
     });
   }
 
@@ -35,11 +43,12 @@ export async function exportReportFile({
   }
 
   const csvName = `${fileName.replace(/\.[^.]+$/, '')}.csv`;
-  const result = await saveFileWithPicker(csvContent, {
+  const reportCsvContent = `${bom}${profileRow}\r\n${csvBody}`;
+  const result = await saveFileWithPicker(reportCsvContent, {
     suggestedName: csvName,
     mimeType: 'text/csv;charset=utf-8;',
     extension: 'csv',
-    description: `${title} (CSV compatible con Excel)`,
+    description: `${reportTitle} (CSV compatible con Excel)`,
   });
   return {
     canceled: result.canceled,

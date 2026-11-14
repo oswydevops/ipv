@@ -188,6 +188,7 @@
     <div class="meta-box">
       <div>Fecha de Operación: <strong>{{fechaFormateada}}</strong></div>
       <div>Generado el: {{generadoEn}}</div>
+      {{#if tipoNegocio}}<div>Tipo de negocio: <strong>{{tipoNegocio}}</strong></div>{{/if}}
       <div>
         {{#if totales.estaCerrado}}
           <span class="badge-status cerrado">Jornada Cerrada</span>
@@ -310,6 +311,7 @@
         <th style="width: 70px;">Código</th>
         <th>Descripción del Producto</th>
         <th style="width: 80px;">Categoría</th>
+        <th style="width: 80px;">Subcategoría</th>
         <th class="text-center" style="width: 50px;">U/M</th>
         <th class="text-center" style="width: 60px;">Cant.</th>
         <th class="text-right" style="width: 85px;">P. Unit (CUP)</th>
@@ -323,6 +325,7 @@
         <td class="font-mono">{{codigo}}</td>
         <td class="font-bold">{{nombre}}</td>
         <td>{{categoria}}</td>
+        <td>{{subcategoria}}</td>
         <td class="text-center">{{um}}</td>
         <td class="text-center font-mono font-bold">{{cantidad}}</td>
         <td class="text-right font-mono">${{money precioUnitario}}</td>
@@ -331,7 +334,7 @@
       </tr>
       {{/each}}
       <tr style="background: #0f172a; color: #ffffff;">
-        <td colspan="4" class="font-bold" style="color: #ffffff;">TOTALES DE LA JORNADA</td>
+        <td colspan="5" class="font-bold" style="color: #ffffff;">TOTALES DE LA JORNADA</td>
         <td class="text-center font-mono font-bold" style="color: #ffffff;">{{totales.totalArticulosVendidos}}</td>
         <td></td>
         <td class="text-right font-mono font-bold" style="color: #ffffff;">${{money totales.totalVentas}}</td>

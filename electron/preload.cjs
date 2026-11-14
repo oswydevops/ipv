@@ -68,4 +68,5 @@ contextBridge.exposeInMainWorld('api', {
     exportarIpvExcel: (input) => call('reportes:exportar-ipv-excel', input),
   },
   exportarCierre: (fecha) => call('reportes:exportar-cierre', fecha),
+  _isElectron: true,
 });

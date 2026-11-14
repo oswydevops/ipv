@@ -1,8 +1,43 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { SearchableSelect } from '../components/SearchableSelect';
-import { PRODUCT_CATEGORIES } from '../data/productCategories';
+import {
+  BUSINESS_PROFILES,
+  BUSINESS_PROFILE_LOCKED_STORAGE_KEY,
+  BUSINESS_PROFILE_STORAGE_KEY,
+  DEFAULT_BUSINESS_PROFILE_ID,
+  DEFAULT_PRODUCT_UNITS,
+  getBusinessProfile,
+  getProductNamePlaceholder,
+} from '../data/productCategories';
 import { Product } from '../types';
+
+const loadBusinessProfileId = () => {
+  try {
+    const savedProfileId = localStorage.getItem(BUSINESS_PROFILE_STORAGE_KEY);
+    return BUSINESS_PROFILES.some((profile) => profile.id === savedProfileId)
+      ? savedProfileId!
+      : DEFAULT_BUSINESS_PROFILE_ID;
+  } catch {
+    return DEFAULT_BUSINESS_PROFILE_ID;
+  }
+};
+
+const loadBusinessProfileLock = () => {
+  try {
+    return localStorage.getItem(BUSINESS_PROFILE_LOCKED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+};
+
+const persistBusinessProfileLock = () => {
+  try {
+    localStorage.setItem(BUSINESS_PROFILE_LOCKED_STORAGE_KEY, 'true');
+  } catch (error) {
+    console.warn('No se pudo guardar el bloqueo del tipo de negocio.', error);
+  }
+};
 
 export const getCategoryBadgeClass = (category: string) => {
   const cat = (category || '').toLowerCase();
@@ -41,11 +76,18 @@ export const ProductsView: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 6;
 
+  const [businessProfileId, setBusinessProfileId] = useState(loadBusinessProfileId);
+  const [isBusinessProfileLocked, setIsBusinessProfileLocked] = useState(loadBusinessProfileLock);
+  const businessProfile = getBusinessProfile(businessProfileId);
+  const firstCategory = businessProfile.categories[0];
+  const firstSubcategory = firstCategory.subcategories[0];
+
   // New product form state
   const [newCode, setNewCode] = useState('');
   const [newName, setNewName] = useState('');
-  const [newCategory, setNewCategory] = useState<string>('Herramientas manuales');
-  const [newUM, setNewUM] = useState('Unidad');
+  const [newCategory, setNewCategory] = useState<string>(firstCategory.name);
+  const [newSubcategory, setNewSubcategory] = useState(firstSubcategory.name);
+  const [newUM, setNewUM] = useState(firstSubcategory.units[0]);
   const [newPrice, setNewPrice] = useState('0');
   const [newPurchasePrice, setNewPurchasePrice] = useState('0');
   const [newStock, setNewStock] = useState('0');
@@ -56,7 +98,8 @@ export const ProductsView: React.FC = () => {
   // Edit product form state
   const [editCode, setEditCode] = useState('');
   const [editName, setEditName] = useState('');
-  const [editCategory, setEditCategory] = useState<string>('Herramientas manuales');
+  const [editCategory, setEditCategory] = useState<string>(firstCategory.name);
+  const [editSubcategory, setEditSubcategory] = useState('');
   const [editUM, setEditUM] = useState('Unidad');
   const [editPrice, setEditPrice] = useState<number>(0);
   const [editPurchasePrice, setEditPurchasePrice] = useState<number>(0);
@@ -64,6 +107,85 @@ export const ProductsView: React.FC = () => {
   const [editMinStock, setEditMinStock] = useState<number>(0);
   const [editAlmacenStock, setEditAlmacenStock] = useState<number>(0);
   const [editLocation, setEditLocation] = useState('');
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BUSINESS_PROFILE_STORAGE_KEY, businessProfileId);
+    } catch (error) {
+      console.warn('No se pudo guardar el tipo de negocio seleccionado.', error);
+    }
+  }, [businessProfileId]);
+
+  useEffect(() => {
+    if (products.length === 0) {
+      setIsBusinessProfileLocked(loadBusinessProfileLock());
+      return;
+    }
+
+    setIsBusinessProfileLocked(true);
+    persistBusinessProfileLock();
+  }, [products]);
+
+  const newCategorySettings = businessProfile.categories.find((item) => item.name === newCategory);
+  const newSubcategorySettings = newCategorySettings?.subcategories.find((item) => item.name === newSubcategory);
+  const newUnitOptions = newSubcategorySettings?.units || newCategorySettings?.subcategories[0]?.units || DEFAULT_PRODUCT_UNITS;
+  const editCategorySettings = businessProfile.categories.find((item) => item.name === editCategory);
+  const editSubcategorySettings = editCategorySettings?.subcategories.find((item) => item.name === editSubcategory);
+  const editUnitOptions = editSubcategorySettings?.units || editCategorySettings?.subcategories[0]?.units || DEFAULT_PRODUCT_UNITS;
+  const editCategoryOptions = [
+    ...businessProfile.categories.map((item) => ({ value: item.name, label: item.name })),
+    ...(!businessProfile.categories.some((item) => item.name === editCategory) && editCategory
+      ? [{ value: editCategory, label: editCategory }]
+      : []),
+  ];
+  const editSubcategoryOptions = [
+    { value: '', label: 'Sin subcategoría' },
+    ...(editCategorySettings?.subcategories.map((item) => ({ value: item.name, label: item.name })) || []),
+    ...(editSubcategory && !editCategorySettings?.subcategories.some((item) => item.name === editSubcategory)
+      ? [{ value: editSubcategory, label: editSubcategory }]
+      : []),
+  ];
+
+  const handleBusinessProfileChange = (profileId: string) => {
+    if (isBusinessProfileLocked) return;
+
+    const nextProfile = getBusinessProfile(profileId);
+    const nextCategory = nextProfile.categories[0];
+    const nextSubcategory = nextCategory.subcategories[0];
+    setBusinessProfileId(profileId);
+    setNewCategory(nextCategory.name);
+    setNewSubcategory(nextSubcategory.name);
+    setNewUM(nextSubcategory.units[0]);
+  };
+
+  const handleNewCategoryChange = (categoryName: string) => {
+    const categorySettings = businessProfile.categories.find((item) => item.name === categoryName);
+    const subcategory = categorySettings?.subcategories[0];
+    setNewCategory(categoryName);
+    setNewSubcategory(subcategory?.name || '');
+    setNewUM(subcategory?.units[0] || DEFAULT_PRODUCT_UNITS[0]);
+  };
+
+  const handleNewSubcategoryChange = (subcategoryName: string) => {
+    const subcategory = newCategorySettings?.subcategories.find((item) => item.name === subcategoryName);
+    setNewSubcategory(subcategoryName);
+    setNewUM(subcategory?.units[0] || newCategorySettings?.subcategories[0]?.units[0] || DEFAULT_PRODUCT_UNITS[0]);
+  };
+
+  const handleEditCategoryChange = (categoryName: string) => {
+    const subcategory = businessProfile.categories
+      .find((item) => item.name === categoryName)
+      ?.subcategories[0];
+    setEditCategory(categoryName);
+    setEditSubcategory(subcategory?.name || '');
+    setEditUM(subcategory?.units[0] || DEFAULT_PRODUCT_UNITS[0]);
+  };
+
+  const handleEditSubcategoryChange = (subcategoryName: string) => {
+    const subcategory = editCategorySettings?.subcategories.find((item) => item.name === subcategoryName);
+    setEditSubcategory(subcategoryName);
+    setEditUM(subcategory?.units[0] || editCategorySettings?.subcategories[0]?.units[0] || DEFAULT_PRODUCT_UNITS[0]);
+  };
 
   const zeroCount = products.filter((p) => p.stock === 0).length;
   const lowCount = products.filter((p) => p.stock > 0 && p.stock <= p.minStock).length;
@@ -105,8 +227,11 @@ export const ProductsView: React.FC = () => {
     const autoCode = generateNextProductCode(products);
     setNewCode(autoCode);
     setNewName('');
-    setNewCategory('Herramientas manuales');
-    setNewUM('Unidad');
+    const defaultCategory = businessProfile.categories[0];
+    const defaultSubcategory = defaultCategory.subcategories[0];
+    setNewCategory(defaultCategory.name);
+    setNewSubcategory(defaultSubcategory.name);
+    setNewUM(defaultSubcategory.units[0]);
     setNewPrice('0');
     setNewPurchasePrice('0');
     setNewStock('0');
@@ -136,8 +261,9 @@ export const ProductsView: React.FC = () => {
     const success = await addProduct({
       code: finalCode,
       name: newName.trim(),
-      detail: `${newCategory} • Grado Profesional`,
+      detail: '',
       category: newCategory,
+      subcategory: newSubcategory,
       um: newUM,
       price: Number(newPrice) || 0,
       purchasePrice: Number(newPurchasePrice) || 0,
@@ -151,6 +277,8 @@ export const ProductsView: React.FC = () => {
       createdAt: formattedDate,
     });
     if (success) {
+      setIsBusinessProfileLocked(true);
+      persistBusinessProfileLock();
       setIsNewModalOpen(false);
     }
   };
@@ -161,6 +289,7 @@ export const ProductsView: React.FC = () => {
     setEditCode(product.code);
     setEditName(product.name);
     setEditCategory(product.category);
+    setEditSubcategory(product.subcategory || '');
     setEditUM(product.um);
     setEditPrice(product.price);
     setEditPurchasePrice(Number(product.purchasePrice) || 0);
@@ -184,6 +313,7 @@ export const ProductsView: React.FC = () => {
       code: editCode.trim() || editingProduct.code,
       name: editName.trim(),
       category: editCategory,
+      subcategory: editSubcategory,
       um: editUM,
       price: Number(editPrice) || 0,
       purchasePrice: Number(editPurchasePrice) || 0,
@@ -237,8 +367,8 @@ export const ProductsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 4 Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Inventory summary and business profile */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         <div className="p-4 rounded-2xl bg-surface neo-raised flex items-center gap-3.5">
           <div className="w-12 h-12 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
             <span className="material-symbols-outlined text-[24px]">inventory_2</span>
@@ -302,6 +432,31 @@ export const ProductsView: React.FC = () => {
             </div>
           </div>
         </div>
+
+        <div className="p-4 rounded-2xl bg-surface neo-raised flex flex-col justify-center gap-2 min-w-0">
+          <div className="flex flex-col gap-1.5 min-w-0">
+            <label htmlFor="business-profile" className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider">
+              Tipo de negocio
+            </label>
+            <select
+              id="business-profile"
+              value={businessProfileId}
+              onChange={(event) => handleBusinessProfileChange(event.target.value)}
+              disabled={isBusinessProfileLocked}
+              aria-describedby="business-profile-hint"
+              className="app-select h-11 w-full min-w-0 rounded-xl border border-outline-variant/30 bg-surface neo-inset px-3 text-sm font-semibold text-on-surface transition-colors hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-70 cursor-pointer"
+            >
+              {BUSINESS_PROFILES.map((profile) => (
+                <option key={profile.id} value={profile.id}>{profile.label}</option>
+              ))}
+            </select>
+            <p id="business-profile-hint" className="text-[10px] leading-relaxed text-on-surface-variant">
+              {isBusinessProfileLocked
+                ? 'Para cambiar el tipo de negocio, restablezca la aplicación desde la Configuración.'
+                : 'El tipo de negocio se podrá cambiar hasta agregar el primer producto.'}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Main Layout: Products Table & Dynamic Ficha Técnica (appears only when a product is selected) */}
@@ -349,7 +504,7 @@ export const ProductsView: React.FC = () => {
                           <div className="font-semibold text-on-surface group-hover:text-primary transition-colors">
                             {p.name}
                           </div>
-                          <div className="text-[10px] text-on-surface-variant">{p.detail}</div>
+                          <div className="text-[10px] text-on-surface-variant">{p.subcategory || p.detail}</div>
                         </td>
                         <td className="py-3 px-3">
                           <span
@@ -478,7 +633,7 @@ export const ProductsView: React.FC = () => {
           </div>
         </div>
 
-        {/* Ficha Técnica: ONLY renders when a product is selected */}
+        {/* Ficha Técnica*/}
         {selectedProduct && (
           <div className="xl:col-span-4 flex flex-col gap-5">
             <div className="p-6 rounded-2xl bg-surface neo-raised flex flex-col gap-5 relative">
@@ -665,59 +820,54 @@ export const ProductsView: React.FC = () => {
                 <label className="font-semibold text-on-surface">Categoría</label>
                 <SearchableSelect
                   value={newCategory}
-                  onChange={setNewCategory}
+                  onChange={handleNewCategoryChange}
                   placeholder="Buscar categoría..."
-                  options={PRODUCT_CATEGORIES.map((category) => ({ value: category, label: category }))}
+                  options={businessProfile.categories.map((category) => ({ value: category.name, label: category.name }))}
                   className="h-10 pl-3 rounded-xl bg-surface neo-inset text-xs"
                 />
               </div>
 
-              <div className="col-span-2 flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">
-                  Descripción / Nombre Comercial
-                </label>
-                <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
-                  <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="Ej: Válvula Check 3/4 horizontal de bronce"
-                    className="bg-transparent border-none outline-none text-on-surface w-full font-medium text-xs"
-                  />
-                </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="font-semibold text-on-surface">Subcategoría (opcional)</label>
+                <SearchableSelect
+                  value={newSubcategory}
+                  onChange={handleNewSubcategoryChange}
+                  placeholder="Buscar subcategoría..."
+                  options={[
+                    { value: '', label: 'Sin subcategoría' },
+                    ...(newCategorySettings?.subcategories || []).map((item) => ({
+                      value: item.name,
+                      label: item.name,
+                    })),
+                  ]}
+                  className="h-10 pl-3 rounded-xl bg-surface neo-inset text-xs"
+                />
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Unidad de Medida (U/M)</label>
+                <label className="font-semibold text-on-surface">Unidad de Medida</label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <select
                     value={newUM}
                     onChange={(e) => setNewUM(e.target.value)}
                     className="app-select bg-transparent border-none outline-none w-full text-on-surface cursor-pointer text-xs"
                   >
-                    <option>Unidad</option>
-                    <option>Metro</option>
-                    <option>Litro</option>
-                    <option>Pieza</option>
-                    <option>Caja</option>
-                    <option>Galón</option>
-                    <option>Kilogramo</option>
-                    <option>Libra</option>
+                    {newUnitOptions.map((unit) => <option key={unit}>{unit}</option>)}
                   </select>
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="font-semibold text-on-surface">Precio Oficial (CUP)</label>
+              <div className="col-span-2 flex flex-col gap-1.5">
+                <label className="font-semibold text-on-surface">
+                  Nombre del producto
+                </label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={newPrice}
-                    onChange={(e) => setNewPrice(normalizeNumericInput(e.target.value))}
-                    placeholder="0.00"
-                    className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono text-xs"
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder={getProductNamePlaceholder(businessProfileId, newCategory)}
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-medium text-xs"
                   />
                 </div>
               </div>
@@ -731,6 +881,21 @@ export const ProductsView: React.FC = () => {
                     min="0"
                     value={newPurchasePrice}
                     onChange={(e) => setNewPurchasePrice(e.target.value)}
+                    placeholder="0.00"
+                    className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="font-semibold text-on-surface">Precio Oficial (CUP)</label>
+                <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newPrice}
+                    onChange={(e) => setNewPrice(normalizeNumericInput(e.target.value))}
                     placeholder="0.00"
                     className="bg-transparent border-none outline-none text-on-surface w-full font-headline font-semibold font-mono text-xs"
                   />
@@ -845,22 +1010,34 @@ export const ProductsView: React.FC = () => {
                 <label className="font-semibold text-on-surface">Categoría</label>
                 <SearchableSelect
                   value={editCategory}
-                  onChange={setEditCategory}
+                  onChange={handleEditCategoryChange}
                   placeholder="Buscar categoría..."
-                  options={PRODUCT_CATEGORIES.map((category) => ({ value: category, label: category }))}
+                  options={editCategoryOptions}
+                  className="h-10 pl-3 rounded-xl bg-surface neo-inset text-xs"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="font-semibold text-on-surface">Subcategoría (opcional)</label>
+                <SearchableSelect
+                  value={editSubcategory}
+                  onChange={handleEditSubcategoryChange}
+                  placeholder="Buscar subcategoría..."
+                  options={editSubcategoryOptions}
                   className="h-10 pl-3 rounded-xl bg-surface neo-inset text-xs"
                 />
               </div>
 
               <div className="col-span-2 flex flex-col gap-1.5">
                 <label className="font-semibold text-on-surface">
-                  Descripción / Nombre Comercial
+                  Nombre del producto
                 </label>
                 <div className="h-10 px-3 rounded-xl bg-surface neo-inset flex items-center">
                   <input
                     type="text"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
+                    placeholder={getProductNamePlaceholder(businessProfileId, editCategory)}
                     className="bg-transparent border-none outline-none text-on-surface w-full font-medium"
                   />
                 </div>
@@ -874,13 +1051,8 @@ export const ProductsView: React.FC = () => {
                     onChange={(e) => setEditUM(e.target.value)}
                     className="app-select bg-transparent border-none outline-none w-full text-on-surface cursor-pointer"
                   >
-                    <option>Unidad</option>
-                    <option>Metro</option>
-                    <option>Pieza</option>
-                    <option>Caja</option>
-                    <option>Galón</option>
-                    <option>Litro</option>
-                    <option>Kilogramo</option>
+                    {editUnitOptions.map((unit) => <option key={unit}>{unit}</option>)}
+                    {!editUnitOptions.includes(editUM) && <option>{editUM}</option>}
                   </select>
                 </div>
               </div>
