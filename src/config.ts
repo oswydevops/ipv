@@ -4,4 +4,4 @@
  */
 export const APP_NAME = 'FerreStock';
 export const APP_SUBTITLE = 'Gestión de inventario';
-export const APP_VERSION = 'v1.2.1';
+export const APP_VERSION = 'v1.3.0';
