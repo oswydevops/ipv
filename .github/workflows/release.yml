@@ -1,19 +1,99 @@
 name: release
+
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.atl/**'
+      - '.codegraph/**'
+      - '.gitignore'
+  workflow_dispatch:
+
+# Evita que dos pushes seguidos calculen la misma versión
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  release:
+    # No publica si el commit trae [skip ci] o [no-release]
+    if: >-
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[no-release]')
     runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npx electron-builder --win nsis --x64 --publish always
+
+      - name: Calcular la nueva versión
+        shell: pwsh
+        run: |
+          $pkg = [version](node -p "require('./package.json').version")
+          $last = gh release list -R oswydevops/offlineipvreleases -L 1 --json tagName --jq '.[0].tagName'
+
+          if ($last -and $last -ne 'null') {
+            $lastV = [version]($last.TrimStart('v'))
+            if ($pkg -gt $lastV) {
+              $next = $pkg
+            } else {
+              $next = [version]::new($lastV.Major, $lastV.Minor, $lastV.Build + 1)
+            }
+          } else {
+            $next = $pkg
+          }
+
+          Write-Host "package.json: $pkg | último release: $last | nueva versión: $next"
+          "VERSION=$next" >> $env:GITHUB_ENV
+
+      - name: Aplicar la versión a package.json
+        shell: pwsh
+        run: npm version $env:VERSION --no-git-tag-version --allow-same-version
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Pruebas rápidas
+        run: npm run test:trial
+
+      - name: Compilar la interfaz
+        run: npm run build
+
+      - name: Construir y publicar el instalador
+        run: npx electron-builder --win nsis --x64 --publish always
+
+      - name: Verificar el release publicado
+        shell: pwsh
+        run: gh release view "v$env:VERSION" -R oswydevops/offlineipvreleases
+
+      - name: Guardar versión y tag en el repo ipv
+        shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host "Sin cambios de versión"; exit 0 }
+          git commit -m "chore(release): v$env:VERSION [skip ci]"
+          git pull --rebase origin main
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git tag "v$env:VERSION"
+          git push origin HEAD:main
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git push origin "v$env:VERSION"
+          if ($LASTEXITCODE -ne 0) { exit 1 }

@@ -2,6 +2,9 @@
   "name": "ferreStock",
   "private": true,
   "version": "1.3.0",
+  "engines": {
+    "node": "20.x"
+  },
   "description": "Gestión de inventario y punto de venta para ferreterías y negocios de suministros.",
   "author": "La Sociedad Inc.",
   "type": "module",
