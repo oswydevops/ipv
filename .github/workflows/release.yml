@@ -79,6 +79,16 @@ jobs:
         shell: pwsh
         run: gh release view "v$env:VERSION" -R oswydevops/offlineipvreleases
 
+      - name: Poner título al release
+        shell: pwsh
+        run: gh release edit "v$env:VERSION" -R oswydevops/offlineipvreleases --title "FerreStock v$env:VERSION (x64)" 
+
+      - name: Subir copia con nombre estable
+        shell: pwsh
+        run: |
+          Copy-Item "release\FerreStock-Setup-$env:VERSION-x64.exe" "release\FerreStock-Setup.exe"
+          gh release upload "v$env:VERSION" "release\FerreStock-Setup.exe" -R oswydevops/offlineipvreleases --clobber 
+
       - name: Guardar versión y tag en el repo ipv
         shell: pwsh
         env:
