@@ -1,6 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { exportReportFile, ReportFormat } from '../utils/reportExporter';
+import { exportReportFile, platformLogoDataUrl, ReportFormat } from '../utils/reportExporter';
+import { isDefectiveMermaProduct } from '../utils/productInventory';
+import { generateWebCashCloseExport } from '../utils/cashCloseExport';
+import { getSelectedBusinessProfile } from '../data/productCategories';
 import paymentQrImage from '../../assets/qrpago.jpg';
 import paymentQrUsdImage from '../../assets/qrpagousd.jpeg';
 import {
@@ -20,6 +23,8 @@ interface LastBackupState {
   status: string;
 }
 
+type SalesHistoryExportPeriod = 'diarias' | 'semanales' | 'mensual';
+
 export const SettingsView: React.FC = () => {
   const {
     products,
@@ -29,7 +34,9 @@ export const SettingsView: React.FC = () => {
     transferenciasAmount,
     sales,
     returns = [],
+    mermaItems,
     todayDate,
+    isCurrentDayClosed,
     ipvTotalVendido,
     ipvTotalUnidades,
     addBackupRecord,
@@ -58,6 +65,32 @@ export const SettingsView: React.FC = () => {
     settingsTab: activeTab,
     setSettingsTab: setActiveTab,
   } = useApp();
+
+  const monthlyReportMonths = useMemo(() => {
+    const [year, month, day] = (todayDate || '').split('-').map(Number);
+    const referenceDate =
+      Number.isInteger(year) && Number.isInteger(month) && month >= 1 && month <= 12
+        ? new Date(year, month - 1, Number.isInteger(day) && day >= 1 ? day : 1)
+        : new Date();
+
+    return Array.from({ length: 3 }, (_, offset) => {
+      const monthDate = new Date(referenceDate.getFullYear(), referenceDate.getMonth() - offset, 1);
+      const key = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
+      const lastDay = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).getDate();
+      const formatDate = (date: number) =>
+        `${String(date).padStart(2, '0')}/${String(monthDate.getMonth() + 1).padStart(2, '0')}/${monthDate.getFullYear()}`;
+
+      return {
+        key,
+        name: monthDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }),
+        startDate: formatDate(1),
+        endDate: formatDate(lastDay),
+      };
+    });
+  }, [todayDate]);
+  const [selectedMonthlyReportMonthKey, setSelectedMonthlyReportMonthKey] = useState('');
+  const selectedMonthlyReportPeriod =
+    monthlyReportMonths.find((month) => month.key === selectedMonthlyReportMonthKey) || monthlyReportMonths[0];
 
   const isExpiredLicense = hasLicenseRecord && licenseStatus === 'expired';
   const [selectedLicense, setSelectedLicense] = useState<'mensual' | 'anual' | 'exclusiva'>(
@@ -115,6 +148,72 @@ export const SettingsView: React.FC = () => {
     activationInfoDraft.province !== activationContactInfo.province ||
     activationInfoDraft.identityCard !== activationContactInfo.identityCard;
   const canCreateBackup = isAppActivated || isTrialActive;
+  const [salesHistoryExportPeriod, setSalesHistoryExportPeriod] =
+    useState<SalesHistoryExportPeriod>('diarias');
+  const [salesHistoryExportDay, setSalesHistoryExportDay] = useState(
+    todayDate || new Date().toISOString().slice(0, 10)
+  );
+  const [salesHistoryExportWeekIdx, setSalesHistoryExportWeekIdx] = useState(0);
+  const [isSalesHistoryExporting, setIsSalesHistoryExporting] = useState(false);
+  const [isCashCloseExporting, setIsCashCloseExporting] = useState(false);
+
+  const salesHistoryExportCutoff = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 31);
+    return date.toISOString().slice(0, 10);
+  }, []);
+
+  const salesHistoryExportWeeks = useMemo(() => {
+    const now = new Date();
+    return Array.from({ length: 4 }, (_, idx) => {
+      const end = new Date(now);
+      end.setDate(now.getDate() - idx * 7);
+      const start = new Date(now);
+      start.setDate(now.getDate() - ((idx + 1) * 7 - 1));
+      const startDate = start.toISOString().slice(0, 10);
+      const endDate = end.toISOString().slice(0, 10);
+      return {
+        idx,
+        startDate,
+        endDate,
+        label: idx === 0
+          ? 'Semana Actual (Últimos 7 días)'
+          : `Semana -${idx} (${startDate.slice(5)} al ${endDate.slice(5)})`,
+      };
+    });
+  }, []);
+
+  const selectedSalesHistoryWeek =
+    salesHistoryExportWeeks[salesHistoryExportWeekIdx] || salesHistoryExportWeeks[0];
+  const salesHistoryExportRangeLabel = salesHistoryExportPeriod === 'diarias'
+    ? `Día ${salesHistoryExportDay}`
+    : salesHistoryExportPeriod === 'semanales'
+      ? selectedSalesHistoryWeek.label
+      : `Acumulado de los últimos 30 días (${salesHistoryExportCutoff} al ${todayDate})`;
+
+  const filteredSalesHistory = useMemo(() => {
+    const monthSales = sales.filter((sale) => sale.date >= salesHistoryExportCutoff);
+    let periodSales = monthSales;
+    if (salesHistoryExportPeriod === 'diarias') {
+      periodSales = monthSales.filter((sale) => sale.date === salesHistoryExportDay);
+    } else if (salesHistoryExportPeriod === 'semanales') {
+      periodSales = monthSales.filter(
+        (sale) =>
+          sale.date >= selectedSalesHistoryWeek.startDate &&
+          sale.date <= selectedSalesHistoryWeek.endDate
+      );
+    }
+    return periodSales.sort((a, b) => {
+      if (a.date !== b.date) return b.date.localeCompare(a.date);
+      return (b.timestamp || '').localeCompare(a.timestamp || '');
+    });
+  }, [
+    sales,
+    salesHistoryExportCutoff,
+    salesHistoryExportPeriod,
+    salesHistoryExportDay,
+    selectedSalesHistoryWeek,
+  ]);
 
   useEffect(() => {
     setActivationInfoDraft(activationContactInfo);
@@ -312,7 +411,7 @@ export const SettingsView: React.FC = () => {
     if (!canCreateBackup) {
       showToast(
         'Respaldo no disponible',
-        'El respaldo está habilitado durante la prueba gratuita de 7 días o con la aplicación activada.',
+        'El respaldo está habilitado durante la prueba gratuita de 14 días o con la aplicación activada.',
         'error'
       );
       return;
@@ -546,7 +645,11 @@ export const SettingsView: React.FC = () => {
     successMessage: string,
   ) => {
     try {
-      const result = await exportReportFile(input);
+      const result = await exportReportFile({
+        ...input,
+        businessName: activationContactInfo.businessName.trim(),
+        ownerName: activationContactInfo.userName.trim(),
+      });
       if (result.canceled) return;
       if (result.error) {
         showToast('Error al exportar reporte', result.error, 'error');
@@ -650,30 +753,132 @@ export const SettingsView: React.FC = () => {
     }, 'Planilla Diaria Exportada', `Se generó el archivo con ${ipvRows.length} artículos del IPV`);
   };
 
-  // Reporte 2: Resumen mensual de ventas y devoluciones
+  const handleExportCashClose = async (format: ReportFormat) => {
+    setIsCashCloseExporting(true);
+    try {
+      const isNativeElectron = typeof window !== 'undefined' && Boolean((window as any).api?._isElectron);
+
+      if (isNativeElectron && window.api?.reports?.exportarCierreFormato) {
+        const result = await window.api.reports.exportarCierreFormato({
+          date: todayDate,
+          format,
+          businessProfileName: getSelectedBusinessProfile().label,
+          businessName: activationContactInfo.businessName.trim(),
+          ownerName: activationContactInfo.userName.trim(),
+          logoDataUrl: platformLogoDataUrl,
+          denominations: denominations.map(({ id, label, value, count }) => ({
+            id,
+            label,
+            value,
+            count,
+          })),
+        });
+        if (result.canceled) {
+          showToast('Operación Cancelada', 'No se seleccionó una ubicación para guardar.', 'info');
+          return;
+        }
+        showToast(
+          'Cierre Exportado con Éxito',
+          `Reporte ${format === 'pdf' ? 'PDF' : 'Excel'} guardado en: ${result.path || 'la ubicación seleccionada'}`,
+          'success'
+        );
+        return;
+      }
+
+      const csvContent = generateWebCashCloseExport({
+        date: todayDate,
+        responsibleName: localStorage.getItem('ipv_cash_close_responsible_name') || 'Vendedor',
+        isClosed: isCurrentDayClosed,
+        ipvTotalVendido,
+        denominations,
+        menoresAmount,
+        transferenciasAmount,
+        sales,
+        returns,
+      });
+      await saveGeneratedReport({
+        title: 'Reporte Oficial de Cierre de Caja',
+        fileName: `Cierre_Caja_${todayDate}.${format === 'pdf' ? 'pdf' : 'xlsx'}`,
+        csvContent,
+        delimiter: ';',
+        format,
+      }, 'Cierre Exportado con Éxito', `Se guardó el cierre con arqueo y devoluciones del ${todayDate}`);
+    } catch (error: unknown) {
+      showToast(
+        'Error al exportar cierre',
+        error instanceof Error ? error.message : 'No se pudo generar el reporte de cierre.',
+        'error'
+      );
+    } finally {
+      setIsCashCloseExporting(false);
+    }
+  };
+
+  // Reporte 4: Resumen mensual de ventas y devoluciones
   const handleExportMonthlySummary = async (format: ReportFormat) => {
     const now = new Date();
-    const monthName = now.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const currentYearMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+    const monthName = selectedMonthlyReportPeriod.name;
+    const currentYearMonth = selectedMonthlyReportPeriod.key;
     const monthSales = sales.filter(
-      (sale) => sale.date?.startsWith(currentYearMonth) && !(sale as any).voided
+      (sale) => sale.date?.startsWith(currentYearMonth) && !sale.voided
     );
     const monthReturns = returns.filter((r) => r.date?.startsWith(currentYearMonth));
+    const monthMermas = mermaItems.filter((item) => item.date?.startsWith(currentYearMonth));
+    const monthWriteOffs = mermaItems.filter(
+      (item) => item.status === 'baja_definitiva' && item.resolvedAt?.startsWith(currentYearMonth)
+    );
     const totalVentasReal = monthSales.reduce((acc, s) => acc + (s.total || 0), 0);
     const totalRefundsMonth = monthReturns.reduce((acc, r) => acc + (r.totalRefund || 0), 0);
     const ventasNetasMonth = Math.max(0, totalVentasReal - totalRefundsMonth);
     const costOfGoodsMonth = monthSales.reduce(
-      (total, sale) => total + sale.items.reduce((sum, item) => sum + (Number(item.purchasePrice) || 0) * item.quantity, 0),
+      (total, sale) => total + (sale.items || []).reduce((sum, item) => sum + (Number(item.purchasePrice) || 0) * item.quantity, 0),
       0
     );
     const netProfitMonth = ventasNetasMonth - costOfGoodsMonth;
+    const grossMarginPercent = ventasNetasMonth > 0 ? (netProfitMonth / ventasNetasMonth) * 100 : 0;
+    const soldUnitsMonth = monthSales.reduce(
+      (total, sale) => total + (sale.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+      0
+    );
+    const cashCollectedMonth = monthSales.reduce((total, sale) => total + (Number(sale.efectivoAmount) || 0), 0);
+    const transfersCollectedMonth = monthSales.reduce(
+      (total, sale) => total + (Number(sale.transferenciaAmount) || 0),
+      0
+    );
     const returnedUnits = monthReturns.reduce(
       (acc, r) => acc + (r.items || []).reduce((sum, item) => sum + (item.quantity || 1), 0),
       0
     );
+    const damagedReturnedUnits = monthReturns.reduce(
+      (total, record) => total + (record.items || []).reduce(
+        (sum, item) => sum + (item.condition === 'mal_estado' ? Number(item.quantity) || 0 : 0),
+        0
+      ),
+      0
+    );
     const productsById = new Map(products.map((product) => [product.id, product]));
     const productsByCode = new Map(products.map((product) => [product.code, product]));
+    const inventoryInvestment = products.reduce(
+      (total, product) => total + (Number(product.purchasePrice) || 0) *
+        ((Number(product.stock) || 0) + (Number(product.almacenStock) || 0)),
+      0
+    );
+    const outOfStockProducts = products.filter(
+      (product) => product.stock === 0 && !isDefectiveMermaProduct(product)
+    );
+    const lowStockProducts = products.filter((product) => product.stock > 0 && product.stock <= product.minStock);
+    const availableStockProducts = products.filter((product) => product.stock > product.minStock);
+    const availableStockUnits = products.reduce((total, product) => total + (Number(product.stock) || 0), 0);
+    const writtenOffUnits = monthWriteOffs.reduce((total, item) => total + (Number(item.quantity) || 0), 0);
+    const writeOffLoss = monthWriteOffs.reduce((total, item) => {
+      const product = productsById.get(item.productId);
+      return total + (Number(product?.purchasePrice) || 0) * (Number(item.quantity) || 0);
+    }, 0);
+    const writeOffsByReason = new Map<string, number>();
+    monthWriteOffs.forEach((item) => {
+      const reason = item.damagedReason?.trim() || 'Sin motivo especificado';
+      writeOffsByReason.set(reason, (writeOffsByReason.get(reason) || 0) + (Number(item.quantity) || 0));
+    });
     const soldProducts = new Map<string, {
       code: string;
       name: string;
@@ -711,6 +916,16 @@ export const SettingsView: React.FC = () => {
       });
     });
 
+    const rankedSoldProducts = Array.from(soldProducts.values());
+    const mostSoldProducts = [...rankedSoldProducts]
+      .sort((a, b) => b.quantity - a.quantity || b.subtotal - a.subtotal)
+      .slice(0, 10);
+    const leastSoldProducts = [...rankedSoldProducts]
+      .sort((a, b) => a.quantity - b.quantity || a.subtotal - b.subtotal)
+      .slice(0, 10);
+    const formatRankedProduct = (item: (typeof rankedSoldProducts)[number]) =>
+      `"${item.code.replace(/"/g, '""')}";"${item.name.replace(/"/g, '""')}";${item.quantity};${item.subtotal.toFixed(2)}`;
+
     const sections = [
       `"RESUMEN MENSUAL DE VENTAS Y DEVOLUCIONES"`,
       `"Periodo: ${monthName.toUpperCase()}"`,
@@ -718,17 +933,47 @@ export const SettingsView: React.FC = () => {
       `""`,
       `"1. RESUMEN DEL MES"`,
       `"Concepto";"Monto ($)";"Detalle / Observaciones"`,
-      `"Ventas Totales";${totalVentasReal.toFixed(2)};"${monthSales.length} ventas registradas"`,
-      `"Devoluciones / Reembolsos";-${totalRefundsMonth.toFixed(2)};"${monthReturns.length} devoluciones, ${returnedUnits} unidades devueltas"`,
+      `"Total recaudado";${totalVentasReal.toFixed(2)};"${monthSales.length} ventas registradas"`,
+      `"Cantidad de artículos vendidos";${soldUnitsMonth};"Unidades despachadas durante el mes"`,
+      `"Cantidad de devoluciones";${monthReturns.length};"${returnedUnits} unidades devueltas"`,
+      `"Monto en devoluciones";${totalRefundsMonth.toFixed(2)};"Importe reembolsado durante el mes"`,
       `"Ventas Netas";${ventasNetasMonth.toFixed(2)};"Ventas menos reembolsos"`,
-      `"Inversión Total del Mes";${costOfGoodsMonth.toFixed(2)};"Suma del precio de compra por las unidades vendidas durante el mes"`,
+      `"Costo de compra de artículos vendidos";${costOfGoodsMonth.toFixed(2)};"Costo registrado para las unidades vendidas durante el mes"`,
       `"Ganancias Netas";${netProfitMonth.toFixed(2)};"Ventas netas menos costo de compra"`,
+      `"Margen bruto";${grossMarginPercent.toFixed(2)}%;"Ganancias netas sobre ventas netas"`,
+      `"Inversión total del inventario";${inventoryInvestment.toFixed(2)};"Costo actual del stock de mostrador y almacén"`,
+      `"Total en efectivo";${cashCollectedMonth.toFixed(2)};"Pagos en efectivo de las ventas del mes"`,
+      `"Total en transferencias";${transfersCollectedMonth.toFixed(2)};"Pagos por transferencia de las ventas del mes"`,
       `""`,
-      `"2. ARTÍCULOS VENDIDOS EN EL MES"`,
+      `"2. MERMAS E INVENTARIO"`,
+      `"Concepto";"Cantidad / Monto";"Detalle / Observaciones"`,
+      `"Artículos en mal estado";${damagedReturnedUnits};"Unidades devueltas en mal estado durante el mes"`,
+      `"Artículos procesados por mermas";${monthMermas.reduce((total, item) => total + (Number(item.quantity) || 0), 0)};"Unidades registradas en merma durante el mes"`,
+      `"Pérdidas por bajas";${writeOffLoss.toFixed(2)};"${writtenOffUnits} unidades dadas de baja durante el mes"`,
+      `"Artículos agotados";${outOfStockProducts.length};"Estado actual: productos sin stock vendible, excluyendo productos defectuosos"`,
+      `"Artículos con bajo stock";${lowStockProducts.length};"Estado actual: productos con stock positivo igual o inferior al mínimo"`,
+      `"Productos con stock disponible";${availableStockProducts.length};"Estado actual: productos con stock superior al mínimo"`,
+      `"Stock disponible";${availableStockUnits};"Unidades actuales disponibles en mostrador"`,
+      `""`,
+      `"3. ARTÍCULOS DADOS DE BAJA SEGÚN EL MOTIVO"`,
+      `"Motivo";"Unidades dadas de baja"`,
+      ...Array.from(writeOffsByReason.entries()).map(([reason, quantity]) =>
+        `"${reason.replace(/"/g, '""')}";${quantity}`
+      ),
+      `""`,
+      `"4. ARTÍCULOS VENDIDOS EN EL MES"`,
       `"Código";"Descripción";"Categoría";"Subcategoría";"U/M";"Precio Promedio Unit.";"Unidades Vendidas";"Subtotal ($)";"Costo de Compra ($)";"Ganancia Bruta ($)"`,
       ...Array.from(soldProducts.values()).map(
         (item) => `"${item.code.replace(/"/g, '""')}";"${item.name.replace(/"/g, '""')}";"${item.category.replace(/"/g, '""')}";"${item.subcategory.replace(/"/g, '""')}";"${item.um.replace(/"/g, '""')}";${item.unitPrice.toFixed(2)};${item.quantity};${item.subtotal.toFixed(2)};${item.costOfGoods.toFixed(2)};${(item.subtotal - item.costOfGoods).toFixed(2)}`
       ),
+      `""`,
+      `"5. PRODUCTOS MÁS VENDIDOS"`,
+      `"Código";"Producto";"Unidades Vendidas";"Subtotal ($)"`,
+      ...mostSoldProducts.map(formatRankedProduct),
+      `""`,
+      `"6. PRODUCTOS MENOS VENDIDOS"`,
+      `"Código";"Producto";"Unidades Vendidas";"Subtotal ($)"`,
+      ...leastSoldProducts.map(formatRankedProduct),
     ];
 
     const csvContent = '\uFEFF' + sections.join('\r\n');
@@ -802,72 +1047,87 @@ export const SettingsView: React.FC = () => {
     }, 'Catálogo Exportado', `Se exportaron ${products.length} productos con existencias`);
   };
 
-  // Reporte 4: Historial de Ventas y Tickets de Facturación
+  // Reporte 5: Historial de Ventas y Tickets de Facturación
   const handleExportSalesHistory = async (format: ReportFormat) => {
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const productsById = new Map(products.map((product) => [product.id, product]));
-    const productsByCode = new Map(products.map((product) => [product.code, product]));
+    setIsSalesHistoryExporting(true);
+    try {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const productsById = new Map(products.map((product) => [product.id, product]));
+      const productsByCode = new Map(products.map((product) => [product.code, product]));
+      const rangeStart = salesHistoryExportPeriod === 'diarias'
+        ? salesHistoryExportDay
+        : salesHistoryExportPeriod === 'semanales'
+          ? selectedSalesHistoryWeek.startDate
+          : salesHistoryExportCutoff;
+      const rangeEnd = salesHistoryExportPeriod === 'diarias'
+        ? salesHistoryExportDay
+        : salesHistoryExportPeriod === 'semanales'
+          ? selectedSalesHistoryWeek.endDate
+          : todayDate;
 
-    const rows: string[] = [
-      `"HISTORIAL CONSOLIDADO DE TICKETS DE VENTA Y FACTURACIÓN"`,
-      `"Fecha de Extracción: ${dateFormatted} | Total Tickets: ${sales.length}"`,
-      `""`,
-      [
-        'N° Folio / Ticket',
-        'Fecha',
-        'Hora',
-        'Importe Total ($ CUP)',
-        'Método de Pago',
-        'Monto Efectivo ($)',
-        'Monto Transferencia ($)',
-        'Cantidad de Artículos',
-        'Detalle de Productos Vendidos',
-        'Nota del Ticket',
-        'Estado',
-      ].join(';'),
-    ];
-
-    sales.forEach((s) => {
-      const itemsDetail = (s.items || [])
-        .map((it) => {
-          const product = productsById.get(it.productId) || productsByCode.get(it.code);
-          const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
-          return `${it.name} (x${it.quantity} ${it.um || product?.um || 'u'} @ $${it.unitPrice})${taxonomy ? ` [${taxonomy}]` : ''}`;
-        })
-        .join(' | ');
-
-      const isVoided = (s as any).voided ? 'Anulado' : 'Completado';
-
-      rows.push(
+      const rows: string[] = [
+        `"HISTORIAL CONSOLIDADO DE TICKETS DE VENTA Y FACTURACIÓN"`,
+        `"Rango: ${salesHistoryExportRangeLabel} | Fecha de Extracción: ${dateFormatted} | Total Tickets: ${filteredSalesHistory.length}"`,
+        `""`,
         [
-          `"${s.ticketNumber || s.id}"`,
-          `"${s.date || '--'}"`,
-          `"${s.timestamp || '--:--'}"`,
-          (s.total || 0).toFixed(2),
-          `"${(s.paymentMethod || 'efectivo').toUpperCase()}"`,
-          (s.efectivoAmount || 0).toFixed(2),
-          (s.transferenciaAmount || 0).toFixed(2),
-          (s.items || []).length,
-          `"${itemsDetail.replace(/"/g, '""')}"`,
-          `"${(s.note || '').replace(/"/g, '""')}"`,
-          `"${isVoided}"`,
-        ].join(';')
-      );
-    });
+          'N° Folio / Ticket',
+          'Fecha',
+          'Hora',
+          'Importe Total ($ CUP)',
+          'Método de Pago',
+          'Monto Efectivo ($)',
+          'Monto Transferencia ($)',
+          'Cantidad de Artículos',
+          'Detalle de Productos Vendidos',
+          'Nota del Ticket',
+          'Estado',
+        ].join(';'),
+      ];
 
-    const csvContent = '\uFEFF' + rows.join('\r\n');
-    await saveGeneratedReport({
-      title: 'Historial de Ventas',
-      fileName: `Historial_Ventas_${dateFormatted}.xlsx`,
-      csvContent,
-      delimiter: ';',
-      format,
-    }, 'Historial Exportado', `Se descargaron ${sales.length} tickets de venta`);
+      filteredSalesHistory.forEach((s) => {
+        const itemsDetail = (s.items || [])
+          .map((it) => {
+            const product = productsById.get(it.productId) || productsByCode.get(it.code);
+            const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
+            return `${it.name} (x${it.quantity} ${it.um || product?.um || 'u'} @ $${it.unitPrice})${taxonomy ? ` [${taxonomy}]` : ''}`;
+          })
+          .join(' | ');
+
+        const isVoided = s.voided ? 'Anulado' : 'Completado';
+
+        rows.push(
+          [
+            `"${s.ticketNumber || s.id}"`,
+            `"${s.date || '--'}"`,
+            `"${s.timestamp || '--:--'}"`,
+            (s.total || 0).toFixed(2),
+            `"${(s.paymentMethod || 'efectivo').toUpperCase()}"`,
+            (s.efectivoAmount || 0).toFixed(2),
+            (s.transferenciaAmount || 0).toFixed(2),
+            (s.items || []).length,
+            `"${itemsDetail.replace(/"/g, '""')}"`,
+            `"${(s.note || '').replace(/"/g, '""')}"`,
+            `"${isVoided}"`,
+          ].join(';')
+        );
+      });
+
+      const csvContent = '\uFEFF' + rows.join('\r\n');
+      await saveGeneratedReport({
+        title: `Historial de Ventas - ${salesHistoryExportRangeLabel}`,
+        fileName: `Historial_Ventas_${salesHistoryExportPeriod}_${rangeStart}_${rangeEnd}_${dateFormatted}.xlsx`,
+        csvContent,
+        delimiter: ';',
+        format,
+      }, 'Historial Exportado', `Se descargaron ${filteredSalesHistory.length} tickets (${salesHistoryExportRangeLabel})`);
+    } finally {
+      setIsSalesHistoryExporting(false);
+    }
   };
 
-  // Reporte 5: Registro de Devoluciones y Mermas
+  // Reporte 6: Registro de Devoluciones y Mermas
   const handleExportReturnsReport = async (format: ReportFormat) => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -933,12 +1193,16 @@ export const SettingsView: React.FC = () => {
     }, 'Devoluciones Exportadas', `Se descargaron ${returns.length} registros de devolución`);
   };
 
-  const reportExportButtons = (onExport: (format: ReportFormat) => Promise<void>) => (
+  const reportExportButtons = (
+    onExport: (format: ReportFormat) => Promise<void>,
+    disabled = false
+  ) => (
     <div className="grid grid-cols-2 gap-2">
       <button
         type="button"
         onClick={() => void onExport('excel')}
-        className="py-2 px-3 rounded-xl bg-surface neo-raised text-green-700 text-xs font-bold hover:text-green-800 active:neo-inset transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+        disabled={disabled}
+        className="py-2 px-3 rounded-xl bg-surface neo-raised text-green-700 text-xs font-bold hover:text-green-800 active:neo-inset transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <span className="material-symbols-outlined text-[16px]">table_view</span>
         <span>Excel</span>
@@ -946,7 +1210,8 @@ export const SettingsView: React.FC = () => {
       <button
         type="button"
         onClick={() => void onExport('pdf')}
-        className="py-2 px-3 rounded-xl bg-surface neo-raised text-orange-600 text-xs font-bold hover:text-orange-700 active:neo-inset transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+        disabled={disabled}
+        className="py-2 px-3 rounded-xl bg-surface neo-raised text-orange-600 text-xs font-bold hover:text-orange-700 active:neo-inset transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
         <span>PDF</span>
@@ -983,7 +1248,7 @@ export const SettingsView: React.FC = () => {
           <button
             onClick={handleOpenBackupModal}
             disabled={!canCreateBackup}
-            title="Disponible durante la prueba gratuita de 7 días o con la aplicación activada"
+            title="Disponible durante la prueba gratuita de 14 días o con la aplicación activada"
             className="px-4 py-2.5 rounded-xl bg-primary text-white text-xs font-semibold shadow-md shadow-primary/25 hover:bg-primary-container transition-all flex items-center gap-2 enabled:cursor-pointer enabled:active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             type="button"
           >
@@ -1144,7 +1409,7 @@ export const SettingsView: React.FC = () => {
                 <li>Use FerreStock para administrar información legítima de su negocio y mantenga los datos introducidos correctos y actualizados.</li>
                 <li>Usted es responsable de conservar respaldos y de proteger el acceso al equipo donde se guardan sus datos.</li>
                 <li>La licencia se valida para el ID de instalación mostrado en la aplicación. Para solicitar ayuda, facilite ese ID y describa el problema sin enviar datos innecesarios.</li>
-                <li>El reinicio de la aplicación elimina permanentemente los registros comerciales locales. Genere y compruebe un respaldo antes de restablecerla.</li>
+                <li>El reinicio elimina permanentemente los registros comerciales locales, pero conserva la información del usuario y del negocio. Genere y compruebe un respaldo antes de restablecerla.</li>
                 <li>FerreStock ayuda a organizar registros; no sustituye el asesoramiento contable, fiscal o legal que requiera su negocio.</li>
               </ul>
             </article>
@@ -1290,17 +1555,14 @@ export const SettingsView: React.FC = () => {
               Tipos de Reportes Disponibles para Exportar
             </h2>
             <span className="text-xs text-on-surface-variant">
-              Exporte sus reportes a Excel. La exportación a PDF está temporalmente deshabilitada.
+              Exporte cada reporte en Excel o PDF.
             </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Report 1: Planilla Diaria IPV */}
-            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform group">
-              <div className="flex flex-col gap-3">
-                <div className="w-13 h-13 rounded-2xl bg-surface neo-inset flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
-                  <span className="material-symbols-outlined text-[28px]">table_view</span>
-                </div>
+            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform">
+              <div className="flex flex-col">
                 <div className="flex flex-col gap-1 mt-1">
                   <span className="text-[11px] font-semibold text-primary uppercase tracking-wider">
                     Control Diario
@@ -1316,47 +1578,41 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
+                  <span>Excel y PDF disponibles</span>
                   <span>{ipvRows.length} artículos</span>
                 </div>
                 {reportExportButtons(handleExportDailyIPVExcel)}
               </div>
             </div>
 
-            {/* Report 2: Resumen mensual */}
-            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform group">
-              <div className="flex flex-col gap-3">
-                <div className="w-13 h-13 rounded-2xl bg-surface neo-inset flex items-center justify-center text-tertiary group-hover:scale-105 transition-transform">
-                  <span className="material-symbols-outlined text-[28px]">calendar_month</span>
-                </div>
+            {/* Report 2: Cierre de Caja */}
+            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform">
+              <div className="flex flex-col">
                 <div className="flex flex-col gap-1 mt-1">
-                  <span className="text-[11px] font-semibold text-tertiary uppercase tracking-wider">
-                    Control Mensual
+                  <span className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider">
+                    Control Diario
                   </span>
                   <h3 className="font-bold text-base text-on-surface leading-snug">
-                    Resumen Mensual
+                    Cierre de Caja
                   </h3>
                   <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
-                    Ventas totales, devoluciones, ventas netas y desglose de artículos vendidos durante el mes.
+                    Exporta el arqueo, el desglose de billetes, las ventas y las devoluciones del día.
                   </p>
                 </div>
               </div>
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
-                  <span>{sales.filter((sale) => sale.date?.startsWith((todayDate || new Date().toISOString()).slice(0, 7)) && !(sale as any).voided).length} tickets mes</span>
+                  <span>Excel y PDF disponibles</span>
+                  <span>{todayDate} · {isCurrentDayClosed ? 'Cerrado' : 'Abierto'}</span>
                 </div>
-                {reportExportButtons(handleExportMonthlySummary)}
+                {reportExportButtons(handleExportCashClose, isCashCloseExporting)}
               </div>
             </div>
 
             {/* Report 3: Catálogo de Productos y Existencias */}
-            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform group">
-              <div className="flex flex-col gap-3">
-                <div className="w-13 h-13 rounded-2xl bg-surface neo-inset flex items-center justify-center text-emerald-600 group-hover:scale-105 transition-transform">
-                  <span className="material-symbols-outlined text-[28px]">inventory_2</span>
-                </div>
+            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform">
+              <div className="flex flex-col">
                 <div className="flex flex-col gap-1 mt-1">
                   <span className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wider">
                     Existencias y Almacén
@@ -1372,19 +1628,64 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
+                  <span>Excel y PDF disponibles</span>
                   <span>{products.length} productos</span>
                 </div>
                 {reportExportButtons(handleExportProductsCatalog)}
               </div>
             </div>
 
-            {/* Report 4: Historial de Ventas y Tickets */}
-            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform group">
-              <div className="flex flex-col gap-3">
-                <div className="w-13 h-13 rounded-2xl bg-surface neo-inset flex items-center justify-center text-blue-600 group-hover:scale-105 transition-transform">
-                  <span className="material-symbols-outlined text-[28px]">receipt_long</span>
+            {/* Report 4: Resumen mensual */}
+            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform">
+              <div className="flex flex-col">
+                <div className="flex flex-col gap-1 mt-1">
+                  <span className="text-[11px] font-semibold text-tertiary uppercase tracking-wider">
+                    Control Mensual
+                  </span>
+                  <h3 className="font-bold text-base text-on-surface leading-snug">
+                    Resumen Mensual
+                  </h3>
+                  <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
+                    Ventas totales, devoluciones, inventario y artículos vendidos durante el mes seleccionado.
+                  </p>
                 </div>
+              </div>
+
+              <label className="mt-5 flex flex-col gap-1.5 text-[11px] font-semibold text-on-surface">
+                Mes del reporte
+                <select
+                  value={selectedMonthlyReportPeriod.key}
+                  onChange={(event) => setSelectedMonthlyReportMonthKey(event.target.value)}
+                  className="app-select h-10 px-3 rounded-xl bg-surface neo-inset text-xs text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                >
+                  {monthlyReportMonths.map((month) => (
+                    <option key={month.key} value={month.key}>
+                      {month.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="font-normal text-on-surface-variant">
+                  Rango: {selectedMonthlyReportPeriod.startDate} – {selectedMonthlyReportPeriod.endDate}
+                </span>
+              </label>
+
+              <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
+                <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
+                  <span>Excel y PDF disponibles</span>
+                  <span>
+                    {sales.filter(
+                      (sale) => sale.date?.startsWith(selectedMonthlyReportPeriod.key) && !sale.voided
+                    ).length}{' '}
+                    tickets mes
+                  </span>
+                </div>
+                {reportExportButtons(handleExportMonthlySummary)}
+              </div>
+            </div>
+
+            {/* Report 5: Historial de Ventas y Tickets */}
+            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform">
+              <div className="flex flex-col">
                 <div className="flex flex-col gap-1 mt-1">
                   <span className="text-[11px] font-semibold text-blue-600 uppercase tracking-wider">
                     Facturación Comercial
@@ -1400,19 +1701,70 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
-                  <span>{sales.length} registros</span>
+                  <span>{salesHistoryExportRangeLabel}</span>
+                  <span>{filteredSalesHistory.length} tickets</span>
                 </div>
-                {reportExportButtons(handleExportSalesHistory)}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="flex flex-col gap-1.5 text-[11px] font-semibold text-on-surface">
+                    Rango de fechas
+                    <select
+                      value={salesHistoryExportPeriod}
+                      onChange={(event) =>
+                        setSalesHistoryExportPeriod(event.target.value as SalesHistoryExportPeriod)
+                      }
+                      className="app-select h-10 px-3 rounded-xl bg-surface neo-inset text-xs text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                    >
+                      <option value="diarias">Ventas diarias</option>
+                      <option value="semanales">Ventas semanales</option>
+                      <option value="mensual">Acumulado mensual (30 días)</option>
+                    </select>
+                  </label>
+
+                  {salesHistoryExportPeriod === 'diarias' && (
+                    <label className="flex flex-col gap-1.5 text-[11px] font-semibold text-on-surface">
+                      Día
+                      <input
+                        type="date"
+                        value={salesHistoryExportDay}
+                        min={salesHistoryExportCutoff}
+                        max={todayDate || new Date().toISOString().slice(0, 10)}
+                        onChange={(event) => setSalesHistoryExportDay(event.target.value)}
+                        className="h-10 px-3 rounded-xl bg-surface neo-inset text-xs font-mono text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                      />
+                    </label>
+                  )}
+
+                  {salesHistoryExportPeriod === 'semanales' && (
+                    <label className="flex flex-col gap-1.5 text-[11px] font-semibold text-on-surface">
+                      Semana
+                      <select
+                        value={salesHistoryExportWeekIdx}
+                        onChange={(event) => setSalesHistoryExportWeekIdx(Number(event.target.value))}
+                        className="app-select h-10 px-3 rounded-xl bg-surface neo-inset text-xs text-on-surface outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                      >
+                        {salesHistoryExportWeeks.map((week) => (
+                          <option key={week.idx} value={week.idx}>
+                            {week.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
+                  {salesHistoryExportPeriod === 'mensual' && (
+                    <div className="flex items-center gap-2 rounded-xl bg-surface neo-inset px-3 text-[11px] text-on-surface-variant">
+                      <span className="material-symbols-outlined text-[16px] text-primary">date_range</span>
+                      <span>Todos los tickets de los últimos 30 días</span>
+                    </div>
+                  )}
+                </div>
+                {reportExportButtons(handleExportSalesHistory, isSalesHistoryExporting)}
               </div>
             </div>
 
-            {/* Report 5: Devoluciones y Mermas */}
-            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform group">
-              <div className="flex flex-col gap-3">
-                <div className="w-13 h-13 rounded-2xl bg-surface neo-inset flex items-center justify-center text-amber-600 group-hover:scale-105 transition-transform">
-                  <span className="material-symbols-outlined text-[28px]">assignment_return</span>
-                </div>
+            {/* Report 6: Devoluciones y Mermas */}
+            <div className="rounded-2xl bg-surface neo-raised p-6 flex flex-col justify-between hover:-translate-y-1 transition-transform">
+              <div className="flex flex-col">
                 <div className="flex flex-col gap-1 mt-1">
                   <span className="text-[11px] font-semibold text-amber-600 uppercase tracking-wider">
                     Garantías y Reembolsos
@@ -1428,7 +1780,7 @@ export const SettingsView: React.FC = () => {
 
               <div className="mt-6 pt-4 flex flex-col gap-3 border-t border-outline-variant/15">
                 <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-mono">
-                  <span>Excel disponible · PDF temporalmente deshabilitado</span>
+                  <span>Excel y PDF disponibles</span>
                   <span>{returns.length} devoluciones</span>
                 </div>
                 {reportExportButtons(handleExportReturnsReport)}
@@ -1519,7 +1871,7 @@ export const SettingsView: React.FC = () => {
                 <div className="flex flex-col">
                   <h3 className="font-bold text-base text-on-surface">Crear Copia de Seguridad</h3>
                   <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
-                    Empaqueta todos los productos, ventas, movimientos del IPV, arqueos y devoluciones en un archivo seguro en disco. Disponible durante la prueba gratuita de 7 días o con la aplicación activada.
+                    Empaqueta todos los productos, ventas, movimientos del IPV, arqueos y devoluciones en un archivo seguro en disco. Disponible durante la prueba gratuita de 14 días o con la aplicación activada.
                   </p>
                 </div>
               </div>
@@ -1527,7 +1879,7 @@ export const SettingsView: React.FC = () => {
                 type="button"
                 onClick={handleOpenBackupModal}
                 disabled={!canCreateBackup}
-                title="Disponible durante la prueba gratuita de 7 días o con la aplicación activada"
+                title="Disponible durante la prueba gratuita de 14 días o con la aplicación activada"
                 className="w-full py-2.5 px-4 rounded-xl bg-primary text-white text-xs font-bold shadow hover:bg-primary-container transition-all flex items-center justify-center gap-2 enabled:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined text-[17px]">backup</span>
@@ -1713,7 +2065,7 @@ export const SettingsView: React.FC = () => {
       {/* ========================================================= */}
       {activeTab === 'licencia' && (
         <section className="flex flex-col gap-6 animate-in fade-in duration-200">
-          <div className="flex flex-col gap-4">
+          <div className={`flex flex-col gap-4 ${isAppActivated && licenseIsLifetime ? 'hidden' : ''}`}>
             <div className="flex flex-col">
               <h2 className="text-lg font-headline font-bold text-on-surface">Planes de Licencia</h2>
               <span className="text-xs text-on-surface-variant">
@@ -1973,7 +2325,7 @@ export const SettingsView: React.FC = () => {
                   </div>
                   <span className="text-xs text-on-surface-variant">
                     {licenseIsLifetime
-                      ? 'Licencia vitalicia.'
+                      ? 'Licencia permanente.'
                       : `${licenseDaysRemaining} ${licenseDaysRemaining === 1 ? 'día restante' : 'días restantes'}.`}
                   </span>
                 </div>
@@ -2451,7 +2803,7 @@ export const SettingsView: React.FC = () => {
                 type="button"
                 onClick={handleStartBackup}
                 disabled={isBackingUp || !canCreateBackup}
-                title={!canCreateBackup ? 'Disponible durante la prueba gratuita de 7 días o con la aplicación activada' : undefined}
+                title={!canCreateBackup ? 'Disponible durante la prueba gratuita de 14 días o con la aplicación activada' : undefined}
                 className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold shadow hover:bg-primary-container active:scale-95 transition-all flex items-center gap-2 enabled:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isBackingUp ? (

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { isDefectiveMermaProduct } from '../utils/productInventory';
 
 export const SearchModal: React.FC = () => {
   const {
@@ -105,14 +106,18 @@ export const SearchModal: React.FC = () => {
                     </span>
                     <span
                       className={`text-[10px] font-semibold ${
-                        item.stock === 0
+                        item.stock === 0 && !isDefectiveMermaProduct(item)
                           ? 'text-error'
+                          : item.stock === 0
+                          ? 'text-on-surface-variant'
                           : item.stock <= item.minStock
                           ? 'text-amber-600'
                           : 'text-emerald-600'
                       }`}
                     >
-                      {item.stock} {item.um}s
+                      {item.stock === 0 && isDefectiveMermaProduct(item)
+                        ? 'Vendido'
+                        : `${item.stock} ${item.um}s`}
                     </span>
                   </div>
                   <span className="material-symbols-outlined text-[18px] text-on-surface-variant group-hover:text-primary transition-colors">

@@ -16,6 +16,7 @@ const LICENSE_PERIODS = {
   2: 'annual',
   3: 'exclusive',
 };
+const ANNUAL_LICENSE_MIN_DAYS = 300;
 
 function normalizeActivationCode(code) {
   return typeof code === 'string' ? code.replace(/[\s-]/g, '').toUpperCase() : '';
@@ -147,6 +148,10 @@ function validatePayload(payload, signature, installationId, today, publicKeyByt
   const issueDate = epochDayToDate(issueEpochDay);
   const expiryEpochDay = validityDays > 0 ? issueEpochDay + validityDays : null;
   const expiryDate = expiryEpochDay === null ? null : epochDayToDate(expiryEpochDay);
+  const effectiveLicenseType =
+    licenseType === 3 || validityDays === 0
+      ? licenseType
+      : validityDays >= ANNUAL_LICENSE_MIN_DAYS ? 2 : 1;
   const todayEpochDay = dateToEpochDay(today);
   const daysRemaining =
     expiryEpochDay === null || todayEpochDay === null
@@ -159,10 +164,15 @@ function validatePayload(payload, signature, installationId, today, publicKeyByt
     expiryDate,
     daysRemaining,
     isLifetime: validityDays === 0,
-    licenseType,
-    licenseTypeName: LICENSE_TYPES[licenseType] || `Licencia ${licenseType}`,
+    licenseType: effectiveLicenseType,
+    licenseTypeName:
+      validityDays === 0
+        ? 'Permanente'
+        : LICENSE_TYPES[effectiveLicenseType] || `Licencia ${effectiveLicenseType}`,
     licensePeriod:
-      validityDays === 0 && licenseType !== 3 ? 'lifetime' : LICENSE_PERIODS[licenseType],
+      validityDays === 0 && effectiveLicenseType !== 3
+        ? 'lifetime'
+        : LICENSE_PERIODS[effectiveLicenseType],
   };
 
   if (expiryEpochDay !== null && todayEpochDay !== null && todayEpochDay > expiryEpochDay) {

@@ -10,8 +10,8 @@ const ExcelJS = require('exceljs');
  */
 async function generarExcelCierre(resumenDia, outputPath) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'IPV';
-  workbook.lastModifiedBy = 'IPV';
+  workbook.creator = 'FerreStock';
+  workbook.lastModifiedBy = 'FerreStock';
   workbook.created = new Date();
   workbook.modified = new Date();
 
@@ -74,21 +74,26 @@ async function generarExcelCierre(resumenDia, outputPath) {
     { key: 'colD', width: 16 },
   ];
 
-  // Fila 1: Título Principal
-  wsResumen.mergeCells('A1:D1');
-  const titleCell = wsResumen.getCell('A1');
+  // Fila 1: Marca y título
+  wsResumen.mergeCells('B1:D1');
+  const titleCell = wsResumen.getCell('B1');
   titleCell.value = `REPORTE DE CIERRE DE CAJA DIARIO - ${resumenDia.fecha}${resumenDia.tipoNegocio ? ` - ${resumenDia.tipoNegocio}` : ''}`;
   titleCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF0F172A' } };
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-  wsResumen.getRow(1).height = 32;
+  wsResumen.getRow(1).height = 44;
+  const logoMatch = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(resumenDia.logoDataUrl || '');
+  if (logoMatch) {
+    const logoId = workbook.addImage({ base64: logoMatch[1], extension: 'png' });
+    wsResumen.addImage(logoId, { tl: { col: 0, row: 0 }, ext: { width: 42, height: 42 } });
+  }
 
   // Fila 2: Subtítulo y Metadatos
   wsResumen.mergeCells('A2:D2');
   const subCell = wsResumen.getCell('A2');
-  subCell.value = `Generado: ${resumenDia.generadoEn} | Estado: ${resumenDia.totales.estadoCierre}`;
+  subCell.value = `Generado: ${resumenDia.generadoEn} | Estado: ${resumenDia.totales.estadoCierre} | Negocio: ${resumenDia.businessName || 'No configurado'} | Propietario: ${resumenDia.ownerName || 'No configurado'}`;
   subCell.font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FF64748B' } };
-  subCell.alignment = { horizontal: 'center', vertical: 'middle' };
-  wsResumen.getRow(2).height = 18;
+  subCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  wsResumen.getRow(2).height = 30;
 
   wsResumen.addRow([]); // Espaciador
 
@@ -114,6 +119,7 @@ async function generarExcelCierre(resumenDia, outputPath) {
     ['Devoluciones Mixtas', resumenDia.totales.totalDevolucionesMixto || 0, 'Reembolsos con método mixto'],
     ['Tickets de Venta Emitidos', resumenDia.totales.cantidadTickets, 'Operaciones registradas'],
     ['Artículos Totales Vendidos', resumenDia.totales.totalArticulosVendidos, 'Unidades despachadas'],
+    ['Monto inicial de caja (informativo)', resumenDia.totales.montoInicialCaja || 0, 'Dato informativo; no modifica el cuadre'],
     ['Efectivo contado en gaveta', resumenDia.totales.efectivoContado, 'Conteo de efectivo y monedas'],
     ['Transferencias contadas', resumenDia.totales.transferenciaContada, 'Transferencias confirmadas en el cierre'],
     ['Total contado en caja', resumenDia.totales.totalContado, 'Efectivo más transferencias'],

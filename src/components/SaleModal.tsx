@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Product } from '../types';
+import { isCarryBagProduct, isDefectiveMermaProduct } from '../utils/productInventory';
 
 interface CartItem {
   product: Product;
@@ -21,6 +22,7 @@ export const SaleModal: React.FC = () => {
     ipvTotalVendido,
     isCurrentDayClosed,
     isViewingPastDate,
+    showToast,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'nueva' | 'historial'>('nueva');
@@ -31,6 +33,7 @@ export const SaleModal: React.FC = () => {
   const [amountReceived, setAmountReceived] = useState<string>('');
   const [transferAmountInput, setTransferAmountInput] = useState<string>('');
   const [saleNote, setSaleNote] = useState('');
+  const [carryBagChoice, setCarryBagChoice] = useState<'con_jaba' | 'sin_jaba' | null>(null);
   const [lastCompletedSale, setLastCompletedSale] = useState<any | null>(null);
   const [selectedSaleForDetail, setSelectedSaleForDetail] = useState<any | null>(null);
 
@@ -84,6 +87,7 @@ export const SaleModal: React.FC = () => {
     if (isSaleModalOpen) {
       setActiveTab('nueva');
       setLastCompletedSale(null);
+      setCarryBagChoice(null);
       if (preselectedProductForSale) {
         setCart([{ product: preselectedProductForSale, quantity: 1 }]);
       } else if (cart.length === 0) {
@@ -106,11 +110,13 @@ export const SaleModal: React.FC = () => {
 
   // Cart operations
   const addToCart = (product: Product) => {
-    if (product.stock <= 0) return;
+    const reservedBags = isCarryBagProduct(product) && carryBagChoice === 'con_jaba' ? 1 : 0;
+    const maxQuantity = product.stock - reservedBags;
+    if (maxQuantity <= 0) return;
     setCart((prev) => {
       const existing = prev.find((item) => item.product.id === product.id);
       if (existing) {
-        if (existing.quantity >= product.stock) return prev;
+        if (existing.quantity >= maxQuantity) return prev;
         return prev.map((item) =>
           item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         );
@@ -127,7 +133,9 @@ export const SaleModal: React.FC = () => {
     setCart((prev) =>
       prev.map((item) => {
         if (item.product.id === productId) {
-          const max = item.product.stock;
+          const reservedBags =
+            isCarryBagProduct(item.product) && carryBagChoice === 'con_jaba' ? 1 : 0;
+          const max = Math.max(0, item.product.stock - reservedBags);
           return { ...item, quantity: Math.min(newQty, max) };
         }
         return item;
@@ -141,13 +149,21 @@ export const SaleModal: React.FC = () => {
 
   const clearCart = () => {
     setCart([]);
+    setCarryBagChoice(null);
     setAmountReceived('');
     setTransferAmountInput('');
     setSaleNote('');
   };
 
   // Calculations
-  const totalSale = cart.reduce((acc, item) => acc + item.product.price * item.quantity, 0);
+  const carryBagProduct = products.find(isCarryBagProduct);
+  const carryBagInCart = cart.find((item) => item.product.id === carryBagProduct?.id);
+  const canAddCarryBag = Boolean(
+    carryBagProduct && carryBagProduct.stock > (carryBagInCart?.quantity || 0)
+  );
+  const totalSale =
+    cart.reduce((acc, item) => acc + item.product.price * item.quantity, 0) +
+    (carryBagChoice === 'con_jaba' && carryBagProduct ? carryBagProduct.price : 0);
 
   const numReceived = parseFloat(amountReceived) || 0;
   const numTransfer = parseFloat(transferAmountInput) || 0;
@@ -186,8 +202,29 @@ export const SaleModal: React.FC = () => {
   // Submit sale
   const handleConfirmSale = async () => {
     if (cart.length === 0 || totalSale <= 0) return;
+    if (carryBagChoice === null) {
+      showToast('Seleccione una opción', 'Indique si el cliente desea la compra con jaba o sin jaba.', 'error');
+      return;
+    }
+    if (carryBagChoice === 'con_jaba' && (!carryBagProduct || !canAddCarryBag)) {
+      showToast('Bolsas insuficientes', 'No hay bolsas disponibles para agregar a esta venta.', 'error');
+      return;
+    }
 
-    const saleItems = cart.map((item) => ({
+    const cartWithCarryBag = [...cart];
+    if (carryBagChoice === 'con_jaba' && carryBagProduct) {
+      const bagIndex = cartWithCarryBag.findIndex((item) => item.product.id === carryBagProduct.id);
+      if (bagIndex >= 0) {
+        cartWithCarryBag[bagIndex] = {
+          ...cartWithCarryBag[bagIndex],
+          quantity: cartWithCarryBag[bagIndex].quantity + 1,
+        };
+      } else {
+        cartWithCarryBag.push({ product: carryBagProduct, quantity: 1 });
+      }
+    }
+
+    const saleItems = cartWithCarryBag.map((item) => ({
       productId: item.product.id,
       code: item.product.code,
       name: item.product.name,
@@ -348,6 +385,7 @@ export const SaleModal: React.FC = () => {
                 ) : (
                   filteredProducts.map((p) => {
                     const isOutOfStock = p.stock <= 0;
+                    const isSoldDefective = p.stock === 0 && isDefectiveMermaProduct(p);
                     const inCartItem = cart.find((item) => item.product.id === p.id);
                     const remainingAfterCart = p.stock - (inCartItem ? inCartItem.quantity : 0);
 
@@ -369,6 +407,11 @@ export const SaleModal: React.FC = () => {
                                 {p.code}
                               </span>
                             </div>
+                            {isDefectiveMermaProduct(p) && p.detail && (
+                              <span className="mt-0.5 truncate text-[9px] font-medium text-purple-700">
+                                Defectuoso · {p.detail}
+                              </span>
+                            )}
                             <div className="flex items-center gap-2 mt-0.5 text-[11px]">
                               <span className="font-mono font-bold text-primary">
                                 ${formatCUP(p.price)} CUP
@@ -377,13 +420,17 @@ export const SaleModal: React.FC = () => {
                               <span
                                 className={`font-mono text-[10px] font-semibold ${
                                   remainingAfterCart <= 0
-                                    ? 'text-error font-bold'
+                                    ? isSoldDefective ? 'text-on-surface-variant' : 'text-error font-bold'
                                     : remainingAfterCart <= p.minStock
                                     ? 'text-amber-600'
                                     : 'text-emerald-600'
                                 }`}
                               >
-                                {remainingAfterCart > 0 ? `(${remainingAfterCart} disp)` : '(Agotado)'}
+                                {remainingAfterCart > 0
+                                  ? `(${remainingAfterCart} disp)`
+                                  : isSoldDefective
+                                  ? '(Vendido)'
+                                  : '(Agotado)'}
                               </span>
                             </div>
                           </div>
@@ -493,6 +540,48 @@ export const SaleModal: React.FC = () => {
                   ))
                 )}
               </div>
+
+              {cart.length > 0 && (
+                <div className="rounded-xl border border-outline-variant/20 bg-surface p-3">
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                    ¿Desea la compra con jaba?
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setCarryBagChoice('con_jaba')}
+                      disabled={!canAddCarryBag}
+                      aria-pressed={carryBagChoice === 'con_jaba'}
+                      className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                        carryBagChoice === 'con_jaba'
+                          ? 'bg-primary text-white'
+                          : 'bg-surface neo-raised text-on-surface'
+                      } ${!canAddCarryBag ? 'cursor-not-allowed opacity-45' : 'cursor-pointer'}`}
+                      type="button"
+                    >
+                      Sí, con jaba
+                    </button>
+                    <button
+                      onClick={() => setCarryBagChoice('sin_jaba')}
+                      aria-pressed={carryBagChoice === 'sin_jaba'}
+                      className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                        carryBagChoice === 'sin_jaba'
+                          ? 'bg-primary text-white'
+                          : 'bg-surface neo-raised text-on-surface'
+                      }`}
+                      type="button"
+                    >
+                      No, sin jaba
+                    </button>
+                  </div>
+                  <p className="mt-2 text-[10px] text-on-surface-variant">
+                    {carryBagProduct
+                      ? canAddCarryBag
+                        ? `Con jaba se añadirá 1 bolsa al ticket por $${formatCUP(carryBagProduct.price)} CUP.`
+                        : 'No hay bolsas disponibles para esta venta.'
+                      : 'Registre bolsas para llevar desde Productos para habilitar esta opción.'}
+                  </p>
+                </div>
+              )}
 
               {/* Total Hero Block */}
               <div className="p-3.5 rounded-xl bg-surface neo-raised flex items-center justify-between">
@@ -680,9 +769,21 @@ export const SaleModal: React.FC = () => {
               {/* Action Button: Confirm and Record Sale */}
               <button
                 onClick={handleConfirmSale}
-                disabled={cart.length === 0 || totalSale <= 0 || isCurrentDayClosed || isViewingPastDate}
+                disabled={
+                  cart.length === 0 ||
+                  totalSale <= 0 ||
+                  carryBagChoice === null ||
+                  (carryBagChoice === 'con_jaba' && !canAddCarryBag) ||
+                  isCurrentDayClosed ||
+                  isViewingPastDate
+                }
                 className={`w-full py-3.5 px-4 rounded-xl text-white font-headline font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer ${
-                  cart.length === 0 || totalSale <= 0 || isCurrentDayClosed || isViewingPastDate
+                  cart.length === 0 ||
+                  totalSale <= 0 ||
+                  carryBagChoice === null ||
+                  (carryBagChoice === 'con_jaba' && !canAddCarryBag) ||
+                  isCurrentDayClosed ||
+                  isViewingPastDate
                     ? 'bg-outline-variant/60 cursor-not-allowed opacity-50'
                     : 'bg-primary hover:bg-primary-container shadow-primary/25 active:scale-[0.99]'
                 }`}

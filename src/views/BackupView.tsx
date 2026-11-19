@@ -805,7 +805,7 @@ export const BackupView: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-on-surface-variant max-w-2xl leading-relaxed">
-                Borra permanentemente todos los datos almacenados (productos del catálogo, ventas realizadas, inventario IPV, arqueos de caja, devoluciones e historial) y reinicia la aplicación desde cero. Para autorizar esta acción se requerirá la contraseña de seguridad.
+                Borra permanentemente los datos comerciales (productos del catálogo, ventas realizadas, inventario IPV, arqueos de caja, devoluciones e historial) y reinicia la aplicación desde cero. Conserva la información del usuario y del negocio. Para autorizar esta acción se requerirá la contraseña de seguridad.
               </p>
             </div>
           </div>
@@ -941,7 +941,7 @@ export const BackupView: React.FC = () => {
               <div className="flex flex-col">
                 <h3 className="text-base font-bold text-on-surface">Restablecer la Aplicación a Cero</h3>
                 <p className="text-xs text-on-surface-variant mt-0.5">
-                  Esta acción eliminará todos los registros (productos, ventas, inventario, devoluciones y caja) de forma definitiva e irreversible.
+                  Esta acción eliminará los registros comerciales (productos, ventas, inventario, devoluciones y caja) de forma definitiva e irreversible y conservará la información del usuario y del negocio.
                 </p>
               </div>
             </div>

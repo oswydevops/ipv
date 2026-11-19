@@ -513,6 +513,18 @@ const MIGRATIONS = [
   (db) => {
     db.exec("ALTER TABLE products ADD COLUMN subcategory TEXT NOT NULL DEFAULT '';");
   },
+  (db) => {
+    db.exec(`
+      ALTER TABLE license_state
+      ADD COLUMN activation_required INTEGER NOT NULL DEFAULT 0 CHECK (activation_required IN (0, 1));
+    `);
+  },
+  (db) => {
+    db.exec(`
+      ALTER TABLE day_closes
+      ADD COLUMN opening_cash_amount REAL NOT NULL DEFAULT 0 CHECK (opening_cash_amount >= 0);
+    `);
+  },
 ];
 
 function migrate(db) {
@@ -656,10 +668,6 @@ function createRepo(db, {
     db.prepare(
       'UPDATE license_state SET payload = ?, signature = ?, ultima_fecha_vista = ? WHERE id = 1'
     ).run(payload, signature, clock.lastSeenDate && clock.lastSeenDate > currentDate ? clock.lastSeenDate : currentDate);
-    return getLicenseRecord();
-  };
-  const clearLicense = () => {
-    db.prepare('UPDATE license_state SET payload = NULL, signature = NULL WHERE id = 1').run();
     return getLicenseRecord();
   };
   const clockStatus = () => {
@@ -1074,6 +1082,7 @@ function createRepo(db, {
       date: r.date,
       closedAt: r.closed_at,
       denominations: JSON.parse(r.denominations),
+      initialCashAmount: Number(r.opening_cash_amount || 0),
       menoresAmount: r.menores,
       transferenciasAmount: r.transferencias,
       totalContado: r.total_contado,
@@ -1107,16 +1116,29 @@ function createRepo(db, {
     }
     const menores = Number(input.menoresAmount || 0);
     const transf = Number(input.transferenciasAmount || 0);
-    if (!isNum(menores) || !isNum(transf) || menores < 0 || transf < 0) throw new DomainError('INVALID', 'Importe inválido.');
+    const openingCash = Number(input.initialCashAmount || 0);
+    if (
+      !isNum(menores) ||
+      !isNum(transf) ||
+      !isNum(openingCash) ||
+      menores < 0 ||
+      transf < 0 ||
+      openingCash < 0
+    ) {
+      throw new DomainError('INVALID', 'Importe inválido.');
+    }
     const totalContado = round2(cash + menores + transf);
     const totalIpv = salesTotals(date).total;
     db.prepare(
-      `INSERT INTO day_closes (date, closed_at, denominations, menores, transferencias, total_contado, total_ipv, diferencia, note)
-       VALUES (?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO day_closes (
+        date, closed_at, denominations, menores, transferencias, total_contado,
+        total_ipv, diferencia, note, opening_cash_amount
+      ) VALUES (?,?,?,?,?,?,?,?,?,?)`
     ).run(
       date, nowStamp(),
       JSON.stringify(dens.map((d) => ({ id: d.id, label: d.label, value: Number(d.value), count: Number(d.count) }))),
-      round2(menores), round2(transf), totalContado, totalIpv, round2(totalContado - totalIpv), input.note || null
+      round2(menores), round2(transf), totalContado, totalIpv, round2(totalContado - totalIpv),
+      input.note || null, round2(openingCash)
     );
     return getClose(date);
   });
@@ -1497,7 +1519,7 @@ db.prepare(`
 
   return {
     today, clockStatus,
-    getLicenseRecord, observeLicenseDate, saveLicense, clearLicense,
+    getLicenseRecord, observeLicenseDate, saveLicense,
     getInstallationIdentity: () => installationIdentity,
     installationMatches,
     listProducts, createProduct, updateProduct, archiveProduct, deleteProduct, addStock, reponerStock,

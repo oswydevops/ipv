@@ -169,7 +169,7 @@ export const ActivationBanner: React.FC = () => {
               </span>
             </div>
             <p className="text-sm text-on-surface-variant mt-1 leading-relaxed max-w-3xl">
-              Todas las funciones operativas (ventas, cierre, productos e informes) se encuentran deshabilitadas hasta validar su código de activación único, una ves active la aplicacion podrá disfrutar de todas las funciones sin limitaciones de manera permanente.
+              Todas las funciones operativas (ventas, cierre, productos y demás) se encuentran deshabilitadas hasta validar su licencia, una ves active la aplicacion podrá disfrutar de todas las funciones sin limitaciones de acuerdo a la licencia escogida.
             </p>
           </div>
         </div>
@@ -192,7 +192,7 @@ export const ActivationBanner: React.FC = () => {
       {/* Separate phone contact info strip (in case user does not have WhatsApp on PC) */}
       <div className="pt-3 border-t border-outline-variant/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-sm text-on-surface-variant bg-surface-container-low/40 p-2.5 rounded-xl">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold text-on-surface">Tu prueba gratuita de 7 días ha culminado, la licencia de la plataforma tiene un precio fijo de 4.99 USD a pagar por Clásica o al cambio actual de el TOQUE en pesos cubanos.</span>
+          <span className="font-semibold text-on-surface">Tu prueba gratuita de 14 días ha culminado, la plataforma cuenta con opciones de licencias a pagar por USD Clásica o al cambio actual de el TOQUE en Pesos Cubanos.</span>
           
           <span>Presione el botón de Activar Aplicación y siga las instrucciones</span>
           

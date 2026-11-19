@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 
-const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const TRIAL_DURATION_MS = 14 * 24 * 60 * 60 * 1000;
 
 function getTrialStatus(filePath, now = Date.now()) {
   let state;

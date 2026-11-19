@@ -369,6 +369,10 @@ export function createFallbackApi(): IpvApi {
         );
         const menores = Number(input.menoresAmount) || 0;
         const transf = Number(input.transferenciasAmount) || 0;
+        const openingAmount = input.initialCashAmount === undefined ? 0 : Number(input.initialCashAmount);
+        if (!Number.isFinite(openingAmount) || openingAmount < 0) {
+          throw new Error('El monto inicial de caja debe ser igual o mayor que cero.');
+        }
         const totalContado = cashSum + menores + transf;
 
         const daySales = sales.filter((s) => s.date === date && !s.voided);
@@ -378,6 +382,7 @@ export function createFallbackApi(): IpvApi {
           date,
           closedAt,
           denominations: input.denominations,
+          initialCashAmount: openingAmount,
           menoresAmount: menores,
           transferenciasAmount: transf,
           totalContado,

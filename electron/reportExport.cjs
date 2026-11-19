@@ -49,9 +49,27 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function buildReportHtml({ title, csvContent, delimiter = ';' }) {
+function buildReportHtml({
+  title,
+  csvContent,
+  delimiter = ';',
+  businessName = '',
+  ownerName = '',
+  businessProfileName = '',
+  logoDataUrl = '',
+}) {
   const rows = parseDelimitedText(csvContent, delimiter);
   const columnCount = Math.max(1, ...rows.map((row) => row.length));
+  const branding = `
+    <header class="branding">
+      ${logoDataUrl ? `<img class="brand-logo" src="${escapeHtml(logoDataUrl)}" alt="Logo FerreStock">` : ''}
+      <div>
+        <div class="platform">FerreStock</div>
+        <div>Negocio: <strong>${escapeHtml(businessName || 'No configurado')}</strong></div>
+        <div>Propietario: <strong>${escapeHtml(ownerName || 'No configurado')}</strong></div>
+        ${businessProfileName ? `<div>Tipo de negocio: <strong>${escapeHtml(businessProfileName)}</strong></div>` : ''}
+      </div>
+    </header>`;
   const tableRows = rows.map((row, index) => {
     const populated = row.filter((cell) => cell !== '');
     const singleCell = populated.length === 1;
@@ -75,6 +93,9 @@ function buildReportHtml({ title, csvContent, delimiter = ';' }) {
 body { font: 9px Arial, sans-serif; color: #172033; }
 h1 { font-size: 18px; margin: 0 0 5px; color: #0f172a; }
 .generated { color: #64748b; font-size: 9px; margin-bottom: 12px; }
+.branding { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: #475569; font-size: 9px; }
+.brand-logo { width: 52px; height: 52px; object-fit: contain; }
+.platform { font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 3px; }
 table { width: 100%; border-collapse: collapse; table-layout: auto; }
 td, th { border: 1px solid #cbd5e1; padding: 4px 5px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 td { white-space: pre-wrap; }
@@ -84,6 +105,7 @@ tr:nth-child(even) td { background: #f8fafc; }
 .report-note th { background: #f8fafc; color: #475569; font-weight: normal; }
 tr { page-break-inside: avoid; }
 </style></head><body>
+${branding}
 <h1>${escapeHtml(title)}</h1>
 <div class="generated">Generado: ${escapeHtml(new Date().toLocaleString('es-CU'))}</div>
 <table><tbody>${tableRows}</tbody></table>

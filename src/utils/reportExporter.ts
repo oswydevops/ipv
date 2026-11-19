@@ -1,5 +1,8 @@
 import { saveFileWithPicker } from './fileSaver';
 import { getSelectedBusinessProfile } from '../data/productCategories';
+import platformLogoDataUrl from '../../assets/icono.png?inline';
+
+export { platformLogoDataUrl };
 
 export type ReportFormat = 'excel' | 'pdf';
 
@@ -9,6 +12,9 @@ interface ExportReportInput {
   csvContent: string;
   delimiter?: ',' | ';';
   format: ReportFormat;
+  businessName?: string;
+  ownerName?: string;
+  logoDataUrl?: string;
 }
 
 export async function exportReportFile({
@@ -17,6 +23,9 @@ export async function exportReportFile({
   csvContent,
   delimiter = ';',
   format,
+  businessName = '',
+  ownerName = '',
+  logoDataUrl = platformLogoDataUrl,
 }: ExportReportInput): Promise<{ canceled: boolean; path?: string; error?: string }> {
   const businessProfile = getSelectedBusinessProfile();
   const reportTitle = `${title} - ${businessProfile.label}`;
@@ -32,6 +41,9 @@ export async function exportReportFile({
       delimiter,
       format,
       businessProfileName: businessProfile.label,
+      businessName,
+      ownerName,
+      logoDataUrl,
     });
   }
 
@@ -43,7 +55,13 @@ export async function exportReportFile({
   }
 
   const csvName = `${fileName.replace(/\.[^.]+$/, '')}.csv`;
-  const reportCsvContent = `${bom}${profileRow}\r\n${csvBody}`;
+  const brandingRows = [
+    `"Plataforma"${delimiter}"FerreStock"`,
+    `"Nombre del negocio"${delimiter}"${businessName.replace(/"/g, '""')}"`,
+    `"Propietario"${delimiter}"${ownerName.replace(/"/g, '""')}"`,
+    profileRow,
+  ];
+  const reportCsvContent = `${bom}${brandingRows.join('\r\n')}\r\n${csvBody}`;
   const result = await saveFileWithPicker(reportCsvContent, {
     suggestedName: csvName,
     mimeType: 'text/csv;charset=utf-8;',

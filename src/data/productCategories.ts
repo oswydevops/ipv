@@ -18,6 +18,7 @@ const hardwareUnits = ['Unidad', 'Pieza', 'Caja', 'Paquete', 'Metro', 'Rollo', '
 const groceryUnits = ['Unidad', 'Pieza', 'Paquete', 'Caja', 'Docena', 'Kilogramo', 'Gramo', 'Libra', 'Litro', 'Mililitro', 'Botella', 'Lata'];
 const clothingUnits = ['Pieza', 'Par', 'Docena', 'Paca', 'Paquete', 'Caja', 'Unidad'];
 const generalUnits = ['Unidad', 'Pieza', 'Paquete', 'Caja', 'Docena', 'Par', 'Metro', 'Rollo', 'Litro', 'Mililitro', 'Kilogramo', 'Gramo', 'Libra', 'Saco', 'Set'];
+const cafeteriaUnits = ['Unidad', 'Porción', 'Taza', 'Vaso', 'Botella', 'Lata', 'Paquete', 'Docena', 'Litro', 'Mililitro', 'Kilogramo', 'Gramo'];
 
 const category = (name: string, subcategories: string[], units: readonly string[]) => ({
   name,
@@ -27,7 +28,7 @@ const category = (name: string, subcategories: string[], units: readonly string[
 const minimarketCategory = (name: string, subcategories: string[], units: readonly string[]) =>
   category(name, subcategories, [...new Set([...units, 'Pallet', 'Contenedor'])]);
 
-export const BUSINESS_PROFILES = [
+const ALL_BUSINESS_PROFILES = [
   {
     id: 'ferreteria',
     label: 'Ferretería y construcción',
@@ -155,15 +156,32 @@ export const BUSINESS_PROFILES = [
       category('Otra categoría', ['Productos diversos'], generalUnits),
     ],
   },
+  {
+    id: 'cafeteria',
+    label: 'Cafeterías',
+    categories: [
+      category('Bebidas', ['General'], cafeteriaUnits),
+      category('Comidas rápidas', ['General'], cafeteriaUnits),
+      category('Panadería y repostería', ['General'], cafeteriaUnits),
+      category('Productos complementarios', ['General'], cafeteriaUnits),
+      category('Otros', ['General'], cafeteriaUnits),
+    ],
+  },
 ] as const satisfies readonly BusinessProfile[];
 
-export const DEFAULT_BUSINESS_PROFILE_ID = 'ferreteria';
+export const BUSINESS_PROFILES: readonly BusinessProfile[] = ['mipyme', 'bar', 'cafeteria'].map(
+  (id) => ALL_BUSINESS_PROFILES.find((profile) => profile.id === id)!
+);
+
+export const DEFAULT_BUSINESS_PROFILE_ID = 'mipyme';
 export const BUSINESS_PROFILE_STORAGE_KEY = 'ferrestock_business_profile';
 export const BUSINESS_PROFILE_LOCKED_STORAGE_KEY = 'ferrestock_business_profile_locked';
+export const BUSINESS_PROFILE_CONFIRMED_STORAGE_KEY = 'ferrestock_business_profile_confirmed';
 export const DEFAULT_PRODUCT_UNITS = generalUnits;
+export const CARRY_BAG_CATEGORY = 'Bolsas para llevar';
 
 export const getBusinessProfile = (id: string): BusinessProfile =>
-  BUSINESS_PROFILES.find((profile) => profile.id === id) ||
+  ALL_BUSINESS_PROFILES.find((profile) => profile.id === id) ||
   BUSINESS_PROFILES.find((profile) => profile.id === DEFAULT_BUSINESS_PROFILE_ID)!;
 
 export const getSelectedBusinessProfile = (): BusinessProfile => {
@@ -171,7 +189,8 @@ export const getSelectedBusinessProfile = (): BusinessProfile => {
     const profileId = typeof localStorage !== 'undefined'
       ? localStorage.getItem(BUSINESS_PROFILE_STORAGE_KEY)
       : null;
-    return getBusinessProfile(profileId || DEFAULT_BUSINESS_PROFILE_ID);
+    return BUSINESS_PROFILES.find((profile) => profile.id === profileId) ||
+      getBusinessProfile(DEFAULT_BUSINESS_PROFILE_ID);
   } catch {
     return getBusinessProfile(DEFAULT_BUSINESS_PROFILE_ID);
   }
@@ -214,6 +233,13 @@ const PRODUCT_NAME_EXAMPLES: Record<string, Record<string, string>> = {
     Snacks: 'Ejemplo: Maní salado en paquete de 100 g',
     'Descartables y accesorios': 'Ejemplo: Vasos plásticos, paquete de 50',
     'Otra categoría': 'Ejemplo: Artículo para bar, marca y presentación',
+  },
+  cafeteria: {
+    Bebidas: 'Ejemplo: Café espresso, taza de 120 ml',
+    'Comidas rápidas': 'Ejemplo: Sándwich de jamón y queso',
+    'Panadería y repostería': 'Ejemplo: Croissant de mantequilla',
+    'Productos complementarios': 'Ejemplo: Servilletas, paquete de 100',
+    Otros: 'Ejemplo: Producto complementario para cafetería',
   },
   ropa: {
     'Ropa por paca': 'Ejemplo: Paca surtida de ropa de mujer',

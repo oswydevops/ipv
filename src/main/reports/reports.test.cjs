@@ -12,6 +12,7 @@ const { generarExcelIpv } = require('./ipvExcel.js');
 const { buildHandlers } = require('../../../electron/ipc.cjs');
 
 const fecha = '2026-10-17';
+const logoDataUrl = `data:image/png;base64,${fs.readFileSync(path.join(__dirname, '../../../assets/icono.png')).toString('base64')}`;
 const fakeDb = {
   prepare(query) {
     return {
@@ -34,6 +35,7 @@ const fakeDb = {
             total_contado: 420,
             total_ipv: 500,
             diferencia: -80,
+            opening_cash_amount: 250,
             note: 'Cierre de prueba',
           };
         }
@@ -114,9 +116,30 @@ async function run() {
   assert.strictEqual(resumen.totales.totalDevoluciones, 60);
   assert.strictEqual(resumen.totales.costoArticulosVendidos, 120);
   assert.strictEqual(resumen.totales.gananciasNetas, 320);
+  assert.strictEqual(resumen.totales.totalBilletes, 300);
+  assert.strictEqual(resumen.totales.montoInicialCaja, 250);
   assert.strictEqual(resumen.devoluciones.length, 1);
   assert.strictEqual(resumen.ventasAnuladas.length, 1);
   assert.strictEqual(resumen.ventasPorProducto[0].subcategoria, 'Accesorios');
+  const openDayDb = {
+    prepare(query) {
+      const statement = fakeDb.prepare(query);
+      return {
+        get(...args) {
+          return query.includes('SELECT * FROM day_closes') ? null : statement.get(...args);
+        },
+        all(...args) {
+          return statement.all(...args);
+        },
+      };
+    },
+  };
+  const openDayDenominations = [
+    { id: '50', label: 'Billete 50 CUP', value: 50, count: 4 },
+  ];
+  const openDaySummary = getResumenDia(fecha, openDayDb, openDayDenominations);
+  assert.deepStrictEqual(openDaySummary.denominaciones, openDayDenominations);
+  assert.strictEqual(openDaySummary.totales.totalBilletes, 200);
   const renderCloseTemplate = Handlebars.compile(
     fs.readFileSync(path.join(__dirname, '../../../templates/cierre.hbs'), 'utf8')
   );
@@ -129,12 +152,28 @@ async function run() {
     fechaFormateada: '17/10/2026',
     generadoEn: '17/10/2026, 17:00',
     tipoNegocio: 'Mipyme (comercio mixto)',
-    totales: { estaCerrado: false, diferencia: 0 },
+    businessName: 'Ferretería Central',
+    ownerName: 'Ana Pérez',
+    logoDataUrl,
+    totales: {
+      ...openDaySummary.totales,
+      montoInicialCaja: resumen.totales.montoInicialCaja,
+      estaCerrado: false,
+      diferencia: 0,
+    },
     porMetodoPago: [],
-    denominaciones: [],
+    denominaciones: openDaySummary.denominaciones,
     ventasPorProducto: [{ codigo: 'P-001', nombre: 'Artículo de prueba', categoria: 'General', subcategoria: 'Accesorios', um: 'Unidad', cantidad: 1, precioUnitario: 50, total: 50, porcentajeStr: '100%' }],
   });
   assert.match(closeHtml, /Tipo de negocio: <strong>Mipyme \(comercio mixto\)<\/strong>/);
+  assert.match(closeHtml, /alt="Logo FerreStock"/);
+  assert.match(closeHtml, /Negocio: Ferretería Central/);
+  assert.match(closeHtml, /Propietario: Ana Pérez/);
+  assert.match(closeHtml, /Desglose de Billetes y Monedas/);
+  assert.match(closeHtml, /Billete 50 CUP/);
+  assert.match(closeHtml, /Total en billetes y monedas/);
+  assert.match(closeHtml, /Monto inicial de caja \(informativo\): \$250\.00 CUP/);
+  assert.match(closeHtml, /\$200\.00/);
   assert.match(closeHtml, /<td>Accesorios<\/td>/);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ipv-report-'));
@@ -154,6 +193,7 @@ async function run() {
     assert.ok(summaryRows.some((row) => row.includes('Transferencias contadas') && row.includes(100)));
     assert.ok(summaryRows.some((row) => row.includes('Total devuelto / anulado') && row.includes(60)));
     assert.ok(summaryRows.some((row) => row.includes('Ganancias Netas del Día') && row.includes(320)));
+    assert.ok(summaryRows.some((row) => row.includes('Monto inicial de caja (informativo)') && row.includes(250)));
     assert.ok(summaryRows.some((row) => row.includes('Billete 100 CUP')));
 
     const returnSheet = workbook.getWorksheet('Devoluciones');
@@ -266,10 +306,16 @@ async function run() {
         date: fecha,
         format: 'excel',
         businessProfileName: 'Mipyme (comercio mixto)',
+        businessName: 'Ferretería Central',
+        ownerName: 'Ana Pérez',
+        logoDataUrl,
       });
       const businessCloseWorkbook = new ExcelJS.Workbook();
       await businessCloseWorkbook.xlsx.readFile(businessClosePath);
-      assert.match(businessCloseWorkbook.getWorksheet('Resumen').getCell('A1').value, /Mipyme \(comercio mixto\)/);
+      assert.match(businessCloseWorkbook.getWorksheet('Resumen').getCell('B1').value, /Mipyme \(comercio mixto\)/);
+      assert.match(businessCloseWorkbook.getWorksheet('Resumen').getCell('A2').value, /Negocio: Ferretería Central/);
+      assert.match(businessCloseWorkbook.getWorksheet('Resumen').getCell('A2').value, /Propietario: Ana Pérez/);
+      assert.strictEqual(businessCloseWorkbook.getWorksheet('Resumen').getImages().length, 1);
 
       const tableExportPath = path.join(directory, 'tabla-exportada.xlsx');
       nextSaveResult = { canceled: false, filePath: tableExportPath };
@@ -280,13 +326,20 @@ async function run() {
         delimiter: ',',
         format: 'excel',
         businessProfileName: 'Mipyme (comercio mixto)',
+        businessName: 'Ferretería Central',
+        ownerName: 'Ana Pérez',
+        logoDataUrl,
       });
       assert.strictEqual(exportedTable.path, tableExportPath);
       const tableWorkbook = new ExcelJS.Workbook();
       await tableWorkbook.xlsx.readFile(tableExportPath);
-      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(1).values.slice(1), ['Nombre', 'Importe']);
-      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(2).values.slice(1), ['Tipo de negocio', 'Mipyme (comercio mixto)']);
-      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(3).values.slice(1), ['Producto', '12.5']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(1).values.slice(1), ['', 'FerreStock']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(2).values.slice(1), ['', 'Negocio: Ferretería Central']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(3).values.slice(1), ['', 'Propietario: Ana Pérez']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(4).values.slice(1), ['', 'Tipo de negocio: Mipyme (comercio mixto)']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(6).values.slice(1), ['Nombre', 'Importe']);
+      assert.deepStrictEqual(tableWorkbook.getWorksheet('Reporte').getRow(7).values.slice(1), ['Producto', '12.5']);
+      assert.strictEqual(tableWorkbook.getWorksheet('Reporte').getImages().length, 1);
 
       const fileExportPath = path.join(directory, 'exportacion-elegida.csv');
       nextSaveResult = { canceled: false, filePath: fileExportPath };

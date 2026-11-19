@@ -42,6 +42,21 @@
       font-weight: 600;
       margin-top: 2px;
     }
+    .brand-lockup {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-logo {
+      width: 48px;
+      height: 48px;
+      object-fit: contain;
+    }
+    .brand-info {
+      font-size: 9px;
+      color: #64748b;
+      margin-top: 2px;
+    }
     .meta-box {
       text-align: right;
       font-size: 10px;
@@ -181,9 +196,14 @@
 <body>
   <!-- Encabezado Oficial -->
   <div class="header">
-    <div>
-      <div class="brand-title">IPV · SISTEMA DE GESTIÓN Y VENTAS</div>
-      <div class="brand-subtitle">Acta Oficial y Reporte Consolidado de Cierre Diario</div>
+    <div class="brand-lockup">
+      {{#if logoDataUrl}}<img class="brand-logo" src="{{logoDataUrl}}" alt="Logo FerreStock">{{/if}}
+      <div>
+        <div class="brand-title">FerreStock</div>
+        <div class="brand-subtitle">Acta Oficial y Reporte Consolidado de Cierre Diario</div>
+        <div class="brand-info">Negocio: {{#if businessName}}{{businessName}}{{else}}No configurado{{/if}}</div>
+        <div class="brand-info">Propietario: {{#if ownerName}}{{ownerName}}{{else}}No configurado{{/if}}</div>
+      </div>
     </div>
     <div class="meta-box">
       <div>Fecha de Operación: <strong>{{fechaFormateada}}</strong></div>
@@ -269,7 +289,10 @@
 
     <!-- Desglose de Efectivo Físico -->
     <div>
-      <div class="section-title">Arqueo de Gaveta / Efectivo</div>
+      <div class="section-title">Desglose de Billetes y Monedas</div>
+      <div class="kpi-sub" style="margin-bottom: 6px;">
+        Monto inicial de caja (informativo): ${{money totales.montoInicialCaja}} CUP · No modifica el cuadre
+      </div>
       {{#if denominaciones.length}}
       <table>
         <thead>
@@ -288,9 +311,9 @@
           </tr>
           {{/each}}
           <tr style="background: #f1f5f9;">
-            <td class="font-bold">Total Físico Contado</td>
+            <td class="font-bold">Total en billetes y monedas</td>
             <td class="text-center font-bold">-</td>
-            <td class="text-right font-mono font-bold">${{money totales.totalContado}}</td>
+            <td class="text-right font-mono font-bold">${{money totales.totalBilletes}}</td>
           </tr>
         </tbody>
       </table>

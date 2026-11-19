@@ -150,14 +150,6 @@ export const DashboardView: React.FC = () => {
     return returns.filter((r) => r.date === todayDate);
   }, [returns, todayDate]);
 
-  const damagedUnitsToday = useMemo(() => {
-    return returnsToday.reduce((acc, r) => {
-      const damaged = (r.items || [])
-        .filter((it) => it.condition === 'mal_estado')
-        .reduce((s, it) => s + (it.quantity || 1), 0);
-      return acc + damaged;
-    }, 0);
-  }, [returnsToday]);
   const resolvedMermaToday = useMemo(
     () => mermaItems.filter((item) => item.resolvedAt === todayDate),
     [mermaItems, todayDate]
@@ -252,7 +244,7 @@ export const DashboardView: React.FC = () => {
     let hasSales = false;
 
     // 1. Acumular a partir de los tickets de venta (excluyendo ventas anuladas)
-    const activeSales = sales.filter((s) => !(s as any).voided);
+    const activeSales = sales.filter((s) => !s.voided);
     if (activeSales.length > 0) {
       activeSales.forEach((s) => {
         (s.items || []).forEach((item) => {
@@ -528,25 +520,9 @@ export const DashboardView: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 text-xs">
-            <button
-              onClick={() => setCurrentView('devoluciones')}
-              className="text-amber-700 hover:text-amber-800 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
-              type="button"
-            >
-              <span>
-                {returnsToday.length} {returnsToday.length === 1 ? 'devolución' : 'devoluciones'}
-              </span>
-              <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
-            </button>
-            {damagedUnitsToday > 0 ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-600 border border-red-500/20">
-                {damagedUnitsToday} merma
-              </span>
-            ) : (
-              <span className="text-[11px] text-on-surface-variant font-medium">
-                Descontado en caja
-              </span>
-            )}
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-700">
+              {returnsToday.length} {returnsToday.length === 1 ? 'devolución' : 'devoluciones'}
+            </span>
           </div>
           <div className="flex items-center justify-between gap-2 mt-3 pt-2 border-t border-outline-variant/10 text-[10px] font-semibold">
             <span className="text-purple-700">Venta defectuosa: {defectiveSalesToday}</span>

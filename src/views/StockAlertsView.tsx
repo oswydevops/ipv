@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { Product } from '../types';
+import { isDefectiveMermaProduct } from '../utils/productInventory';
 
 export const StockAlertsView: React.FC = () => {
   const { products, reponerProduct, refreshAll, showToast } = useApp();
@@ -19,13 +20,14 @@ export const StockAlertsView: React.FC = () => {
   const [modalCost, setModalCost] = useState(0);
   const [modalDest, setModalDest] = useState('Mostrador Principal / Repisa Inmediata');
 
-  const zeroItems = products.filter((p) => p.stock === 0);
+  const zeroItems = products.filter((p) => p.stock === 0 && !isDefectiveMermaProduct(p));
   const lowItems = products.filter((p) => p.stock > 0 && p.stock <= p.minStock);
   const availableItems = products.filter((p) => p.stock > p.minStock);
   const productCategories = Array.from(new Set(products.map((product) => product.category).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, 'es'));
 
   const displayedList = products.filter((p) => {
+    if (p.stock === 0 && isDefectiveMermaProduct(p)) return false;
     if (activeTab === 'agotados' && p.stock !== 0) return false;
     if (activeTab === 'stock-bajo' && (p.stock === 0 || p.stock > p.minStock)) return false;
     if (activeTab === 'disponibles' && p.stock <= p.minStock) return false;

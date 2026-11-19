@@ -2,8 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { DayClose } from '../data/api';
 import { APP_NAME } from '../config';
-import { exportReportFile, ReportFormat } from '../utils/reportExporter';
-import { getSelectedBusinessProfile } from '../data/productCategories';
 
 export const CashCloseView: React.FC = () => {
   const {
@@ -30,7 +28,10 @@ export const CashCloseView: React.FC = () => {
     returns = [],
   } = useApp();
 
-  const [responsibleName, setResponsibleName] = useState('Vendedor');
+  const [responsibleName, setResponsibleName] = useState(
+    () => localStorage.getItem('ipv_cash_close_responsible_name') || 'Vendedor'
+  );
+  const [initialCashAmount, setInitialCashAmount] = useState('0');
   const [closeTime, setCloseTime] = useState('');
   const [notes, setNotes] = useState('');
   const [showActaModal, setShowActaModal] = useState(false);
@@ -39,9 +40,16 @@ export const CashCloseView: React.FC = () => {
   const [historyList, setHistoryList] = useState<DayClose[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [isExportCloseModalOpen, setIsExportCloseModalOpen] = useState(false);
-  const [exportFormat, setExportFormat] = useState<ReportFormat>('excel');
+
+  useEffect(() => {
+    localStorage.setItem('ipv_cash_close_responsible_name', responsibleName);
+  }, [responsibleName]);
+
+  useEffect(() => {
+    if (todayDate) {
+      setInitialCashAmount(localStorage.getItem(`ipv_cash_opening_amount_${todayDate}`) || '0');
+    }
+  }, [todayDate]);
 
   // Set real current time and update every minute
   useEffect(() => {
@@ -95,6 +103,10 @@ export const CashCloseView: React.FC = () => {
 
   // Total physical pieces counted
   const totalPieces = denominations.reduce((acc, d) => acc + d.count, 0);
+  const parsedOpeningAmount = Number(initialCashAmount);
+  const openingAmountValue = Number.isFinite(parsedOpeningAmount) ? parsedOpeningAmount : 0;
+  const isOpeningAmountInvalid =
+    initialCashAmount.trim() !== '' && (!Number.isFinite(parsedOpeningAmount) || parsedOpeningAmount < 0);
 
   // Differences
   const devolucionesToday = useMemo(() => {
@@ -107,7 +119,7 @@ export const CashCloseView: React.FC = () => {
 
   const voidedSalesToday = useMemo(() => {
     const returnSaleIds = new Set(devolucionesToday.map((r) => r.saleId).filter(Boolean));
-    return sales.filter((s) => (s as any).voided && s.date === todayDate && !returnSaleIds.has(s.id));
+    return sales.filter((s) => s.voided && s.date === todayDate && !returnSaleIds.has(s.id));
   }, [sales, todayDate, devolucionesToday]);
 
   const autoDevolucionesTotal = useMemo(() => {
@@ -192,9 +204,13 @@ export const CashCloseView: React.FC = () => {
       showToast('Aviso', 'El día ya está cerrado.', 'info');
       return;
     }
+    if (isOpeningAmountInvalid) {
+      showToast('Monto inicial inválido', 'Introduzca un monto inicial igual o mayor que cero.', 'error');
+      return;
+    }
     setIsSubmitting(true);
     try {
-      const success = await closeDay(todayDate, notes.trim() || undefined);
+      const success = await closeDay(todayDate, notes.trim() || undefined, openingAmountValue);
       if (success) {
         setShowActaModal(false);
       }
@@ -213,138 +229,6 @@ export const CashCloseView: React.FC = () => {
       }
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  // Abrir modal de exportación para preguntar ruta antes de guardar
-  const handleExportClose = () => {
-    setIsExportCloseModalOpen(true);
-  };
-
-  // Preparar el contenido para exportar cuando la aplicación se ejecuta en navegador.
-  const generateWebCloseExport = () => {
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-
-    const headersResumen = [
-      'REPORTE OFICIAL DE CIERRE DE CAJA DIARIO - IPV',
-      `Fecha de Cierre: ${todayDate} | Generado: ${now.toLocaleTimeString('es-CU')}`,
-      `Responsable: ${responsibleName} | Estado: ${isCurrentDayClosed ? 'Cerrado' : 'Abierto / En Arqueo'}`,
-      '',
-      '--- RESUMEN GENERAL DE OPERACIONES ---',
-      'Concepto;Monto ($);Detalle / Observación',
-      `Total Facturado (Ventas Brutas);${ipvTotalVendido.toFixed(2)};Importe bruto según IPV`,
-      `Total Devoluciones / Reembolsos;-${totalDevolucionesRefundToday.toFixed(2)};${devolucionesToday.length} devoluciones procesadas`,
-      `Ventas Netas Realizadas;${Math.max(0, ipvTotalVendido - totalDevolucionesRefundToday).toFixed(2)};Ingreso neto efectivo tras reembolsos`,
-      `Costo de Artículos Vendidos;${costOfGoodsToday.toFixed(2)};Costo de compra registrado para las ventas de la jornada`,
-      `Ganancias Netas del Día;${netProfitToday.toFixed(2)};Ventas menos costo de compra, devoluciones y anulaciones`,
-      `Total Ventas Efectivo;${totalVentasEfectivo.toFixed(2)};Cobros en efectivo`,
-      `Total Transferencias;${totalVentasTransferencia.toFixed(2)};EnZona / Transfermóvil`,
-      `Efectivo Físico en Gaveta;${totalGeneralContado.toFixed(2)};Total del arqueo físico`,
-      `Diferencia de Caja;${diferenciaCaja.toFixed(2)};${diferenciaCaja === 0 ? 'Cuadrado Exacto' : diferenciaCaja > 0 ? 'Sobrante en caja' : 'Faltante en caja'}`,
-      '',
-      '--- CONTEO DE BILLETES Y EFECTIVO FÍSICO ---',
-      'Denominación;Valor Unitario ($);Cantidad de Piezas;Importe Total ($)',
-      ...denominations.map((d) => `"${d.label}";${d.value.toFixed(2)};${d.count};${(d.value * d.count).toFixed(2)}`),
-      `"Fondo de Menores / Monedas";0.00;1;${(menoresAmount || 0).toFixed(2)}`,
-      `"Total Efectivo Contado";0.00;${totalPieces};${totalGeneralContado.toFixed(2)}`,
-      '',
-      '--- REGISTRO DETALLADO DE DEVOLUCIONES DE LA JORNADA ---',
-      'Folio;Hora;Ticket Origen;Cliente;Motivo de Devolución;Método de Reembolso;Artículos Devueltos;Uds;Condición;Monto Reembolsado ($)',
-    ];
-
-    if (devolucionesToday.length === 0) {
-      headersResumen.push('Sin devoluciones registradas en esta jornada;;;;;;;;;');
-    } else {
-      devolucionesToday.forEach((r) => {
-        const totalUnits = (r.items || []).reduce((acc, it) => acc + (it.quantity || 1), 0);
-        const itemsStr = (r.items || []).map((it) => `${it.name} (x${it.quantity} ${it.um || 'u.'})`).join(', ');
-        const conditionStr = r.hasDamagedItems ? 'Con merma / Dañado' : 'Buen estado / Reintegrado';
-        headersResumen.push([
-          `"${r.returnNumber || 'DEV-N/A'}"`,
-          `"${r.timestamp || '--:--'}"`,
-          `"${r.ticketNumber || 'Venta directa'}"`,
-          `"${(r.customerName || 'Cliente general').replace(/"/g, '""')}"`,
-          `"${(r.reason || 'Sin motivo especificado').replace(/"/g, '""')}"`,
-          `"${(r.refundMethod || 'efectivo').toUpperCase()}"`,
-          `"${itemsStr.replace(/"/g, '""')}"`,
-          totalUnits,
-          `"${conditionStr}"`,
-          `-${(r.totalRefund || 0).toFixed(2)}`,
-        ].join(';'));
-      });
-    }
-
-    const totalRefundToday = devolucionesToday.reduce((acc, r) => acc + (r.totalRefund || 0), 0);
-    const refundCashToday = devolucionesToday.filter((r) => r.refundMethod === 'efectivo').reduce((acc, r) => acc + (r.totalRefund || 0), 0);
-    const refundTransferToday = devolucionesToday.filter((r) => r.refundMethod === 'transferencia').reduce((acc, r) => acc + (r.totalRefund || 0), 0);
-    const refundMixtoToday = devolucionesToday.filter((r) => r.refundMethod === 'mixto').reduce((acc, r) => acc + (r.totalRefund || 0), 0);
-
-    headersResumen.push(
-      '',
-      `"--- RESUMEN DETALLADO DE REEMBOLSOS POR CANAL DE PAGO ---";;;`,
-      `"Canal / Método";"Monto Reembolsado ($)";"Operaciones";`,
-      `"Efectivo";-${refundCashToday.toFixed(2)};${devolucionesToday.filter((r) => r.refundMethod === 'efectivo').length};`,
-      `"Transferencia";-${refundTransferToday.toFixed(2)};${devolucionesToday.filter((r) => r.refundMethod === 'transferencia').length};`,
-      `"Mixto";-${refundMixtoToday.toFixed(2)};${devolucionesToday.filter((r) => r.refundMethod === 'mixto').length};`,
-      `"Total Reembolsos del Día ($)";-${totalRefundToday.toFixed(2)};${devolucionesToday.length};`,
-      `"Ventas Netas Efectivas del Día ($)";${Math.max(0, ipvTotalVendido - totalRefundToday).toFixed(2)};;`
-    );
-
-    return '\uFEFF' + headersResumen.join('\r\n');
-  };
-
-  // Ejecutar exportación tras confirmar y seleccionar carpeta
-  const handlePerformExportClose = async () => {
-    setIsExporting(true);
-    try {
-      const isNativeElectron = typeof window !== 'undefined' && Boolean((window as any).api?._isElectron);
-
-      if (isNativeElectron && window.api?.reports?.exportarCierreFormato) {
-        const res = await window.api.reports.exportarCierreFormato({
-          date: todayDate,
-          format: exportFormat,
-          businessProfileName: getSelectedBusinessProfile().label,
-        });
-        if (res.canceled) {
-          showToast('Operación Cancelada', 'No se seleccionó una ubicación para guardar.', 'info');
-          return;
-        }
-        setIsExportCloseModalOpen(false);
-        showToast(
-          'Cierre Exportado con Éxito',
-          `Reporte ${exportFormat === 'pdf' ? 'PDF' : 'Excel'} guardado en: ${res.path || 'la ubicación seleccionada'}`,
-          'success'
-        );
-      } else {
-        const csvContent = generateWebCloseExport();
-        const res = await exportReportFile({
-          title: 'Reporte Oficial de Cierre de Caja',
-          fileName: `Cierre_Caja_${todayDate}.${exportFormat === 'pdf' ? 'pdf' : 'xlsx'}`,
-          csvContent,
-          delimiter: ';',
-          format: exportFormat,
-        });
-        if (res.canceled) {
-          showToast('Operación Cancelada', 'No se seleccionó ninguna ruta para guardar el archivo.', 'info');
-          return;
-        }
-        if (res.error) {
-          showToast('Error al exportar cierre', res.error, 'error');
-          return;
-        }
-        setIsExportCloseModalOpen(false);
-        showToast(
-          'Cierre Exportado con Éxito',
-          `Se guardó el reporte ${exportFormat === 'pdf' ? 'PDF' : 'Excel'} con arqueo y devoluciones (${devolucionesToday.length} devoluciones incluidas).`,
-          'success'
-        );
-      }
-    } catch (err: any) {
-      showToast('Error al exportar cierre', err?.message || 'No se pudo generar el reporte de cierre.', 'error');
-    } finally {
-      setIsExporting(false);
     }
   };
 
@@ -386,6 +270,7 @@ export const CashCloseView: React.FC = () => {
         <div class="row"><span>Ventas Transferencia:</span><span>$${formatCUP(totalVentasTransferencia)} CUP</span></div>
         <div class="row bold"><span>TOTAL FACTURADO IPV:</span><span>$${formatCUP(ipvTotalVendido)} CUP</span></div>
         <div class="row bold"><span>GANANCIAS DEL DÍA:</span><span>$${formatCUP(netProfitToday)} CUP</span></div>
+        <div class="row"><span>MONTO INICIAL DE CAJA (INFORMATIVO):</span><span>$${formatCUP(openingAmountValue)} CUP</span></div>
         <div class="divider"></div>
         <div class="center bold">DESGLOSE EFECTIVO CONTADO</div>
         ${denominations.map(d => `<div class="row"><span>${d.count}x $${d.value} CUP</span><span>$${formatCUP(d.count * d.value)}</span></div>`).join('')}
@@ -453,16 +338,6 @@ export const CashCloseView: React.FC = () => {
             <span className="material-symbols-outlined text-[18px]">sync</span>
             <span>Recalcular</span>
           </button>
-
-          <button
-            onClick={() => setShowHistoryModal(true)}
-            className="h-11 px-3.5 rounded-xl bg-surface neo-raised hover:text-primary active:neo-inset flex items-center gap-2 text-xs font-semibold text-on-surface-variant transition-all cursor-pointer"
-            title="Historial de arqueos previos de SQLite"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[20px]">history</span>
-            <span className="hidden sm:inline">Historial</span>
-          </button>
         </div>
       </div>
 
@@ -509,7 +384,7 @@ export const CashCloseView: React.FC = () => {
                     Desglose Físico de Billetes
                   </h2>
                   <p className="text-xs text-on-surface-variant font-medium mt-0.5">
-                    Cálculo instantáneo por valor facial en Pesos Cubanos (CUP)
+                    Cálculo instantáneo por valor facial en Pesos Cubanos
                   </p>
                 </div>
               </div>
@@ -525,9 +400,6 @@ export const CashCloseView: React.FC = () => {
                   <span className="material-symbols-outlined text-[16px]">restart_alt</span>
                   <span>Reiniciar</span>
                 </button>
-                <span className="px-2.5 py-1 rounded-lg bg-surface neo-inset text-[11px] font-bold text-primary font-mono">
-                  CUP $
-                </span>
               </div>
             </div>
 
@@ -903,6 +775,36 @@ export const CashCloseView: React.FC = () => {
                 </span>
                 <span className="text-[10px] text-on-surface-variant font-mono">{closeTime}</span>
               </div>
+              <div className="col-span-2 p-2.5 rounded-xl bg-surface neo-inset flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <label
+                    className="text-[10px] text-on-surface-variant uppercase font-medium"
+                    htmlFor="cash-opening-amount"
+                  >
+                    Monto inicial de caja (CUP)
+                  </label>
+                  <span className="text-[10px] text-on-surface-variant">
+                    Dato informativo; no modifica el cuadre.
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 bg-surface px-2.5 py-1.5 rounded-lg shrink-0">
+                  <span className="text-xs font-mono text-on-surface-variant font-bold">$</span>
+                  <input
+                    id="cash-opening-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    disabled
+                    value={initialCashAmount}
+                    onChange={(e) => {
+                      setInitialCashAmount(e.target.value);
+                      localStorage.setItem(`ipv_cash_opening_amount_${todayDate}`, e.target.value);
+                    }}
+                    className="w-24 bg-transparent text-right font-mono text-xs font-bold text-on-surface focus:outline-none disabled:opacity-60"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Optional Notes Field */}
@@ -966,33 +868,6 @@ export const CashCloseView: React.FC = () => {
               </button>
             </div>
 
-            {/* Botón Exportar Cierre */}
-            <button
-              onClick={handleExportClose}
-              disabled={isExporting}
-              className="w-full py-3 px-5 rounded-2xl bg-surface neo-raised hover:text-primary active:neo-inset text-xs font-bold text-on-surface transition-all flex items-center justify-between border border-outline-variant/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm group"
-              type="button"
-              title="Exporta el cierre en Excel. PDF está temporalmente deshabilitado."
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0 group-hover:bg-emerald-500/20 transition-colors">
-                  <span className="material-symbols-outlined text-[18px]">
-                    {isExporting ? 'hourglass_top' : 'file_download'}
-                  </span>
-                </div>
-                <div className="flex flex-col text-left">
-                  <span className="text-xs font-bold text-on-surface group-hover:text-primary transition-colors">
-                    {isExporting ? 'Exportando cierre...' : 'Exportar cierre'}
-                  </span>
-                  <span className="text-[10px] text-on-surface-variant font-normal">
-                    Excel (.xlsx) disponible · PDF temporalmente deshabilitado
-                  </span>
-                </div>
-              </div>
-              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-surface neo-inset text-emerald-700">
-                XLSX
-              </span>
-            </button>
           </div>
         </div>
       </div>
@@ -1068,6 +943,10 @@ export const CashCloseView: React.FC = () => {
               <div className="flex justify-between font-bold text-emerald-800 bg-emerald-50 px-2 py-1 rounded">
                 <span>GANANCIAS DEL DÍA:</span>
                 <span>${formatCUP(netProfitToday)} CUP</span>
+              </div>
+              <div className="flex justify-between py-0.5">
+                <span>MONTO INICIAL DE CAJA (INFORMATIVO):</span>
+                <span>${formatCUP(openingAmountValue)} CUP</span>
               </div>
 
               <div className="my-0.5 border-t border-dashed border-neutral-400"></div>
@@ -1259,6 +1138,9 @@ export const CashCloseView: React.FC = () => {
                       <span className="text-[11px] text-on-surface-variant">
                         Facturado IPV: <strong className="font-mono text-on-surface">${formatCUP(c.totalIpv)} CUP</strong>
                       </span>
+                      <span className="text-[10px] text-on-surface-variant">
+                        Monto inicial informativo: <strong className="font-mono text-on-surface">${formatCUP(c.initialCashAmount || 0)} CUP</strong>
+                      </span>
                       {c.note && (
                         <span className="text-[10px] text-on-surface-variant italic">
                           Nota: {c.note}
@@ -1303,95 +1185,6 @@ export const CashCloseView: React.FC = () => {
         </div>
       )}
 
-      {/* Modal: Exportar Cierre de Caja del Día (Preguntar ruta y mostrar detalle) */}
-      {isExportCloseModalOpen && (
-        <div className="fixed inset-0 z-50 bg-inverse-surface/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-surface neo-raised p-6 flex flex-col gap-5 shadow-2xl">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary shrink-0">
-                <span className="material-symbols-outlined text-[26px]">file_download</span>
-              </div>
-              <div className="flex flex-col flex-1">
-                <h3 className="text-base font-bold text-on-surface">Exportar Cierre de Caja del Día</h3>
-                <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
-                  Elija un formato. Se abrirá el selector para guardar el reporte en su computadora.
-                </p>
-              </div>
-            </div>
-
-            <label className="flex flex-col gap-1.5 text-xs font-bold text-on-surface">
-              Formato del reporte
-              <select
-                value={exportFormat}
-                onChange={(event) => setExportFormat(event.target.value as ReportFormat)}
-                className="h-10 px-3 rounded-xl bg-surface neo-inset text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/40"
-              >
-                <option value="pdf" disabled>PDF - temporalmente deshabilitado</option>
-                <option value="excel">Excel (.xlsx) - para analizar los datos</option>
-              </select>
-            </label>
-
-            {/* Resumen del contenido */}
-            <div className="flex flex-col gap-2 p-3.5 rounded-xl bg-surface neo-inset text-xs">
-              <span className="font-bold text-on-surface text-[11px] uppercase tracking-wider text-primary">
-                Contenido del reporte:
-              </span>
-              <div className="grid grid-cols-2 gap-2 mt-1 text-[11px]">
-                <div className="flex items-center gap-1.5 text-on-surface">
-                  <span className="material-symbols-outlined text-primary text-[15px]">check_circle</span>
-                  <span>Arqueo y efectivo físico ({formatCUP(totalGeneralContado)} CUP)</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-on-surface">
-                  <span className="material-symbols-outlined text-primary text-[15px]">check_circle</span>
-                  <span>Ventas brutas IPV ({formatCUP(ipvTotalVendido)} CUP)</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-on-surface col-span-2">
-                  <span className="material-symbols-outlined text-rose-600 text-[15px]">assignment_return</span>
-                  <span className="font-semibold text-rose-700">
-                    Registro de Devoluciones del Día: {devolucionesToday.length} devoluciones (-${formatCUP(totalDevolucionesRefundToday)} CUP) con motivo, cliente y método de reembolso
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 text-on-surface col-span-2">
-                  <span className="material-symbols-outlined text-emerald-600 text-[15px]">account_balance_wallet</span>
-                  <span className="font-semibold text-emerald-700">
-                    Ventas Netas Efectivas: ${formatCUP(Math.max(0, ipvTotalVendido - totalDevolucionesRefundToday))} CUP
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 text-on-surface col-span-2">
-                  <span className="material-symbols-outlined text-emerald-600 text-[15px]">trending_up</span>
-                  <span className="font-semibold text-emerald-700">
-                    Ganancias Netas del Día: ${formatCUP(netProfitToday)} CUP
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-outline-variant/20">
-              <button
-                onClick={() => {
-                  if (!isExporting) setIsExportCloseModalOpen(false);
-                }}
-                disabled={isExporting}
-                className="px-4 py-2.5 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface active:neo-inset disabled:opacity-50 cursor-pointer"
-                type="button"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handlePerformExportClose}
-                disabled={isExporting}
-                className="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-container transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-md shadow-primary/25"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[17px]">
-                  {isExporting ? 'hourglass_top' : 'folder_open'}
-                </span>
-                <span>{isExporting ? 'Exportando...' : `Guardar reporte ${exportFormat === 'pdf' ? 'PDF' : 'Excel'}`}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

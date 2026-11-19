@@ -27,10 +27,17 @@ assert.match(html, /colspan="3"/);
 const businessReportHtml = buildReportHtml({
   title: 'Reporte Comercial - Mipyme (comercio mixto)',
   csvContent: '"Tipo de negocio";"Mipyme (comercio mixto)"\n"Categoría";"Alimentos básicos"',
+  businessName: 'Ferretería Central',
+  ownerName: 'Ana Pérez',
+  businessProfileName: 'Mipyme (comercio mixto)',
+  logoDataUrl: 'data:image/png;base64,Zm9v',
 });
 assert.match(businessReportHtml, /Reporte Comercial - Mipyme/);
 assert.match(businessReportHtml, /Mipyme \(comercio mixto\)/);
 assert.match(businessReportHtml, /Alimentos básicos/);
+assert.match(businessReportHtml, /Ferretería Central/);
+assert.match(businessReportHtml, /Ana Pérez/);
+assert.match(businessReportHtml, /data:image\/png;base64,Zm9v/);
 assert.throws(() => parseDelimitedText('"celda sin cerrar', ';'));
 
 let exposedApi;

@@ -168,13 +168,9 @@ export const IPVView: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {/* KPI 1: Total Vendido */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative overflow-hidden group">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
               <span className="material-symbols-outlined text-xl">payments</span>
-            </div>
-            <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-surface-container text-primary">
-              <span className="material-symbols-outlined text-[14px]">calendar_today</span>
-              <span>{selectedIpvDate}</span>
             </div>
           </div>
           <div className="mt-4">
@@ -212,12 +208,9 @@ export const IPVView: React.FC = () => {
 
         {/* KPI 2: Unidades Vendidas */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative group">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-tertiary">
               <span className="material-symbols-outlined text-xl">shopping_cart_checkout</span>
-            </div>
-            <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">
-              <span>{activeCount} con venta</span>
             </div>
           </div>
           <div className="mt-4">
@@ -236,12 +229,9 @@ export const IPVView: React.FC = () => {
 
         {/* KPI 3: Devoluciones (reordenado a tercera posición) */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between relative group">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-600">
               <span className="material-symbols-outlined text-xl">assignment_return</span>
-            </div>
-            <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700">
-              <span>{returnsForDate.length} {returnsForDate.length === 1 ? 'dev.' : 'devs.'}</span>
             </div>
           </div>
           <div className="mt-4">
@@ -260,11 +250,10 @@ export const IPVView: React.FC = () => {
               </span>
               <button
                 onClick={() => setCurrentView('devoluciones')}
-                className="text-amber-700 hover:underline font-semibold flex items-center gap-0.5 cursor-pointer"
+                className="text-amber-700 font-semibold cursor-pointer"
                 type="button"
               >
                 <span>Ver</span>
-                <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
               </button>
             </div>
           </div>

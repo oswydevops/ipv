@@ -2,6 +2,7 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import { ViewType } from '../types';
 import { APP_NAME, APP_SUBTITLE, APP_VERSION } from '../config';
+import { isDefectiveMermaProduct } from '../utils/productInventory';
 
 interface NavItem {
   id: ViewType;
@@ -26,7 +27,9 @@ export const Sidebar: React.FC = () => {
     navigateToActivation,
   } = useApp();
 
-  const lowStockCount = products.filter((p) => p.status === 'low' || p.status === 'out').length;
+  const lowStockCount = products.filter(
+    (p) => (p.status === 'low' || p.status === 'out') && !(p.stock === 0 && isDefectiveMermaProduct(p))
+  ).length;
   const isClosePending = (sales.length > 0 || ipvTotalVendido > 0) && !isCurrentDayClosed;
   const damagedReturnsToday = returns.filter((r) => r.date === todayDate && r.hasDamagedItems).length;
 

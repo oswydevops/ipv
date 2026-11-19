@@ -100,8 +100,10 @@ test('cierre de caja: calcula diferencia y bloquea el día', () => {
   const ipv = repo.getIpvDay(D1);
   const close = repo.closeDay(D1, {
     denominations: [{ id: 'd1000', label: '1000', value: 1000, count: 3 }, { id: 'd100', label: '100', value: 100, count: 2 }],
+    initialCashAmount: 125,
     menoresAmount: 50, transferenciasAmount: 6,
   });
+  assert.strictEqual(close.initialCashAmount, 125);
   assert.strictEqual(close.totalContado, 3000 + 200 + 50 + 6);
   assert.strictEqual(close.totalIpv, ipv.totalVendido);
   assert.strictEqual(close.diferencia, 3256 - 3321);

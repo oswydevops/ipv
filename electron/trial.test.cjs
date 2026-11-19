@@ -11,9 +11,9 @@ const stateFile = path.join(directory, 'trial.json');
 
 try {
   const firstDay = Date.UTC(2026, 0, 1);
-  assert.deepStrictEqual(getTrialStatus(stateFile, firstDay), { isActive: true, daysRemaining: 7 });
+  assert.deepStrictEqual(getTrialStatus(stateFile, firstDay), { isActive: true, daysRemaining: 14 });
   assert.deepStrictEqual(
-    getTrialStatus(stateFile, firstDay + 6 * 24 * 60 * 60 * 1000),
+    getTrialStatus(stateFile, firstDay + 13 * 24 * 60 * 60 * 1000),
     { isActive: true, daysRemaining: 1 }
   );
   assert.deepStrictEqual(

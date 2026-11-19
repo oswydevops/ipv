@@ -75,6 +75,7 @@ export interface DayClose {
   date: string;
   closedAt: string;
   denominations: DenominationInput[];
+  initialCashAmount: number;
   menoresAmount: number;
   transferenciasAmount: number;
   totalContado: number;
@@ -116,7 +117,6 @@ export interface IpvApi {
   license?: {
     status(): Promise<LicenseStatus>;
     activate(code: string): Promise<LicenseStatus>;
-    deactivate(): Promise<LicenseStatus>;
     trialStatus(): Promise<{ isActive: boolean; daysRemaining: number }>;
   };
   products: {
@@ -140,7 +140,13 @@ export interface IpvApi {
     listCloses(limit?: number): Promise<DayClose[]>;
     closeDay(
       date: string,
-      input: { denominations: DenominationInput[]; menoresAmount: number; transferenciasAmount: number; note?: string }
+      input: {
+        denominations: DenominationInput[];
+        initialCashAmount?: number;
+        menoresAmount: number;
+        transferenciasAmount: number;
+        note?: string;
+      }
     ): Promise<DayClose>;
     reopenDay(date: string): Promise<{ date: string }>;
   };
@@ -155,6 +161,10 @@ export interface IpvApi {
       date: string;
       format: 'excel' | 'pdf';
       businessProfileName?: string;
+      businessName?: string;
+      ownerName?: string;
+      logoDataUrl?: string;
+      denominations?: Array<{ id: string; label: string; value: number; count: number }>;
     }): Promise<{ canceled: boolean; path?: string; fecha?: string; format?: 'excel' | 'pdf' }>;
     exportarTabla(input: {
       title: string;
@@ -163,6 +173,9 @@ export interface IpvApi {
       delimiter?: ',' | ';';
       format: 'excel' | 'pdf';
       businessProfileName?: string;
+      businessName?: string;
+      ownerName?: string;
+      logoDataUrl?: string;
     }): Promise<{ canceled: boolean; path?: string }>;
     exportarCierre(date: string): Promise<{ ok: boolean; pdfPath: string; excelPath: string; directory?: string; fecha: string }>;
   };

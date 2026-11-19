@@ -87,7 +87,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "language": "3082",
-      "artifactName": "FerreStock-Setup.${ext}"
+      "artifactName": "FerreStock-Setup-${version}-${arch}.${ext}"
     },
     "publish": [
       {

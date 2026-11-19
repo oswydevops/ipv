@@ -17,7 +17,6 @@ contextBridge.exposeInMainWorld('api', {
   license: {
     status: () => call('license:status'),
     activate: (code) => call('license:activate', code),
-    deactivate: () => call('license:deactivate'),
     trialStatus: () => call('license:trialStatus'),
   },
   products: {

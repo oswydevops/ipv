@@ -60,6 +60,7 @@ function run() {
   );
   assert.strictEqual(annualMonthReminder.daysRemaining, 30);
   assert.strictEqual(annualMonthReminder.licensePeriod, 'annual');
+  assert.strictEqual(annualMonthReminder.licenseTypeName, 'Anual');
   const annualReminder = validateActivationCode(
     annualLicense.code,
     installationId,
@@ -71,6 +72,16 @@ function run() {
   assert.strictEqual(annualReminder.daysRemaining, 14);
   assert.strictEqual(annualReminder.licensePeriod, 'annual');
 
+  const annualDurationLicense = makeLicense(keyPair, installationId, '2026-01-01', 365, 1);
+  const annualDurationResult = validateActivationCode(
+    annualDurationLicense.code,
+    installationId,
+    '2026-10-23',
+    keyPair.publicKey
+  );
+  assert.strictEqual(annualDurationResult.licenseTypeName, 'Anual');
+  assert.strictEqual(annualDurationResult.licensePeriod, 'annual');
+
   const exclusiveLicense = makeLicense(keyPair, installationId, '2026-10-20', 0, 3);
   const exclusive = validateActivationCode(
     exclusiveLicense.code,
@@ -79,7 +90,7 @@ function run() {
     keyPair.publicKey
   );
   assert.strictEqual(exclusive.ok, true);
-  assert.strictEqual(exclusive.licenseTypeName, 'Exclusiva');
+  assert.strictEqual(exclusive.licenseTypeName, 'Permanente');
   assert.strictEqual(exclusive.licensePeriod, 'exclusive');
 
   const lifetimeLicense = makeLicense(keyPair, installationId, '2026-10-20', 0);
@@ -92,6 +103,7 @@ function run() {
   assert.strictEqual(lifetime.ok, true);
   assert.strictEqual(lifetime.expiryDate, null);
   assert.strictEqual(lifetime.isLifetime, true);
+  assert.strictEqual(lifetime.licenseTypeName, 'Permanente');
   assert.strictEqual(lifetime.licensePeriod, 'lifetime');
 
   const portableLicense = validateActivationCode(
@@ -235,16 +247,6 @@ function run() {
       () => handlers['products:create']({ name: 'No debe escribirse' }),
       (error) => error.code === 'CLOCK_ROLLBACK' && error.message.includes('2026-10-25')
     );
-
-    store.repo.clearLicense();
-    const deactivatedLicense = store.repo.getLicenseRecord();
-    assert.strictEqual(deactivatedLicense.payload, null);
-    assert.strictEqual(deactivatedLicense.signature, null);
-    assert.strictEqual(deactivatedLicense.ultima_fecha_vista, '2026-10-25');
-    assert.strictEqual(store.repo.observeLicenseDate().clockRollback, true);
-    const trialClockStatus = handlers['license:status']();
-    assert.strictEqual(trialClockStatus.status, 'clock_rollback');
-    assert.strictEqual(trialClockStatus.hasLicense, false);
 
     store.close();
     store = openDatabase(dbFile, {

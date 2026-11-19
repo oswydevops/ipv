@@ -139,10 +139,6 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
 
   const handlers = {
     'license:status': () => getLicenseStatus(),
-    'license:deactivate': () => {
-      repo.clearLicense();
-      return getLicenseStatus();
-    },
     'license:trialStatus': () => {
       if (!trialStatePath) throw new Error('No se configuró el almacenamiento de la prueba gratuita.');
       return getTrialStatus(trialStatePath);
@@ -342,9 +338,48 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
       ) {
         throw new DomainError('INVALID', 'El tipo de negocio del reporte no es válido.');
       }
+      if (
+        ['businessName', 'ownerName'].some((field) =>
+          input[field] !== undefined &&
+          (typeof input[field] !== 'string' || input[field].length > 120)
+        ) ||
+        (input.logoDataUrl !== undefined &&
+          (typeof input.logoDataUrl !== 'string' ||
+            input.logoDataUrl.length > 100000 ||
+            !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(input.logoDataUrl)))
+      ) {
+        throw new DomainError('INVALID', 'La información del negocio del reporte no es válida.');
+      }
+      let denominations;
+      if (input.denominations !== undefined) {
+        if (!Array.isArray(input.denominations) || input.denominations.length > 50) {
+          throw new DomainError('INVALID', 'El desglose de denominaciones no es válido.');
+        }
+        denominations = input.denominations.map((item) => {
+          const value = Number(item && item.value);
+          const count = Number(item && item.count);
+          if (
+            !item ||
+            typeof item.id !== 'string' ||
+            typeof item.label !== 'string' ||
+            !item.label.trim() ||
+            item.label.length > 120 ||
+            !Number.isFinite(value) ||
+            value < 0 ||
+            !Number.isFinite(count) ||
+            count < 0
+          ) {
+            throw new DomainError('INVALID', 'El desglose de denominaciones no es válido.');
+          }
+          return { id: item.id, label: item.label, value, count };
+        });
+      }
       const targetDate = input.date || repo.today();
-      const resumen = getResumenDia(targetDate, db);
+      const resumen = getResumenDia(targetDate, db, denominations);
       resumen.tipoNegocio = input.businessProfileName || '';
+      resumen.businessName = input.businessName || '';
+      resumen.ownerName = input.ownerName || '';
+      resumen.logoDataUrl = input.logoDataUrl || '';
       const paths = getReportPaths(targetDate);
       const format = input.format;
       const extension = format === 'excel' ? 'xlsx' : 'pdf';
@@ -375,6 +410,14 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         ![',', ';'].includes(input.delimiter || ';') ||
         (input.businessProfileName !== undefined &&
           (typeof input.businessProfileName !== 'string' || input.businessProfileName.length > 120)) ||
+        (input.businessName !== undefined &&
+          (typeof input.businessName !== 'string' || input.businessName.length > 120)) ||
+        (input.ownerName !== undefined &&
+          (typeof input.ownerName !== 'string' || input.ownerName.length > 120)) ||
+        (input.logoDataUrl !== undefined &&
+          (typeof input.logoDataUrl !== 'string' ||
+            input.logoDataUrl.length > 100000 ||
+            !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(input.logoDataUrl))) ||
         input.csvContent.length > 20 * 1024 * 1024
       ) {
         throw new DomainError('INVALID', 'No se pudieron preparar los datos del reporte.');
@@ -397,9 +440,15 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         ? saveResult.filePath
         : `${saveResult.filePath}.${extension}`;
       const rows = parseDelimitedText(input.csvContent, input.delimiter || ';');
-      if (input.businessProfileName) {
-        rows.splice(1, 0, ['Tipo de negocio', input.businessProfileName]);
-      }
+      const brandingRows = [
+        ['', 'FerreStock'],
+        ['', `Negocio: ${input.businessName || 'No configurado'}`],
+        ['', `Propietario: ${input.ownerName || 'No configurado'}`],
+        ...(input.businessProfileName ? [['', `Tipo de negocio: ${input.businessProfileName}`]] : []),
+        [],
+      ];
+      rows.unshift(...brandingRows);
+      const brandingRowCount = brandingRows.length;
 
       if (format === 'excel') {
         const ExcelJS = require('exceljs');
@@ -407,17 +456,30 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
         workbook.creator = 'FerreStock';
         workbook.created = new Date();
         const sheet = workbook.addWorksheet('Reporte', {
-          views: [{ state: 'frozen', ySplit: 1 }],
+          views: [{ state: 'frozen', ySplit: brandingRowCount + 1 }],
           pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
         });
-        const columnCount = Math.max(1, ...rows.map((row) => row.length));
+        const columnCount = Math.max(2, ...rows.map((row) => row.length));
         sheet.columns = Array.from({ length: columnCount }, (_, index) => {
           const width = Math.min(42, Math.max(12, ...rows.map((row) => String(row[index] || '').length + 2)));
           return { width };
         });
+        let logoImageId;
+        if (input.logoDataUrl) {
+          logoImageId = workbook.addImage({
+            base64: input.logoDataUrl.slice(input.logoDataUrl.indexOf(',') + 1),
+            extension: 'png',
+          });
+        }
         rows.forEach((row, index) => {
           const excelRow = sheet.addRow(row);
-          if (index === 0) {
+          if (index < brandingRowCount) {
+            excelRow.height = index === 0 ? 24 : 18;
+            const brandCell = excelRow.getCell(2);
+            brandCell.font = index === 0
+              ? { bold: true, size: 14, color: { argb: 'FF0F172A' } }
+              : { size: 10, color: { argb: 'FF475569' } };
+          } else if (index === brandingRowCount) {
             excelRow.font = { bold: true, size: 15, color: { argb: 'FFFFFFFF' } };
             excelRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
           } else if (row.filter((cell) => cell !== '').length === 1) {
@@ -434,6 +496,9 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
             };
           });
         });
+        if (logoImageId !== undefined) {
+          sheet.addImage(logoImageId, { tl: { col: 0, row: 0 }, ext: { width: 48, height: 48 } });
+        }
         await workbook.xlsx.writeFile(outputPath);
       } else {
         const { BrowserWindow } = require('electron');
@@ -452,6 +517,10 @@ function buildHandlers(repo, { dialog, getWindow, fs, db, isPackaged = true, tri
             title: input.title,
             csvContent: input.csvContent,
             delimiter: input.delimiter || ';',
+            businessName: input.businessName || '',
+            ownerName: input.ownerName || '',
+            businessProfileName: input.businessProfileName || '',
+            logoDataUrl: input.logoDataUrl || '',
           });
           await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
           const pdf = await printWindow.webContents.printToPDF({

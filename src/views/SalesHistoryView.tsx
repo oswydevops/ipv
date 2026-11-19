@@ -1,8 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { SaleRecord, SaleItem } from '../types';
+import { SaleRecord } from '../types';
 import { saveFileWithPicker } from '../utils/fileSaver';
-import { exportReportFile, ReportFormat } from '../utils/reportExporter';
 
 type PeriodFilter = 'diarias' | 'semanales' | 'mensual';
 
@@ -86,7 +85,7 @@ export const SalesHistoryView: React.FC = () => {
       if (paymentFilter !== 'all' && s.paymentMethod !== paymentFilter) return false;
 
       // Estado anulado
-      const isVoided = (s as any).voided;
+      const isVoided = s.voided;
       if (statusFilter === 'active' && isVoided) return false;
       if (statusFilter === 'voided' && !isVoided) return false;
 
@@ -114,7 +113,7 @@ export const SalesHistoryView: React.FC = () => {
     let voidedTickets = 0;
 
     finalFilteredSales.forEach((s) => {
-      const isVoided = (s as any).voided;
+      const isVoided = s.voided;
       if (isVoided) {
         voidedTickets++;
       } else {
@@ -271,60 +270,10 @@ export const SalesHistoryView: React.FC = () => {
     showToast('Descarga Exitosa', `Se descargó el comprobante del Ticket ${sale.ticketNumber}.`);
   };
 
-  // Exportar lista de ventas a CSV
-  const handleExportCSV = async (format: ReportFormat) => {
-    const productsById = new Map(products.map((product) => [product.id, product]));
-    const productsByCode = new Map(products.map((product) => [product.code, product]));
-    const headers = [
-      'Ticket',
-      'Fecha',
-      'Hora',
-      'Estado',
-      'Metodo_Pago',
-      'Total_CUP',
-      'Efectivo_CUP',
-      'Transferencia_CUP',
-      'Articulos',
-      'Nota',
-    ];
-
-    const rows = finalFilteredSales.map((s) => [
-      `"${s.ticketNumber}"`,
-      `"${s.date}"`,
-      `"${s.timestamp || ''}"`,
-      `"${(s as any).voided ? 'Anulada' : 'Completada'}"`,
-      `"${s.paymentMethod}"`,
-      s.total.toFixed(2),
-      (s.efectivoAmount || 0).toFixed(2),
-      (s.transferenciaAmount || 0).toFixed(2),
-      `"${(s.items || []).map((it) => {
-        const product = productsById.get(it.productId) || productsByCode.get(it.code);
-        const taxonomy = [product?.category, product?.subcategory].filter(Boolean).join(' / ');
-        return `${it.quantity} ${it.um || product?.um || 'u'} ${it.name}${taxonomy ? ` [${taxonomy}]` : ''}`;
-      }).join('; ').replace(/"/g, '""')}"`,
-      `"${(s.note || '').replace(/"/g, '""')}"`,
-    ]);
-
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const result = await exportReportFile({
-      title: 'Historial de Ventas',
-      fileName: `Historial_Ventas_${periodFilter}_${new Date().toISOString().slice(0, 10)}.xlsx`,
-      csvContent,
-      delimiter: ',',
-      format,
-    });
-    if (result.canceled) return;
-    if (result.error) {
-      showToast('Error al exportar historial', result.error, 'error');
-      return;
-    }
-    showToast('Historial Exportado', `Se exportaron ${finalFilteredSales.length} tickets en ${format === 'pdf' ? 'PDF' : 'Excel'}.`);
-  };
-
   return (
     <div className="flex flex-col w-full gap-7 select-none pb-12">
       {/* Header section */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+      <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2.5">
             <h1 className="text-2xl lg:text-3xl font-headline font-bold text-on-surface tracking-tight">
@@ -340,24 +289,6 @@ export const SalesHistoryView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => void handleExportCSV('excel')}
-            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700 active:neo-inset transition-all cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[19px]">table_view</span>
-            <span>Exportar Excel</span>
-          </button>
-          <button
-            onClick={() => void handleExportCSV('pdf')}
-            className="h-11 px-4 rounded-xl bg-surface neo-raised flex items-center gap-2 text-xs font-semibold text-orange-600 hover:text-orange-700 active:neo-inset transition-all cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[19px]">picture_as_pdf</span>
-            <span>PDF</span>
-          </button>
-        </div>
       </div>
 
       {/* Tabs de Período: Diarias | Semanales | Mensual */}
@@ -467,7 +398,7 @@ export const SalesHistoryView: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
         {/* Total Facturado */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
                 Total Facturado ({periodFilter})
@@ -478,9 +409,6 @@ export const SalesHistoryView: React.FC = () => {
                 </span>
                 <span className="text-xs font-semibold text-primary font-mono">CUP</span>
               </div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-[22px]">payments</span>
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15 text-xs text-on-surface-variant">
@@ -493,7 +421,7 @@ export const SalesHistoryView: React.FC = () => {
 
         {/* Ventas en Efectivo */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
                 Recaudado en Efectivo
@@ -504,9 +432,6 @@ export const SalesHistoryView: React.FC = () => {
                 </span>
                 <span className="text-xs font-semibold text-emerald-600 font-mono">CUP</span>
               </div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-emerald-600">
-              <span className="material-symbols-outlined text-[22px]">point_of_sale</span>
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15 text-xs text-on-surface-variant">
@@ -519,7 +444,7 @@ export const SalesHistoryView: React.FC = () => {
 
         {/* Ventas por Transferencia */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
                 Recaudado en Transferencias
@@ -530,9 +455,6 @@ export const SalesHistoryView: React.FC = () => {
                 </span>
                 <span className="text-xs font-semibold text-primary font-mono">CUP</span>
               </div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-[22px]">account_balance</span>
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15 text-xs text-on-surface-variant">
@@ -545,7 +467,7 @@ export const SalesHistoryView: React.FC = () => {
 
         {/* Ticket Promedio */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
                 Ticket Promedio
@@ -556,9 +478,6 @@ export const SalesHistoryView: React.FC = () => {
                 </span>
                 <span className="text-xs font-semibold text-primary font-mono">CUP</span>
               </div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-indigo-500">
-              <span className="material-symbols-outlined text-[22px]">analytics</span>
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15 text-xs text-on-surface-variant">

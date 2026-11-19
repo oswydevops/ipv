@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { isDefectiveMermaProduct } from '../utils/productInventory';
 import { ViewType } from '../types';
 
 interface SystemNotification {
@@ -39,7 +40,7 @@ export const Header: React.FC = () => {
     : licenseReadOnly
       ? licenseStatus === 'clock_rollback' ? 'Corregir hora del sistema' : 'Licencia vencida'
       : isTrialActive
-        ? 'Prueba gratuita 7 días'
+        ? 'Prueba gratuita 14 días'
         : 'Activación requerida';
 
   // Lista de IDs de notificaciones descartadas por el usuario
@@ -71,7 +72,9 @@ export const Header: React.FC = () => {
     const list: SystemNotification[] = [];
 
     // 1. Stock agotado (Crítico)
-    const outProducts = products.filter((p) => p.status === 'out' || p.stock === 0);
+    const outProducts = products.filter(
+      (p) => (p.status === 'out' || p.stock === 0) && !isDefectiveMermaProduct(p)
+    );
     if (outProducts.length > 0) {
       list.push({
         id: `stock-out-${outProducts.length}`,
@@ -120,7 +123,7 @@ export const Header: React.FC = () => {
     }
 
     // 4. Ventas anuladas en la jornada
-    const voidedSales = sales.filter((s) => (s as any).voided);
+    const voidedSales = sales.filter((s) => s.voided);
     if (voidedSales.length > 0) {
       list.push({
         id: `voided-sales-${voidedSales.length}`,

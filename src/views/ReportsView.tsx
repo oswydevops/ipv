@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { IPVRow, ReturnRecord } from '../types';
 import { getMermaDestination, getReturnItemMermas } from '../utils/returnDestinations';
 import { exportReportFile, ReportFormat } from '../utils/reportExporter';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
 interface BarItem {
   label: string;
@@ -11,11 +12,6 @@ interface BarItem {
   formatted: string;
   heightPct: number;
   isPeak?: boolean;
-}
-
-interface TrendPoint {
-  label: string;
-  value: number;
 }
 
 interface MonthOption {
@@ -46,7 +42,16 @@ const WEEKS_DEF: { key: WeekKey; label: string; startDay: number; endDay: number
 ];
 
 export const ReportsView: React.FC = () => {
-  const { showToast, sales = [], ipvRows = [], products = [], returns = [], mermaItems = [], todayDate } = useApp();
+  const {
+    showToast,
+    sales = [],
+    ipvRows = [],
+    products = [],
+    returns = [],
+    mermaItems = [],
+    todayDate,
+    activationContactInfo,
+  } = useApp();
 
   const [periodTab, setPeriodTab] = useState<'semanal' | 'mensual' | 'trimestral'>('semanal');
   const [tableTab, setTableTab] = useState<'productos' | 'menos-vendidos' | 'devoluciones'>('productos');
@@ -56,6 +61,7 @@ export const ReportsView: React.FC = () => {
   const [page, setPage] = useState(1);
   const [returnsPage, setReturnsPage] = useState(1);
   const [returnsSearch, setReturnsSearch] = useState('');
+  const [comparisonProductId, setComparisonProductId] = useState('');
 
   // Fecha de referencia actual
   const refDate = useMemo(() => {
@@ -164,16 +170,16 @@ export const ReportsView: React.FC = () => {
   const periodFilteredSales = useMemo(() => {
     if (periodTab === 'trimestral') {
       const allowedKeys = new Set(availableMonths.slice(0, 3).map((m) => m.key));
-      return sales.filter((s) => s.date && !(s as any).voided && allowedKeys.has(s.date.slice(0, 7)));
+      return sales.filter((s) => s.date && !s.voided && allowedKeys.has(s.date.slice(0, 7)));
     }
 
     if (periodTab === 'mensual') {
-      return sales.filter((s) => s.date && !(s as any).voided && s.date.startsWith(currentMonthOption.key));
+      return sales.filter((s) => s.date && !s.voided && s.date.startsWith(currentMonthOption.key));
     }
 
     // Semanal
     return sales.filter((s) => {
-      if (!s.date || (s as any).voided || !s.date.startsWith(currentMonthOption.key)) return false;
+      if (!s.date || s.voided || !s.date.startsWith(currentMonthOption.key)) return false;
       const dayNum = parseInt(s.date.split('-')[2], 10);
       return dayNum >= weekStartDay && dayNum <= weekEndDay;
     });
@@ -274,17 +280,22 @@ export const ReportsView: React.FC = () => {
     const totals = {
       defectiveSaleUnits: 0,
       writtenOffUnits: 0,
+      writtenOffLoss: 0,
       warehouseUnits: 0,
       stockUnits: 0,
     };
     periodFilteredMermas.forEach((item) => {
       if (item.status === 'reincorporado_con_precio') totals.defectiveSaleUnits += item.quantity;
-      if (item.status === 'baja_definitiva') totals.writtenOffUnits += item.quantity;
+      if (item.status === 'baja_definitiva') {
+        totals.writtenOffUnits += item.quantity;
+        const purchasePrice = products.find((product) => product.id === item.productId)?.purchasePrice || 0;
+        totals.writtenOffLoss += item.quantity * purchasePrice;
+      }
       if (item.status === 'devuelto_a_almacen') totals.warehouseUnits += item.quantity;
       if (item.status === 'reintegrado_a_stock') totals.stockUnits += item.quantity;
     });
     return totals;
-  }, [periodFilteredMermas]);
+  }, [periodFilteredMermas, products]);
 
   // Ingreso neto real (Ventas Brutas - Devoluciones Totales)
   const periodNetRevenue = Math.max(0, periodTotalRevenue - returnsStats.totalRefund);
@@ -312,6 +323,88 @@ export const ReportsView: React.FC = () => {
     }, 0),
     [products]
   );
+
+  const comparisonMetrics = useMemo(() => {
+    const selectedProduct = products.find((product) => product.id === comparisonProductId);
+    if (!selectedProduct) {
+      return {
+        product: null,
+        writtenOffLoss: returnDestinationStats.writtenOffLoss,
+        netProfit,
+        investment: totalInventoryInvestment,
+      };
+    }
+
+    const productSales = periodFilteredSales.reduce(
+      (total, sale) =>
+        total +
+        (sale.items || [])
+          .filter((item) => item.productId === selectedProduct.id)
+          .reduce((itemTotal, item) => itemTotal + (Number(item.subtotal) || 0), 0),
+      0
+    );
+    const productCost = periodFilteredSales.reduce(
+      (total, sale) =>
+        total +
+        (sale.items || [])
+          .filter((item) => item.productId === selectedProduct.id)
+          .reduce(
+            (itemTotal, item) =>
+              itemTotal + (Number(item.purchasePrice) || 0) * (Number(item.quantity) || 1),
+            0
+          ),
+      0
+    );
+    const productRefunds = periodFilteredReturns.reduce(
+      (total, record) =>
+        total +
+        (record.items || [])
+          .filter((item) => item.productId === selectedProduct.id)
+          .reduce((itemTotal, item) => itemTotal + (Number(item.refundAmount) || 0), 0),
+      0
+    );
+    const writtenOffLoss = periodFilteredMermas.reduce((total, item) => {
+      if (item.productId !== selectedProduct.id || item.status !== 'baja_definitiva') return total;
+      return total + item.quantity * (Number(selectedProduct.purchasePrice) || 0);
+    }, 0);
+    const inventoryQuantity =
+      (Number(selectedProduct.stock) || 0) + (Number(selectedProduct.almacenStock) || 0);
+
+    return {
+      product: selectedProduct,
+      writtenOffLoss,
+      netProfit: Math.max(0, productSales - productRefunds) - productCost,
+      investment: (Number(selectedProduct.purchasePrice) || 0) * inventoryQuantity,
+    };
+  }, [
+    comparisonProductId,
+    products,
+    periodFilteredSales,
+    periodFilteredReturns,
+    periodFilteredMermas,
+    returnDestinationStats.writtenOffLoss,
+    netProfit,
+    totalInventoryInvestment,
+  ]);
+
+  const comparisonChartData = [
+    {
+      name: 'Pérdidas por bajas',
+      value: Math.abs(comparisonMetrics.writtenOffLoss),
+      color: '#e11d48',
+    },
+    {
+      name: 'Ganancias netas',
+      value: Math.abs(comparisonMetrics.netProfit),
+      color: '#059669',
+    },
+    {
+      name: 'Inversión total',
+      value: Math.abs(comparisonMetrics.investment),
+      color: '#d97706',
+    },
+  ];
+  const comparisonMagnitude = comparisonChartData.reduce((total, item) => total + item.value, 0);
 
   // Mapa de unidades devueltas por producto
   const returnedUnitsByProduct = useMemo(() => {
@@ -461,95 +554,6 @@ export const ReportsView: React.FC = () => {
     weekDateRangeLabel,
     todayDate,
     ipvTotalVendidoToday,
-    periodTotalRevenue,
-  ]);
-
-  // Curva de tendencia dinámica (SVG paths)
-  const curveData = useMemo(() => {
-    const rawPoints: TrendPoint[] = barData.items.map((b) => ({
-      label: b.label,
-      value: b.value,
-    }));
-
-    const maxVal = Math.max(...rawPoints.map((p) => p.value), 0);
-    const count = rawPoints.length;
-    const width = 700;
-    const paddingX = 40;
-    const baseY = 210;
-    const peakY = 50;
-
-    if (maxVal === 0 || count < 2) {
-      const flatDots = rawPoints.map((_, idx) => ({
-        cx: paddingX + (idx / Math.max(1, count - 1)) * (width - 2 * paddingX),
-        cy: baseY,
-      }));
-
-      return {
-        title: `Curva de Tendencia - ${periodTab === 'trimestral' ? 'Trimestre' : periodTab === 'mensual' ? currentMonthOption.name : selectedWeekDef.label}`,
-        subtitle: 'Evolución de facturación y devoluciones del periodo seleccionado',
-        labels: rawPoints.map((p) => p.label),
-        peakText: '0.00 CUP',
-        peakCoord: { x: width / 2, y: baseY },
-        areaPath: `M ${paddingX} ${baseY} L ${width - paddingX} ${baseY} L ${width - paddingX} 225 L ${paddingX} 225 Z`,
-        linePath: `M ${paddingX} ${baseY} L ${width - paddingX} ${baseY}`,
-        movingAvgPath: `M ${paddingX} ${baseY} L ${width - paddingX} ${baseY}`,
-        dots: flatDots,
-        varianceText: 'Sin fluctuaciones (esperando primeras ventas)',
-        avgTrans: `${periodFilteredSales.length} tickets registrados`,
-      };
-    }
-
-    const dots = rawPoints.map((p, idx) => {
-      const cx = paddingX + (idx / (count - 1)) * (width - 2 * paddingX);
-      const cy = baseY - (p.value / maxVal) * (baseY - peakY);
-      return { cx, cy };
-    });
-
-    let linePath = `M ${dots[0].cx} ${dots[0].cy}`;
-    for (let i = 1; i < dots.length; i++) {
-      const prev = dots[i - 1];
-      const curr = dots[i];
-      const midX = (prev.cx + curr.cx) / 2;
-      linePath += ` C ${midX} ${prev.cy}, ${midX} ${curr.cy}, ${curr.cx} ${curr.cy}`;
-    }
-
-    const areaPath = `${linePath} L ${dots[dots.length - 1].cx} 225 L ${dots[0].cx} 225 Z`;
-
-    const movingDots = dots.map((d, i) => {
-      const prevVal = i > 0 ? dots[i - 1].cy : d.cy;
-      const nextVal = i < dots.length - 1 ? dots[i + 1].cy : d.cy;
-      return { cx: d.cx, cy: (prevVal + d.cy + nextVal) / 3 };
-    });
-
-    let movingAvgPath = `M ${movingDots[0].cx} ${movingDots[0].cy}`;
-    for (let i = 1; i < movingDots.length; i++) {
-      movingAvgPath += ` L ${movingDots[i].cx} ${movingDots[i].cy}`;
-    }
-
-    let peakIdx = 0;
-    rawPoints.forEach((p, idx) => {
-      if (p.value > rawPoints[peakIdx].value) peakIdx = idx;
-    });
-
-    return {
-      title: `Curva de Tendencia - ${periodTab === 'trimestral' ? 'Trimestre' : periodTab === 'mensual' ? currentMonthOption.name : selectedWeekDef.label}`,
-      subtitle: 'Evolución de facturación y transacciones operativas',
-      labels: rawPoints.map((p) => p.label),
-      peakText: `Pico: ${maxVal.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`,
-      peakCoord: { x: dots[peakIdx].cx, y: dots[peakIdx].cy },
-      areaPath,
-      linePath,
-      movingAvgPath,
-      dots,
-      varianceText: `Facturación registrada: ${periodFilteredSales.length} ventas`,
-      avgTrans: `Promedio: ${(periodTotalRevenue / Math.max(1, count)).toFixed(2)} CUP / unidad`,
-    };
-  }, [
-    barData.items,
-    periodTab,
-    currentMonthOption.name,
-    selectedWeekDef.label,
-    periodFilteredSales.length,
     periodTotalRevenue,
   ]);
 
@@ -744,6 +748,7 @@ export const ReportsView: React.FC = () => {
       `Cantidad de Devoluciones Procesadas,${returnsStats.count}`,
       `Unidades Devueltas Totales,${returnsStats.returnedUnits}`,
       `Unidades en Mal Estado (Merma),${returnsStats.damagedUnits}`,
+      `Pérdida por Artículos dados de Baja (CUP),${returnDestinationStats.writtenOffLoss.toFixed(2)}`,
       `Margen Bruto,${marginPct}%`,
       `Ganancias Netas (CUP),${netProfit.toFixed(2)}`,
       '',
@@ -809,6 +814,8 @@ export const ReportsView: React.FC = () => {
       csvContent,
       delimiter: ',',
       format,
+      businessName: activationContactInfo.businessName.trim(),
+      ownerName: activationContactInfo.userName.trim(),
     });
     if (result.canceled) return;
     if (result.error) {
@@ -1054,9 +1061,6 @@ export const ReportsView: React.FC = () => {
                 <span className="text-xs font-semibold text-primary font-mono">CUP</span>
               </div>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-[22px]">payments</span>
-            </div>
           </div>
           <div className="flex items-center gap-2 mt-4 pt-3 border-t border-outline-variant/15">
             <span
@@ -1092,9 +1096,6 @@ export const ReportsView: React.FC = () => {
                 <span className="text-xs font-semibold text-rose-500 font-mono">CUP</span>
               </div>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-rose-500">
-              <span className="material-symbols-outlined text-[22px]">assignment_return</span>
-            </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15">
             <span className="text-[11px] text-on-surface-variant font-medium truncate">
@@ -1127,9 +1128,6 @@ export const ReportsView: React.FC = () => {
                 <span className="text-xs font-semibold text-emerald-600 font-mono">CUP</span>
               </div>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-emerald-600">
-              <span className="material-symbols-outlined text-[22px]">account_balance_wallet</span>
-            </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-outline-variant/15">
             <span className="text-[11px] text-on-surface-variant font-medium">
@@ -1151,9 +1149,6 @@ export const ReportsView: React.FC = () => {
               <span className="text-2xl font-headline font-bold text-on-surface tracking-tight font-mono mt-0.5">
                 {kpis.margin}
               </span>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-[22px]">pie_chart</span>
             </div>
           </div>
           <div className="flex flex-col gap-1 mt-4 pt-3 border-t border-outline-variant/15">
@@ -1181,9 +1176,6 @@ export const ReportsView: React.FC = () => {
                 {formatCUP(totalInventoryInvestment)}
               </span>
               <span className="text-[10px] font-semibold text-amber-700 font-mono">CUP</span>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-600 shrink-0">
-              <span className="material-symbols-outlined text-[22px]">inventory</span>
             </div>
           </div>
           <div className="flex items-center mt-4 pt-3 border-t border-outline-variant/15">
@@ -1263,136 +1255,123 @@ export const ReportsView: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Column: Line and Area Curve Chart */}
+        {/* Right Column: Financial comparison donut */}
         <div className="lg:col-span-7 p-6 rounded-2xl bg-surface neo-raised flex flex-col justify-between">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-2">
             <div className="flex flex-col">
               <h2 className="text-base font-headline font-bold text-on-surface">
-                {curveData.title}
+                Inversión y resultado neto
               </h2>
               <span className="text-xs text-on-surface-variant">
-                {curveData.subtitle}
+                Comparación de magnitudes del período seleccionado
               </span>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 text-xs text-on-surface-variant">
-                <span className="w-2.5 h-2.5 rounded-full bg-primary"></span>
-                <span>Facturación Bruta</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-rose-500 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-                <span>{returnsStats.count} devoluciones</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-on-surface-variant">
-                <span className="w-2.5 h-2.5 rounded-full bg-tertiary"></span>
-                <span>Media</span>
-              </div>
-            </div>
+            <label className="flex flex-col gap-1 text-[10px] font-semibold text-on-surface-variant sm:items-end">
+              <span>Ver por artículo</span>
+              <select
+                aria-label="Comparar resultados por artículo"
+                value={comparisonMetrics.product?.id || ''}
+                onChange={(event) => setComparisonProductId(event.target.value)}
+                className="h-10 max-w-full sm:max-w-64 px-3 rounded-xl bg-surface neo-inset text-xs font-medium text-on-surface outline-none"
+              >
+                <option value="">Todos los productos</option>
+                {products.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.code} · {product.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
-          {/* SVG Line and Area Chart */}
-          <div className="relative w-full h-64 mt-2">
-            <svg className="w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 700 240">
-              <defs>
-                <linearGradient id="areaGradient" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="#0052CC" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#0052CC" stopOpacity="0.0" />
-                </linearGradient>
-              </defs>
-
-              {/* Grid Lines */}
-              <line x1="0" y1="50" x2="700" y2="50" stroke="#d0d2dc" strokeDasharray="4 4" strokeWidth="1" opacity="0.5" />
-              <line x1="0" y1="110" x2="700" y2="110" stroke="#d0d2dc" strokeDasharray="4 4" strokeWidth="1" opacity="0.5" />
-              <line x1="0" y1="170" x2="700" y2="170" stroke="#d0d2dc" strokeDasharray="4 4" strokeWidth="1" opacity="0.5" />
-              <line x1="0" y1="210" x2="700" y2="210" stroke="#8a8c9a" strokeWidth="1" opacity="0.3" />
-
-              {/* Shaded Area */}
-              <path
-                d={curveData.areaPath}
-                fill="url(#areaGradient)"
-                className="transition-all duration-500"
-              />
-
-              {/* Primary Line */}
-              <path
-                d={curveData.linePath}
-                fill="none"
-                stroke="#0052CC"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="transition-all duration-500"
-              />
-
-              {/* Moving Average Line */}
-              <path
-                d={curveData.movingAvgPath}
-                fill="none"
-                stroke="#FF7A00"
-                strokeDasharray="5 5"
-                strokeWidth="2"
-                opacity="0.8"
-                className="transition-all duration-500"
-              />
-
-              {/* Regular Point Dots */}
-              {curveData.dots.map((dot, idx) => (
-                <circle
-                  key={idx}
-                  cx={dot.cx}
-                  cy={dot.cy}
-                  r="4"
-                  fill="#ffffff"
-                  stroke="#0052CC"
-                  strokeWidth="2.5"
-                />
-              ))}
-
-              {/* Peak Tooltip & Highlight */}
-              {periodTotalRevenue > 0 && (
-                <g>
-                  <circle
-                    cx={curveData.peakCoord.x}
-                    cy={curveData.peakCoord.y}
-                    r="6"
-                    fill="#0052CC"
-                    stroke="#ffffff"
-                    strokeWidth="2"
-                  />
-                  <rect
-                    x={Math.max(10, curveData.peakCoord.x - 65)}
-                    y={Math.max(4, curveData.peakCoord.y - 32)}
-                    width="130"
-                    height="24"
-                    rx="6"
-                    fill="#1E293B"
-                  />
-                  <text
-                    x={Math.max(75, curveData.peakCoord.x)}
-                    y={Math.max(20, curveData.peakCoord.y - 16)}
-                    fill="#ffffff"
-                    fontSize="10"
-                    fontWeight="600"
-                    textAnchor="middle"
-                  >
-                    {curveData.peakText}
-                  </text>
-                </g>
+          <div className="flex flex-col md:flex-row md:items-center gap-4 mt-2">
+            <div className="relative w-full md:w-1/2 h-56 shrink-0">
+              {comparisonMagnitude > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Tooltip
+                        formatter={(value) => `${formatCUP(Number(value))} CUP`}
+                        contentStyle={{
+                          backgroundColor: 'var(--color-surface)',
+                          border: '1px solid var(--color-outline-variant)',
+                          borderRadius: '12px',
+                          color: 'var(--color-on-surface)',
+                          fontSize: '12px',
+                        }}
+                      />
+                      <Pie
+                        data={comparisonChartData.filter((item) => item.value > 0)}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius="60%"
+                        outerRadius="84%"
+                        paddingAngle={3}
+                        stroke="none"
+                      >
+                        {comparisonChartData
+                          .filter((item) => item.value > 0)
+                          .map((item) => (
+                            <Cell key={item.name} fill={item.color} />
+                          ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-[10px] font-semibold text-on-surface-variant">
+                      Magnitud total
+                    </span>
+                    <span className="max-w-[72%] truncate text-sm font-bold text-on-surface font-mono">
+                      {formatCUP(comparisonMagnitude)}
+                    </span>
+                    <span className="text-[10px] text-on-surface-variant">CUP</span>
+                  </div>
+                </>
+              ) : (
+                <div className="h-full flex items-center justify-center rounded-xl bg-surface neo-inset text-xs text-on-surface-variant">
+                  Sin valores para comparar
+                </div>
               )}
-            </svg>
+            </div>
 
-            {/* X-Axis Labels */}
-            <div className="flex justify-between items-center text-[10px] text-on-surface-variant font-medium pt-2 px-1">
-              {curveData.labels.map((lbl, idx) => (
-                <span
-                  key={idx}
-                  className="truncate max-w-[80px] text-center"
-                >
-                  {lbl}
-                </span>
-              ))}
+            <div className="flex-1 flex flex-col gap-3">
+              {comparisonChartData.map((item) => {
+                const percentage = comparisonMagnitude > 0
+                  ? (item.value / comparisonMagnitude) * 100
+                  : 0;
+                const displayValue = item.name === 'Pérdidas por bajas'
+                  ? `-${formatCUP(Math.abs(comparisonMetrics.writtenOffLoss))} CUP`
+                  : item.name === 'Ganancias netas'
+                  ? `${comparisonMetrics.netProfit < 0 ? '-' : ''}${formatCUP(Math.abs(comparisonMetrics.netProfit))} CUP`
+                  : `${formatCUP(Math.abs(comparisonMetrics.investment))} CUP`;
+
+                return (
+                  <div key={item.name} className="p-3 rounded-xl bg-surface neo-inset">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="flex items-center gap-2 text-xs font-semibold text-on-surface">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: item.color }}
+                        ></span>
+                        {item.name}
+                      </span>
+                      <span className="text-[10px] font-semibold text-on-surface-variant font-mono">
+                        {percentage.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="mt-1.5 pl-[18px] text-sm font-bold font-mono text-on-surface">
+                      {displayValue}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
+          <p className="mt-3 text-[10px] text-on-surface-variant">
+            La inversión corresponde al inventario disponible actual; las pérdidas y ganancias se calculan para el período. El anillo compara magnitudes.
+          </p>
         </div>
       </div>
 
@@ -1728,6 +1707,23 @@ export const ReportsView: React.FC = () => {
                 </div>
                 <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-rose-500">
                   <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-surface neo-inset flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-rose-700 uppercase">
+                    Pérdida por bajas
+                  </span>
+                  <span className="text-lg font-bold text-rose-700 font-mono mt-0.5">
+                    ${formatCUP(returnDestinationStats.writtenOffLoss)} CUP
+                  </span>
+                  <span className="text-[10px] text-on-surface-variant">
+                    Precio de compra del proveedor
+                  </span>
+                </div>
+                <div className="w-8 h-8 rounded-lg bg-surface neo-raised flex items-center justify-center text-rose-600">
+                  <span className="material-symbols-outlined text-[18px]">money_off</span>
                 </div>
               </div>
 

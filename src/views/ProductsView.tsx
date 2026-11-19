@@ -3,14 +3,17 @@ import { useApp } from '../context/AppContext';
 import { SearchableSelect } from '../components/SearchableSelect';
 import {
   BUSINESS_PROFILES,
+  BUSINESS_PROFILE_CONFIRMED_STORAGE_KEY,
   BUSINESS_PROFILE_LOCKED_STORAGE_KEY,
   BUSINESS_PROFILE_STORAGE_KEY,
+  CARRY_BAG_CATEGORY,
   DEFAULT_BUSINESS_PROFILE_ID,
   DEFAULT_PRODUCT_UNITS,
   getBusinessProfile,
   getProductNamePlaceholder,
 } from '../data/productCategories';
 import { Product } from '../types';
+import { isCarryBagProduct, isDefectiveMermaProduct } from '../utils/productInventory';
 
 const loadBusinessProfileId = () => {
   try {
@@ -31,11 +34,30 @@ const loadBusinessProfileLock = () => {
   }
 };
 
+const loadBusinessProfileConfirmation = () => {
+  try {
+    return (
+      localStorage.getItem(BUSINESS_PROFILE_CONFIRMED_STORAGE_KEY) === 'true' ||
+      localStorage.getItem(BUSINESS_PROFILE_LOCKED_STORAGE_KEY) === 'true'
+    );
+  } catch {
+    return false;
+  }
+};
+
 const persistBusinessProfileLock = () => {
   try {
     localStorage.setItem(BUSINESS_PROFILE_LOCKED_STORAGE_KEY, 'true');
   } catch (error) {
     console.warn('No se pudo guardar el bloqueo del tipo de negocio.', error);
+  }
+};
+
+const persistBusinessProfileConfirmation = () => {
+  try {
+    localStorage.setItem(BUSINESS_PROFILE_CONFIRMED_STORAGE_KEY, 'true');
+  } catch (error) {
+    console.warn('No se pudo guardar la confirmación del tipo de negocio.', error);
   }
 };
 
@@ -70,6 +92,10 @@ export const ProductsView: React.FC = () => {
   } = useApp();
 
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
+  const [newProductModalTab, setNewProductModalTab] = useState<'producto' | 'bolsas'>('producto');
+  const [newBagQuantity, setNewBagQuantity] = useState('0');
+  const [newBagPurchasePrice, setNewBagPurchasePrice] = useState('0');
+  const [newBagSalePrice, setNewBagSalePrice] = useState('0');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
 
@@ -77,6 +103,7 @@ export const ProductsView: React.FC = () => {
   const pageSize = 6;
 
   const [businessProfileId, setBusinessProfileId] = useState(loadBusinessProfileId);
+  const [isBusinessProfileConfirmed, setIsBusinessProfileConfirmed] = useState(loadBusinessProfileConfirmation);
   const [isBusinessProfileLocked, setIsBusinessProfileLocked] = useState(loadBusinessProfileLock);
   const businessProfile = getBusinessProfile(businessProfileId);
   const firstCategory = businessProfile.categories[0];
@@ -122,6 +149,8 @@ export const ProductsView: React.FC = () => {
       return;
     }
 
+    setIsBusinessProfileConfirmed(true);
+    persistBusinessProfileConfirmation();
     setIsBusinessProfileLocked(true);
     persistBusinessProfileLock();
   }, [products]);
@@ -148,11 +177,14 @@ export const ProductsView: React.FC = () => {
 
   const handleBusinessProfileChange = (profileId: string) => {
     if (isBusinessProfileLocked) return;
+    if (!BUSINESS_PROFILES.some((profile) => profile.id === profileId)) return;
 
     const nextProfile = getBusinessProfile(profileId);
     const nextCategory = nextProfile.categories[0];
     const nextSubcategory = nextCategory.subcategories[0];
     setBusinessProfileId(profileId);
+    setIsBusinessProfileConfirmed(true);
+    persistBusinessProfileConfirmation();
     setNewCategory(nextCategory.name);
     setNewSubcategory(nextSubcategory.name);
     setNewUM(nextSubcategory.units[0]);
@@ -187,8 +219,10 @@ export const ProductsView: React.FC = () => {
     setEditUM(subcategory?.units[0] || editCategorySettings?.subcategories[0]?.units[0] || DEFAULT_PRODUCT_UNITS[0]);
   };
 
-  const zeroCount = products.filter((p) => p.stock === 0).length;
-  const lowCount = products.filter((p) => p.stock > 0 && p.stock <= p.minStock).length;
+  const zeroCount = products.filter((p) => p.stock === 0 && !isDefectiveMermaProduct(p)).length;
+  const carryBagCount = products
+    .filter(isCarryBagProduct)
+    .reduce((total, product) => total + product.stock, 0);
 
   const totalPages = Math.max(1, Math.ceil(products.length / pageSize));
   const validPage = Math.min(currentPage, totalPages);
@@ -200,6 +234,8 @@ export const ProductsView: React.FC = () => {
   const selectedProduct = selectedProductId
     ? products.find((p) => p.id === selectedProductId) || null
     : null;
+  const isSelectedDefectiveSoldOut =
+    selectedProduct !== null && selectedProduct.stock === 0 && isDefectiveMermaProduct(selectedProduct);
 
   // Helper to generate the next sequential product code automatically
   const generateNextProductCode = (currentProducts: Product[]): string => {
@@ -238,6 +274,11 @@ export const ProductsView: React.FC = () => {
     setNewMinStock('0');
     setNewAlmacenStock('0');
     setNewLocation('Almacén Central');
+    const carryBagProduct = products.find(isCarryBagProduct);
+    setNewBagQuantity(String(carryBagProduct?.stock ?? 0));
+    setNewBagPurchasePrice(String(carryBagProduct?.purchasePrice ?? 0));
+    setNewBagSalePrice(String(carryBagProduct?.price ?? 0));
+    setNewProductModalTab('producto');
     setIsNewModalOpen(true);
   };
 
@@ -276,6 +317,58 @@ export const ProductsView: React.FC = () => {
       lastExit: 'Hoy',
       createdAt: formattedDate,
     });
+    if (success) {
+      setIsBusinessProfileLocked(true);
+      persistBusinessProfileLock();
+      setIsNewModalOpen(false);
+    }
+  };
+
+  const handleSaveCarryBags = async () => {
+    const quantity = Number(newBagQuantity);
+    const purchasePrice = Number(newBagPurchasePrice);
+    const salePrice = Number(newBagSalePrice);
+    const existingBagProduct = products.find(isCarryBagProduct);
+
+    if (!Number.isInteger(quantity) || quantity < 0 || (!existingBagProduct && quantity === 0)) {
+      showToast('Cantidad inválida', 'Indique una cantidad entera de bolsas mayor que cero.', 'error');
+      return;
+    }
+    if (!Number.isFinite(purchasePrice) || purchasePrice < 0 || !Number.isFinite(salePrice) || salePrice < 0) {
+      showToast('Precio inválido', 'Los precios de compra y venta deben ser valores válidos mayores o iguales a cero.', 'error');
+      return;
+    }
+
+    const success = existingBagProduct
+      ? await editProduct(existingBagProduct.id, {
+          name: 'Bolsa para llevar',
+          category: CARRY_BAG_CATEGORY,
+          subcategory: 'General',
+          um: 'Unidad',
+          price: salePrice,
+          purchasePrice,
+          stock: quantity,
+          minStock: 0,
+          almacenStock: 0,
+          location: 'Mostrador',
+        })
+      : await addProduct({
+          code: generateNextProductCode(products),
+          name: 'Bolsa para llevar',
+          detail: '',
+          category: CARRY_BAG_CATEGORY,
+          subcategory: 'General',
+          um: 'Unidad',
+          price: salePrice,
+          purchasePrice,
+          stock: quantity,
+          minStock: 0,
+          almacenStock: 0,
+          status: quantity > 0 ? 'ok' : 'out',
+          rotation: 'Normal',
+          location: 'Mostrador',
+        });
+
     if (success) {
       setIsBusinessProfileLocked(true);
       persistBusinessProfileLock();
@@ -342,6 +435,36 @@ export const ProductsView: React.FC = () => {
     }
   };
 
+  if (!isBusinessProfileConfirmed) {
+    return (
+      <section className="flex min-h-[60vh] w-full items-center justify-center">
+        <div className="w-full max-w-xl rounded-2xl bg-surface neo-raised p-8 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <span className="material-symbols-outlined text-[30px]">storefront</span>
+          </div>
+          <h1 className="text-2xl font-headline font-bold text-on-surface">Configura tu tipo de negocio</h1>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-on-surface-variant">
+            Selecciona el tipo de negocio para configurar las categorías y unidades antes de registrar productos.
+          </p>
+          <label htmlFor="business-profile-required" className="mt-6 block text-left text-xs font-semibold text-on-surface-variant">
+            Tipo de negocio
+          </label>
+          <select
+            id="business-profile-required"
+            value=""
+            onChange={(event) => handleBusinessProfileChange(event.target.value)}
+            className="app-select mt-2 h-12 w-full rounded-xl border border-outline-variant/30 bg-surface neo-inset px-3 text-sm font-semibold text-on-surface focus-visible:ring-2 focus-visible:ring-primary/30 cursor-pointer"
+          >
+            <option value="" disabled>Selecciona una opción</option>
+            {BUSINESS_PROFILES.map((profile) => (
+              <option key={profile.id} value={profile.id}>{profile.label}</option>
+            ))}
+          </select>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <div className="flex flex-col w-full gap-7 select-none pb-12">
       {/* Header section without Gestion de Almacen badge and without Excel/Export buttons */}
@@ -404,16 +527,16 @@ export const ProductsView: React.FC = () => {
         </div>
 
         <div className="p-4 rounded-2xl bg-surface neo-raised flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-xl bg-surface neo-inset flex items-center justify-center text-amber-500">
-            <span className="material-symbols-outlined text-[24px]">warning</span>
+          <div className="w-12 h-12 rounded-xl bg-surface neo-inset flex items-center justify-center text-tertiary">
+            <span className="material-symbols-outlined text-[24px]">shopping_bag</span>
           </div>
           <div className="flex flex-col min-w-0">
             <span className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider">
-              Stock Bajo
+              Bolsas para llevar
             </span>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-xl font-headline font-bold text-on-surface font-mono">{lowCount}</span>
-              <span className="text-[11px] text-amber-600 font-medium">en alerta</span>
+              <span className="text-xl font-headline font-bold text-on-surface font-mono">{carryBagCount}</span>
+              <span className="text-[11px] text-on-surface-variant">disponibles</span>
             </div>
           </div>
         </div>
@@ -482,6 +605,7 @@ export const ProductsView: React.FC = () => {
                   {paginatedProducts.map((p) => {
                     const isSelected = selectedProductId === p.id;
                     const isZero = p.stock === 0;
+                    const isSoldDefective = isZero && isDefectiveMermaProduct(p);
                     const isLow = p.stock > 0 && p.stock <= p.minStock;
 
                     return (
@@ -523,8 +647,11 @@ export const ProductsView: React.FC = () => {
                         </td>
                         <td className="py-3 px-4 text-center">
                           {isZero ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>0 (Agotado)
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                              isSoldDefective ? 'bg-surface-container-high text-on-surface-variant' : 'bg-red-100 text-red-700'
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${isSoldDefective ? 'bg-on-surface-variant' : 'bg-red-500'}`}></span>
+                              {isSoldDefective ? '0 (Vendido)' : '0 (Agotado)'}
                             </span>
                           ) : isLow ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800">
@@ -650,15 +777,17 @@ export const ProductsView: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                      selectedProduct.stock === 0
+                      selectedProduct.stock === 0 && !isSelectedDefectiveSoldOut
                         ? 'bg-red-100 text-red-700'
+                        : isSelectedDefectiveSoldOut
+                        ? 'bg-surface-container-high text-on-surface-variant'
                         : selectedProduct.stock <= selectedProduct.minStock
                         ? 'bg-amber-100 text-amber-800'
                         : 'bg-emerald-100 text-emerald-700'
                     }`}
                   >
                     {selectedProduct.stock === 0
-                      ? 'Agotado'
+                      ? isSelectedDefectiveSoldOut ? 'Vendido' : 'Agotado'
                       : selectedProduct.stock <= selectedProduct.minStock
                       ? 'Bajo stock'
                       : 'En stock'}
@@ -803,6 +932,29 @@ export const ProductsView: React.FC = () => {
               </button>
             </div>
 
+            <div className="grid grid-cols-2 gap-2 rounded-xl bg-surface neo-inset p-1 text-xs">
+              <button
+                onClick={() => setNewProductModalTab('producto')}
+                className={`rounded-lg px-3 py-2 font-semibold transition-colors ${
+                  newProductModalTab === 'producto' ? 'bg-primary text-white shadow-sm' : 'text-on-surface-variant'
+                }`}
+                type="button"
+              >
+                Producto
+              </button>
+              <button
+                onClick={() => setNewProductModalTab('bolsas')}
+                className={`rounded-lg px-3 py-2 font-semibold transition-colors ${
+                  newProductModalTab === 'bolsas' ? 'bg-primary text-white shadow-sm' : 'text-on-surface-variant'
+                }`}
+                type="button"
+              >
+                Bolsas para llevar
+              </button>
+            </div>
+
+            {newProductModalTab === 'producto' ? (
+              <>
             <div className="grid grid-cols-2 gap-4 text-xs">
               <div className="flex flex-col gap-1.5">
                 <label className="font-semibold text-on-surface">Código de Producto</label>
@@ -966,6 +1118,74 @@ export const ProductsView: React.FC = () => {
                 Guardar Producto
               </button>
             </div>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4 text-xs">
+                  <div className="col-span-2 flex flex-col gap-1.5">
+                    <label htmlFor="carry-bag-quantity" className="font-semibold text-on-surface">
+                      Cantidad de bolsas disponibles
+                    </label>
+                    <input
+                      id="carry-bag-quantity"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={newBagQuantity}
+                      onChange={(event) => setNewBagQuantity(normalizeNumericInput(event.target.value))}
+                      className="h-10 rounded-xl bg-surface neo-inset px-3 font-mono font-bold text-on-surface"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="carry-bag-purchase-price" className="font-semibold text-on-surface">
+                      Precio de compra al proveedor (CUP)
+                    </label>
+                    <input
+                      id="carry-bag-purchase-price"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newBagPurchasePrice}
+                      onChange={(event) => setNewBagPurchasePrice(event.target.value)}
+                      className="h-10 rounded-xl bg-surface neo-inset px-3 font-mono text-on-surface"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="carry-bag-sale-price" className="font-semibold text-on-surface">
+                      Precio de venta (CUP)
+                    </label>
+                    <input
+                      id="carry-bag-sale-price"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newBagSalePrice}
+                      onChange={(event) => setNewBagSalePrice(event.target.value)}
+                      className="h-10 rounded-xl bg-surface neo-inset px-3 font-mono text-on-surface"
+                    />
+                  </div>
+                  <p className="col-span-2 text-[11px] leading-relaxed text-on-surface-variant">
+                    Las bolsas se registran también en el catálogo para poder venderlas como producto.
+                  </p>
+                </div>
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    onClick={() => setIsNewModalOpen(false)}
+                    className="h-10 px-4 rounded-xl bg-surface neo-raised text-xs font-semibold text-on-surface-variant hover:text-on-surface active:neo-inset cursor-pointer"
+                    type="button"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleSaveCarryBags}
+                    className="h-10 px-5 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary-container active:neo-inset transition-all cursor-pointer"
+                    type="button"
+                  >
+                    {products.some(isCarryBagProduct) ? 'Actualizar bolsas' : 'Registrar bolsas'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

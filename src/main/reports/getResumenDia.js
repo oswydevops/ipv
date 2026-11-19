@@ -6,9 +6,10 @@
  *
  * @param {string} fecha - Fecha en formato 'AAAA-MM-DD'
  * @param {import('better-sqlite3').Database} [dbInstance] - Instancia de better-sqlite3 opcional
+ * @param {Array<{id: string, label: string, value: number, count: number}>} [denominationsOverride] - Conteo actual si el día sigue abierto
  * @returns {object} Resumen diario estructurado
  */
-function getResumenDia(fecha, dbInstance) {
+function getResumenDia(fecha, dbInstance, denominationsOverride) {
   if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
     throw new Error('Fecha inválida. Se espera el formato AAAA-MM-DD');
   }
@@ -157,13 +158,20 @@ function getResumenDia(fecha, dbInstance) {
   `).get(fecha);
 
   let denominaciones = [];
-  if (closeRow && closeRow.denominations) {
-    try {
-      denominaciones = JSON.parse(closeRow.denominations);
-    } catch {
-      denominaciones = [];
+  if (closeRow) {
+    if (closeRow.denominations) {
+      try {
+        denominaciones = JSON.parse(closeRow.denominations);
+      } catch {
+        denominaciones = [];
+      }
     }
+  } else if (Array.isArray(denominationsOverride)) {
+    denominaciones = denominationsOverride;
   }
+  const totalBilletes = Array.isArray(denominaciones)
+    ? denominaciones.reduce((total, item) => total + (Number(item.value) || 0) * (Number(item.count) || 0), 0)
+    : 0;
 
   // 6. Devoluciones registradas en la tabla returns
   const returnRows = db.prepare(`
@@ -270,6 +278,8 @@ function getResumenDia(fecha, dbInstance) {
       estadoCierre: closeRow ? 'Cerrado' : 'Abierto / En jornada',
       cerradoEn: closeRow ? closeRow.closed_at : null,
       totalContado: closeRow ? Number(closeRow.total_contado || 0) : Number(salesSummary.totalEfectivo || 0),
+      montoInicialCaja: closeRow ? Number(closeRow.opening_cash_amount || 0) : 0,
+      totalBilletes,
       efectivoContado: closeRow
         ? Math.max(0, Number(closeRow.total_contado || 0) - Number(closeRow.transferencias || 0))
         : Number(salesSummary.totalEfectivo || 0),

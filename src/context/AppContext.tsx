@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { ViewType, Product, IPVRow, Denomination, BackupRecord, SaleRecord, SaleItem, ReturnRecord, ReturnItem, MermaItem } from '../types';
 import { IpvDay, IpvDayRow, SaleInput, DayClose, LicenseStatus } from '../data/api';
-import { BUSINESS_PROFILE_LOCKED_STORAGE_KEY } from '../data/productCategories';
 import {
   ACTIVATION_CODE_LENGTH,
   formatActivationCode,
@@ -197,7 +196,7 @@ interface AppContextType {
   totalGeneralContado: number;
   diferenciaCaja: number;
   recalculateCash: () => void;
-  closeDay: (date: string, note?: string) => Promise<boolean>;
+  closeDay: (date: string, note?: string, initialCashAmount?: number) => Promise<boolean>;
   reopenDay: (date: string) => Promise<boolean>;
   listCloses: (limit?: number) => Promise<DayClose[]>;
 
@@ -250,7 +249,6 @@ interface AppContextType {
   activationKey: string;
   activatedAt: string;
   activateApp: (code: string) => Promise<{ success: boolean; message: string }>;
-  deactivateLicense: () => Promise<boolean>;
   activationContactInfo: ActivationContactInfo;
   updateActivationContactInfo: (info: ActivationContactInfo) => boolean;
   clearActivationContactInfoForTesting: () => boolean;
@@ -670,14 +668,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const totalVentasEfectivo = useMemo(() => {
     const targetDate = selectedIpvDate || todayDate;
     return sales
-      .filter((s) => s.date === targetDate && !(s as any).voided)
+      .filter((s) => s.date === targetDate && !s.voided)
       .reduce((acc, s) => acc + (s.efectivoAmount || 0), 0);
   }, [sales, selectedIpvDate, todayDate]);
 
   const totalVentasTransferencia = useMemo(() => {
     const targetDate = selectedIpvDate || todayDate;
     return sales
-      .filter((s) => s.date === targetDate && !(s as any).voided)
+      .filter((s) => s.date === targetDate && !s.voided)
       .reduce((acc, s) => acc + (s.transferenciaAmount || 0), 0);
   }, [sales, selectedIpvDate, todayDate]);
 
@@ -705,7 +703,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Cálculo Actualizado', 'Todos los totales de caja han sido recalculados.');
   };
 
-  const closeDay = async (date: string, note?: string): Promise<boolean> => {
+  const closeDay = async (
+    date: string,
+    note?: string,
+    initialCashAmount = 0
+  ): Promise<boolean> => {
     try {
       if (!window.api) return false;
       await window.api.cash.closeDay(date, {
@@ -715,6 +717,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           value: d.value,
           count: d.count,
         })),
+        initialCashAmount,
         menoresAmount: Number(menoresAmount) || 0,
         transferenciasAmount: Number(transferenciasAmount) || 0,
         note,
@@ -1345,14 +1348,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'ipv_fallback_date_v1',
         'ferrestock_products',
         'ferrestock_sales',
-        BUSINESS_PROFILE_LOCKED_STORAGE_KEY,
         'ferrestock_last_backup_info',
         'ferrestock_backup_history',
-        ACTIVATION_CONTACT_INFO_STORAGE_KEY,
       ]) {
         localStorage.removeItem(key);
       }
-      setActivationContactInfo({ ...EMPTY_ACTIVATION_CONTACT_INFO });
       setProducts([]);
       setSales([]);
       setReturns([]);
@@ -1368,7 +1368,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await refreshAll();
       showToast(
         'Aplicación Restablecida',
-        'Todos los datos han sido borrados. La aplicación ha comenzado desde cero.',
+        'Los datos comerciales han sido borrados. La información del usuario y del negocio se ha conservado.',
         'success'
       );
       return true;
@@ -1401,27 +1401,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: true, message: 'Aplicación activada con éxito.' };
     } catch (error: unknown) {
       return { success: false, message: getFriendlyErrorMessage(error) };
-    }
-  }, [applyLicenseStatus, showToast]);
-
-  const deactivateLicense = useCallback(async () => {
-    if (!window.api?.license?.deactivate) {
-      showToast('No se pudo desactivar', 'Esta opción solo está disponible en la aplicación de escritorio.', 'error');
-      return false;
-    }
-
-    try {
-      const status = await window.api.license.deactivate();
-      applyLicenseStatus(status);
-      showToast(
-        'Licencia desactivada',
-        'La aplicación quedó en estado sin licencia. Puede volver a activarla con un código válido.',
-        'info'
-      );
-      return true;
-    } catch (error: unknown) {
-      showToast('No se pudo desactivar la licencia', getFriendlyErrorMessage(error), 'error');
-      return false;
     }
   }, [applyLicenseStatus, showToast]);
 
@@ -1538,7 +1517,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activationKey,
         activatedAt,
         activateApp,
-        deactivateLicense,
         activationContactInfo,
         updateActivationContactInfo,
         clearActivationContactInfoForTesting,

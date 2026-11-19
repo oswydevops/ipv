@@ -4,6 +4,27 @@ import { SearchableSelect } from '../components/SearchableSelect';
 import { ReturnRecord, ReturnItem, MermaItem } from '../types';
 import { getMermaDestination, getReturnItemMermas } from '../utils/returnDestinations';
 
+type PeriodFilter = 'hoy' | 'semana' | 'mes' | 'todos';
+
+const getPeriodStartDate = (period: PeriodFilter, today: string): string | null => {
+  if (period === 'hoy') return today;
+  if (period === 'todos') return null;
+
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - (period === 'semana' ? 7 : 31));
+  return startDate.toISOString().slice(0, 10);
+};
+
+const isDateInPeriod = (
+  date: string,
+  period: PeriodFilter,
+  today: string,
+  startDate: string | null
+): boolean => {
+  if (period === 'hoy') return date === today;
+  return period === 'todos' || (startDate !== null && date >= startDate);
+};
+
 export const ReturnsView: React.FC = () => {
   const {
     returns = [],
@@ -24,7 +45,7 @@ export const ReturnsView: React.FC = () => {
   // Estados de vista
   const [activeTab, setActiveTab] = useState<'todas' | 'almacen_merma'>('todas');
   const [searchQuery, setSearchQuery] = useState('');
-  const [periodFilter, setPeriodFilter] = useState<'hoy' | 'semana' | 'mes' | 'todos'>('hoy');
+  const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('hoy');
   const [page, setPage] = useState(1);
   const pageSize = 8;
 
@@ -69,26 +90,17 @@ export const ReturnsView: React.FC = () => {
     });
   };
 
+  const today = todayDate || new Date().toISOString().slice(0, 10);
+  const periodStartDate = useMemo(
+    () => getPeriodStartDate(periodFilter, today),
+    [periodFilter, today]
+  );
   // 1. Filtrado por período
   const periodFilteredReturns = useMemo(() => {
-    const today = todayDate || new Date().toISOString().slice(0, 10);
-    const now = new Date();
-
-    return returns.filter((r) => {
-      if (periodFilter === 'hoy') return r.date === today;
-      if (periodFilter === 'semana') {
-        const weekAgo = new Date(now);
-        weekAgo.setDate(now.getDate() - 7);
-        return r.date >= weekAgo.toISOString().slice(0, 10);
-      }
-      if (periodFilter === 'mes') {
-        const monthAgo = new Date(now);
-        monthAgo.setDate(now.getDate() - 31);
-        return r.date >= monthAgo.toISOString().slice(0, 10);
-      }
-      return true;
-    });
-  }, [returns, todayDate, periodFilter]);
+    return returns.filter((record) =>
+      isDateInPeriod(record.date, periodFilter, today, periodStartDate)
+    );
+  }, [returns, periodFilter, today, periodStartDate]);
 
   // 2. Filtrado por búsqueda
   const finalFilteredReturns = useMemo(() => {
@@ -126,38 +138,50 @@ export const ReturnsView: React.FC = () => {
   const validPage = Math.min(page, totalPages);
   const paginatedReturns = finalFilteredReturns.slice((validPage - 1) * pageSize, validPage * pageSize);
 
-  // Estadísticas del día / globales
-  const todayReturns = useMemo(() => returns.filter((r) => r.date === todayDate), [returns, todayDate]);
-  const totalRefundToday = useMemo(
-    () => todayReturns.reduce((acc, r) => acc + (r.totalRefund || 0), 0),
-    [todayReturns]
+  // Estadísticas del período seleccionado
+  const totalRefundInPeriod = useMemo(
+    () => periodFilteredReturns.reduce((acc, record) => acc + (record.totalRefund || 0), 0),
+    [periodFilteredReturns]
   );
-  const totalDamagedItemsToday = useMemo(() => {
-    return todayReturns.reduce((acc, r) => {
-      const damaged = (r.items || []).filter((it) => it.condition === 'mal_estado').reduce((s, it) => s + (it.quantity || 1), 0);
+  const totalDamagedItemsInPeriod = useMemo(() => {
+    return periodFilteredReturns.reduce((acc, record) => {
+      const damaged = (record.items || []).filter((item) => item.condition === 'mal_estado')
+        .reduce((sum, item) => sum + (item.quantity || 1), 0);
       return acc + damaged;
     }, 0);
-  }, [todayReturns]);
-  const totalGoodItemsToday = useMemo(() => {
-    return todayReturns.reduce((acc, r) => {
-      const good = (r.items || []).filter((it) => it.condition === 'buen_estado').reduce((s, it) => s + (it.quantity || 1), 0);
+  }, [periodFilteredReturns]);
+  const totalGoodItemsInPeriod = useMemo(() => {
+    return periodFilteredReturns.reduce((acc, record) => {
+      const good = (record.items || []).filter((item) => item.condition === 'buen_estado')
+        .reduce((sum, item) => sum + (item.quantity || 1), 0);
       return acc + good;
     }, 0);
-  }, [todayReturns]);
-  const todayMermaItems = useMemo(
-    () => mermaItems.filter((item) => item.resolvedAt === todayDate),
-    [mermaItems, todayDate]
+  }, [periodFilteredReturns]);
+  const periodMermaItems = useMemo(
+    () =>
+      mermaItems.filter(
+        (item) =>
+          item.resolvedAt &&
+          isDateInPeriod(item.resolvedAt, periodFilter, today, periodStartDate)
+      ),
+    [mermaItems, periodFilter, today, periodStartDate]
   );
-  const damagedSoldToday = todayMermaItems
+  const damagedSoldInPeriod = periodMermaItems
     .filter((item) => item.condition === 'mal_estado' && item.status === 'reincorporado_con_precio')
     .reduce((total, item) => total + item.quantity, 0);
-  const damagedWrittenOffToday = todayMermaItems
+  const damagedWrittenOffInPeriod = periodMermaItems
     .filter((item) => item.condition === 'mal_estado' && item.status === 'baja_definitiva')
     .reduce((total, item) => total + item.quantity, 0);
-  const goodSentToWarehouseToday = todayMermaItems
+  const writtenOffLossInPeriod = periodMermaItems
+    .filter((item) => item.condition === 'mal_estado' && item.status === 'baja_definitiva')
+    .reduce((total, item) => {
+      const purchasePrice = products.find((product) => product.id === item.productId)?.purchasePrice || 0;
+      return total + item.quantity * purchasePrice;
+    }, 0);
+  const goodSentToWarehouseInPeriod = periodMermaItems
     .filter((item) => item.condition === 'buen_estado' && item.status === 'devuelto_a_almacen')
     .reduce((total, item) => total + item.quantity, 0);
-  const goodSentToStockToday = todayMermaItems
+  const goodSentToStockInPeriod = periodMermaItems
     .filter((item) => item.condition === 'buen_estado' && item.status === 'reintegrado_a_stock')
     .reduce((total, item) => total + item.quantity, 0);
   const resolvedReturnReason = generalReason === 'Otro motivo' && customReason.trim()
@@ -372,15 +396,6 @@ export const ReturnsView: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setCurrentView('cierre-de-caja')}
-            className="px-4 py-2.5 rounded-xl bg-surface neo-raised text-on-surface-variant hover:text-on-surface text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[18px] text-amber-600">lock_clock</span>
-            <span>Ver en Cierre de Caja</span>
-          </button>
-
-          <button
             onClick={() => {
               setDraftItems([]);
               setCustomerName('');
@@ -404,23 +419,20 @@ export const ReturnsView: React.FC = () => {
       </div>
 
       {/* 4 Tarjetas Bento de Resumen */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* 1. Total Reembolsado Hoy */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+        {/* 1. Total reembolsado del período */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between border-l-4 border-amber-500">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="flex flex-col gap-1">
               <span className="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
-                Devuelto Hoy al Cliente
+                Reembolsado al Cliente
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-amber-600 tracking-tight font-mono">
-                  ${formatCUP(totalRefundToday)}
+                  ${formatCUP(totalRefundInPeriod)}
                 </span>
                 <span className="text-xs font-semibold text-amber-600 font-mono">CUP</span>
               </div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-600">
-              <span className="material-symbols-outlined text-[22px]">payments</span>
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-outline-variant/15 text-[11px] text-on-surface-variant font-medium">
@@ -429,22 +441,19 @@ export const ReturnsView: React.FC = () => {
           </div>
         </div>
 
-        {/* 2. Total Operaciones */}
+        {/* 2. Total de operaciones del período */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="flex flex-col gap-1">
               <span className="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
-                Devoluciones Hoy
+                Devoluciones
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-on-surface tracking-tight font-mono">
-                  {todayReturns.length}
+                  {periodFilteredReturns.length}
                 </span>
                 <span className="text-xs font-semibold text-on-surface-variant">operaciones</span>
               </div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-surface neo-inset flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-[22px]">receipt_long</span>
             </div>
           </div>
           <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-outline-variant/15 text-[11px] text-on-surface-variant">
@@ -453,53 +462,66 @@ export const ReturnsView: React.FC = () => {
           </div>
         </div>
 
-        {/* 3. Artículos en Mal Estado */}
+        {/* 3. Artículos en mal estado del período */}
         <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between border-l-4 border-red-500">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start">
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] font-bold tracking-wider uppercase text-red-600 flex items-center gap-1">
-                <span className="material-symbols-outlined text-[15px]">warning</span>
-                En Mal Estado (Hoy)
+              <span className="text-[11px] font-bold tracking-wider uppercase text-red-600">
+                En Mal Estado
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-red-600 tracking-tight font-mono">
-                  {totalDamagedItemsToday}
+                  {totalDamagedItemsInPeriod}
                 </span>
                 <span className="text-xs font-semibold text-red-600 font-mono">artículos</span>
               </div>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-600">
-              <span className="material-symbols-outlined text-[22px]">broken_image</span>
-            </div>
           </div>
           <div className="flex items-center justify-between gap-1.5 mt-3 pt-2.5 border-t border-red-200/40 text-[11px] text-red-700 font-medium">
-            <span>Venta con descuento: <strong>{damagedSoldToday}</strong></span>
-            <span>Baja: <strong>{damagedWrittenOffToday}</strong></span>
+            <span>Venta con descuento: <strong>{damagedSoldInPeriod}</strong></span>
+            <span>Baja: <strong>{damagedWrittenOffInPeriod}</strong></span>
           </div>
         </div>
 
-        {/* 4. Artículos en Buen Estado */}
-        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between border-l-4 border-emerald-500">
-          <div className="flex items-start justify-between">
+        {/* 4. Pérdida por bajas */}
+        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between border-l-4 border-rose-700">
+          <div className="flex items-start">
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] font-bold tracking-wider uppercase text-emerald-600 flex items-center gap-1">
-                <span className="material-symbols-outlined text-[15px]">check_circle</span>
-                En Buen Estado (Hoy)
+              <span className="text-[11px] font-bold tracking-wider uppercase text-rose-700">
+                Pérdida por Bajas
+              </span>
+              <div className="flex items-baseline gap-1.5 mt-0.5">
+                <span className="text-2xl font-headline font-bold text-rose-700 tracking-tight font-mono">
+                  ${formatCUP(writtenOffLossInPeriod)}
+                </span>
+                <span className="text-xs font-semibold text-rose-700 font-mono">CUP</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-1.5 mt-3 pt-2.5 border-t border-rose-200/40 text-[11px] text-rose-800 font-medium">
+            <span>Costo de inversión</span>
+            <strong>{damagedWrittenOffInPeriod} artículos</strong>
+          </div>
+        </div>
+
+        {/* 5. Artículos en Buen Estado */}
+        <div className="p-5 rounded-2xl bg-surface neo-raised flex flex-col justify-between border-l-4 border-emerald-500">
+          <div className="flex items-start">
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-bold tracking-wider uppercase text-emerald-600">
+                En Buen Estado
               </span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-2xl font-headline font-bold text-emerald-600 tracking-tight font-mono">
-                  {totalGoodItemsToday}
+                  {totalGoodItemsInPeriod}
                 </span>
                 <span className="text-xs font-semibold text-emerald-600 font-mono">artículos</span>
               </div>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-600">
-              <span className="material-symbols-outlined text-[22px]">inventory</span>
-            </div>
           </div>
           <div className="flex items-center justify-between gap-1.5 mt-3 pt-2.5 border-t border-emerald-200/40 text-[11px] text-emerald-700 font-medium">
-            <span>Almacén: <strong>{goodSentToWarehouseToday}</strong></span>
-            <span>Stock: <strong>{goodSentToStockToday}</strong></span>
+            <span>Almacén: <strong>{goodSentToWarehouseInPeriod}</strong></span>
+            <span>Stock: <strong>{goodSentToStockInPeriod}</strong></span>
           </div>
         </div>
       </div>
